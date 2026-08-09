@@ -1,0 +1,11 @@
+.git
+.github
+.env
+artifacts
+docs/screenshots/archive
+frontend/node_modules
+frontend/dist
+backend/__pycache__
+backend/outputs
+backend/history.json
+*.log

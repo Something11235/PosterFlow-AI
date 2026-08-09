@@ -1,0 +1,18 @@
+services:
+  posterflow-ai:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      DATA_DIR: /app/data
+      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
+      IMAGE_API_ENDPOINT: ${IMAGE_API_ENDPOINT:-}
+      IMAGE_API_MODEL: ${IMAGE_API_MODEL:-}
+      IMAGE_API_AUTH_TYPE: ${IMAGE_API_AUTH_TYPE:-bearer}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5000}
+    volumes:
+      - posterflow-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  posterflow-data:

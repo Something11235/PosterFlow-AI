@@ -1,0 +1,35 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.npm-cache/
+
+# Node / frontend build
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Runtime data
+backend/outputs/*
+!backend/outputs/.gitkeep
+backend/history.json
+backend/logs/
+*.log
+
+# Local review artifacts
+artifacts/
+playwright-report/
+test-results/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
