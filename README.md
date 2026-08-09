@@ -1,6 +1,7 @@
 # PosterFlow AI
 
 此工具为 AI 图片工作台。前端使用 React、Vite 和 Tailwind CSS，后端使用 Flask 转发 OpenAI 兼容图片生成请求。
+此工具对比市面上其他同等质量工具拥有花费极低、速度极快且自定义强的优势，但需要自行配置API，请认真阅读以下教程。
 
 ## 主要功能
 
