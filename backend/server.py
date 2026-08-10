@@ -3,14 +3,16 @@ import io
 import ipaddress
 import json
 import os
+import re
 import socket
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import requests
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 
@@ -19,6 +21,10 @@ DATA_DIR = os.path.abspath(os.getenv("DATA_DIR", APP_DIR))
 SAVE_FOLDER = os.path.join(DATA_DIR, "outputs")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 FRONTEND_BUILD = os.path.join(APP_DIR, "..", "frontend", "dist")
+BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
+BLOB_API_URL = os.getenv("VERCEL_BLOB_API_URL", "https://vercel.com/api/blob").rstrip("/")
+BLOB_API_VERSION = "12"
+BLOB_STORAGE_ENABLED = bool(BLOB_READ_WRITE_TOKEN)
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/images"
 OPENROUTER_MODEL = "openai/gpt-image-2"
@@ -55,9 +61,11 @@ CORS(
         "X-Provider-Endpoint",
         "X-Provider-Model",
         "X-Provider-Auth-Type",
+        "X-Client-Id",
     ],
 )
-os.makedirs(SAVE_FOLDER, exist_ok=True)
+if not BLOB_STORAGE_ENABLED:
+    os.makedirs(SAVE_FOLDER, exist_ok=True)
 
 
 class ProviderError(Exception):
@@ -81,6 +89,115 @@ class ProviderConfig:
     @property
     def host(self):
         return urlsplit(self.endpoint).hostname or "自定义服务"
+
+
+CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+
+
+def current_client_id():
+    candidate = request.headers.get("X-Client-Id", "").strip() or request.args.get("client_id", "").strip()
+    if CLIENT_ID_PATTERN.fullmatch(candidate):
+        return candidate
+    return "local-user"
+
+
+def _blob_store_id():
+    parts = BLOB_READ_WRITE_TOKEN.split("_")
+    if len(parts) < 5 or not parts[3]:
+        raise ProviderError("STORAGE_CONFIG_INVALID", "Blob Store 配置无效", 503)
+    return parts[3]
+
+
+def _blob_headers(**extra):
+    store_id = _blob_store_id()
+    return {
+        "Authorization": f"Bearer {BLOB_READ_WRITE_TOKEN}",
+        "x-api-version": BLOB_API_VERSION,
+        "x-vercel-blob-store-id": store_id,
+        "x-api-blob-request-id": f"{store_id}:{time.time_ns()}:{uuid.uuid4().hex[:8]}",
+        "x-api-blob-request-attempt": "0",
+        **extra,
+    }
+
+
+def _blob_request(method, path="", **kwargs):
+    try:
+        response = requests.request(
+            method,
+            f"{BLOB_API_URL}{path}",
+            headers={**_blob_headers(), **kwargs.pop("headers", {})},
+            timeout=60,
+            **kwargs,
+        )
+        response.raise_for_status()
+        return response
+    except requests.RequestException as exc:
+        raise ProviderError(
+            "STORAGE_UNAVAILABLE",
+            "云端图片存储暂时不可用",
+            503,
+            "Vercel Blob 没有完成本次读写操作。",
+            ["稍后重试", "检查 Blob Store 连接", "查看 Vercel Function 日志"],
+        ) from exc
+
+
+def _blob_put(pathname, content, content_type):
+    response = _blob_request(
+        "PUT",
+        params={"pathname": pathname},
+        headers={
+            "x-vercel-blob-access": "private",
+            "x-content-type": content_type,
+            "x-add-random-suffix": "0",
+            "x-allow-overwrite": "0",
+        },
+        data=content,
+    )
+    return response.json()
+
+
+def _blob_list(prefix):
+    response = _blob_request("GET", params={"prefix": prefix, "limit": 1000})
+    return response.json().get("blobs", [])
+
+
+def _blob_delete(urls_or_pathnames):
+    items = [item for item in urls_or_pathnames if item]
+    if not items:
+        return
+    _blob_request(
+        "POST",
+        "/delete",
+        headers={"Content-Type": "application/json"},
+        json={"urls": items},
+    )
+
+
+def _blob_url(pathname):
+    return f"https://{_blob_store_id()}.private.blob.vercel-storage.com/{quote(pathname, safe='/')}"
+
+
+def _blob_download(pathname, stream=False):
+    try:
+        response = requests.get(
+            _blob_url(pathname),
+            params={"cache": "0"},
+            headers={"Authorization": f"Bearer {BLOB_READ_WRITE_TOKEN}"},
+            timeout=60,
+            stream=stream,
+        )
+        response.raise_for_status()
+        return response
+    except requests.RequestException as exc:
+        raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404) from exc
+
+
+def _image_blob_path(filename):
+    return f"posterflow/{current_client_id()}/images/{filename}"
+
+
+def _history_blob_prefix():
+    return f"posterflow/{current_client_id()}/history/"
 
 
 def provider_error_response(error):
@@ -250,6 +367,17 @@ QUALITY_OPTIONS = {"auto", "medium", "high"}
 
 
 def load_history():
+    if BLOB_STORAGE_ENABLED:
+        try:
+            blobs = _blob_list(_history_blob_prefix())
+            if not blobs:
+                return []
+            latest = max(blobs, key=lambda item: item.get("uploadedAt", ""))
+            response = _blob_download(latest["pathname"])
+            return response.json()
+        except (ProviderError, requests.RequestException, ValueError, KeyError):
+            app.logger.exception("Failed to read Blob generation history")
+            return []
     if not os.path.exists(HISTORY_FILE):
         return []
     try:
@@ -260,11 +388,24 @@ def load_history():
         return []
 
 
+def write_history(history):
+    records = history[:500]
+    if BLOB_STORAGE_ENABLED:
+        prefix = _history_blob_prefix()
+        pathname = f"{prefix}{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
+        payload = json.dumps(records, ensure_ascii=False, indent=2).encode("utf-8")
+        saved = _blob_put(pathname, payload, "application/json; charset=utf-8")
+        stale = [item.get("url") for item in _blob_list(prefix) if item.get("url") != saved.get("url")]
+        _blob_delete(stale)
+        return
+    with open(HISTORY_FILE, "w", encoding="utf-8") as file:
+        json.dump(records, file, ensure_ascii=False, indent=2)
+
+
 def save_history_entry(entry):
     history = load_history()
     history.insert(0, entry)
-    with open(HISTORY_FILE, "w", encoding="utf-8") as file:
-        json.dump(history[:500], file, ensure_ascii=False, indent=2)
+    write_history(history)
 
 
 def image_to_base64(file_path):
@@ -273,6 +414,39 @@ def image_to_base64(file_path):
             return base64.b64encode(file.read()).decode("utf-8")
     except OSError:
         return None
+
+
+def stored_image_to_base64(filename):
+    if BLOB_STORAGE_ENABLED:
+        try:
+            response = _blob_download(_image_blob_path(filename))
+            if len(response.content) > MAX_REMOTE_IMAGE_BYTES:
+                return None
+            return base64.b64encode(response.content).decode("utf-8")
+        except requests.RequestException:
+            app.logger.exception("Failed to read Blob reference image")
+            return None
+    path = os.path.join(SAVE_FOLDER, filename)
+    return image_to_base64(path) if os.path.exists(path) else None
+
+
+def store_generated_image(filename, image_bytes):
+    if BLOB_STORAGE_ENABLED:
+        _blob_put(_image_blob_path(filename), image_bytes, "image/png")
+        return
+    with open(os.path.join(SAVE_FOLDER, filename), "wb") as file:
+        file.write(image_bytes)
+
+
+def remove_stored_images(filenames):
+    safe_names = [os.path.basename(str(filename)) for filename in filenames]
+    if BLOB_STORAGE_ENABLED:
+        _blob_delete([_image_blob_path(filename) for filename in safe_names])
+        return
+    for filename in safe_names:
+        path = os.path.join(SAVE_FOLDER, filename)
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def decode_provider_image(image_data):
@@ -415,8 +589,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
             continue
         image_bytes = decode_provider_image(image_data)
         filename = f"{timestamp}_{task_id}_{index + 1}.png"
-        with open(os.path.join(SAVE_FOLDER, filename), "wb") as file:
-            file.write(image_bytes)
+        store_generated_image(filename, image_bytes)
         images.append({"filename": filename, "index": index + 1})
 
     if not images:
@@ -551,8 +724,7 @@ def modify():
         provider = resolve_provider_config()
         prompt, size, quality, _count, strength = parse_generation_request(data)
         previous_image = os.path.basename(str(data.get("previous_image", "")))
-        previous_path = os.path.join(SAVE_FOLDER, previous_image)
-        ref_b64 = image_to_base64(previous_path) if previous_image and os.path.exists(previous_path) else None
+        ref_b64 = stored_image_to_base64(previous_image) if previous_image else None
         if not ref_b64:
             raise ProviderError(
                 "PREVIOUS_IMAGE_MISSING",
@@ -622,18 +794,25 @@ def delete_history(history_id):
     entry = next((item for item in history if item.get("id") == history_id), None)
     if not entry:
         return jsonify({"error": "记录不存在"}), 404
-    for filename in entry.get("images", []):
-        path = os.path.join(SAVE_FOLDER, os.path.basename(filename))
-        if os.path.exists(path):
-            os.remove(path)
-    with open(HISTORY_FILE, "w", encoding="utf-8") as file:
-        json.dump([item for item in history if item.get("id") != history_id], file, ensure_ascii=False, indent=2)
+    remove_stored_images(entry.get("images", []))
+    write_history([item for item in history if item.get("id") != history_id])
     return jsonify({"success": True})
 
 
 @app.route("/api/images/<filename>", methods=["GET"])
 def serve_image(filename):
-    path = os.path.join(SAVE_FOLDER, os.path.basename(filename))
+    safe_name = os.path.basename(filename)
+    if BLOB_STORAGE_ENABLED:
+        try:
+            upstream = _blob_download(_image_blob_path(safe_name), stream=True)
+        except ProviderError as error:
+            return provider_error_response(error)
+        return Response(
+            stream_with_context(upstream.iter_content(64 * 1024)),
+            mimetype=upstream.headers.get("content-type", "image/png"),
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+    path = os.path.join(SAVE_FOLDER, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
     return send_file(path, mimetype="image/png")
@@ -642,6 +821,16 @@ def serve_image(filename):
 @app.route("/api/download/<filename>", methods=["GET"])
 def download_image(filename):
     safe_name = os.path.basename(filename)
+    if BLOB_STORAGE_ENABLED:
+        try:
+            upstream = _blob_download(_image_blob_path(safe_name), stream=True)
+        except ProviderError as error:
+            return provider_error_response(error)
+        return Response(
+            stream_with_context(upstream.iter_content(64 * 1024)),
+            mimetype=upstream.headers.get("content-type", "image/png"),
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
     path = os.path.join(SAVE_FOLDER, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
@@ -660,9 +849,16 @@ def download_batch():
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for filename in filenames[:100]:
             safe_name = os.path.basename(str(filename))
-            path = os.path.join(SAVE_FOLDER, safe_name)
-            if os.path.exists(path):
-                archive.write(path, safe_name)
+            if BLOB_STORAGE_ENABLED:
+                try:
+                    response = _blob_download(_image_blob_path(safe_name))
+                    archive.writestr(safe_name, response.content)
+                except ProviderError:
+                    app.logger.exception("Failed to add Blob image to archive")
+            else:
+                path = os.path.join(SAVE_FOLDER, safe_name)
+                if os.path.exists(path):
+                    archive.write(path, safe_name)
     buffer.seek(0)
     return send_file(
         buffer,
@@ -680,6 +876,8 @@ def health():
             "status": "ok",
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
             "default_provider_host": default_host,
+            "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
+            "history_scope": "browser" if BLOB_STORAGE_ENABLED else "local-instance",
             "timestamp": datetime.now().isoformat(),
         }
     )

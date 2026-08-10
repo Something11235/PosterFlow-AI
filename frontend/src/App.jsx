@@ -26,6 +26,7 @@ import {
   loadProviderConfig,
   saveProviderConfig,
 } from "./lib/provider";
+import { CLIENT_HEADERS } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
 
 const API_BASE = "/api";
@@ -149,7 +150,7 @@ export default function App() {
   useEffect(() => {
     let alive = true;
 
-    fetch(`${API_BASE}/styles`)
+    fetch(`${API_BASE}/styles`, { headers: CLIENT_HEADERS })
       .then((r) => r.json())
       .then((data) => {
         if (!alive) return;
@@ -172,7 +173,7 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`${API_BASE}/health`)
+    fetch(`${API_BASE}/health`, { headers: CLIENT_HEADERS })
       .then((response) => response.json())
       .then((data) => {
         if (!alive) return;
@@ -201,7 +202,10 @@ export default function App() {
   const hasBrowserProvider = isProviderConfigComplete(providerConfig);
   const providerConfigured = hasBrowserProvider || serverProvider.configured;
   const providerName = getProviderDisplayName(providerConfig, serverProvider.host);
-  const providerHeaders = useMemo(() => buildProviderHeaders(providerConfig), [providerConfig]);
+  const providerHeaders = useMemo(
+    () => ({ ...CLIENT_HEADERS, ...buildProviderHeaders(providerConfig) }),
+    [providerConfig],
+  );
 
   const workspaceStats = useMemo(
     () => [
@@ -420,7 +424,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/download-batch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...CLIENT_HEADERS },
         body: JSON.stringify({ filenames: [...selectedImages] }),
       });
       const blob = await res.blob();

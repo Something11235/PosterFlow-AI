@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
-
-const API_BASE = "/api";
+import { apiAssetUrl } from "../lib/client";
 
 export default function ImageModal({ filename, onClose, onModify }) {
   const [modifyText, setModifyText] = useState("");
@@ -38,7 +37,7 @@ export default function ImageModal({ filename, onClose, onModify }) {
       <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-h-0 items-center justify-center rounded-lg border border-white/10 bg-bg-primary/72 p-3">
           <img
-            src={`${API_BASE}/images/${filename}`}
+            src={apiAssetUrl("images", filename)}
             alt="生成图片原图预览"
             className="max-h-full max-w-full rounded-md object-contain shadow-2xl"
           />
@@ -51,7 +50,7 @@ export default function ImageModal({ filename, onClose, onModify }) {
           </p>
 
           <a
-            href={`${API_BASE}/download/${filename}`}
+            href={apiAssetUrl("download", filename)}
             download
             className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
           >

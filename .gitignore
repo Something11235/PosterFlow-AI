@@ -10,6 +10,7 @@ __pycache__/
 .venv/
 venv/
 .npm-cache/
+.vercel_python_packages/
 
 # Node / frontend build
 frontend/node_modules/
@@ -27,6 +28,7 @@ backend/logs/
 artifacts/
 playwright-report/
 test-results/
+.vercel/
 
 # IDE / OS
 .idea/

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Clock3, Search, Trash2, X } from "lucide-react";
+import { apiAssetUrl, CLIENT_HEADERS } from "../lib/client";
 
 const API_BASE = "/api";
 
@@ -24,7 +25,9 @@ export default function History({ onClose, onLoadEntry }) {
   const fetchHistory = useCallback(async (nextPage = 0, keyword = "") => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/history?page=${nextPage}&page_size=20&search=${encodeURIComponent(keyword)}`);
+      const res = await fetch(`${API_BASE}/history?page=${nextPage}&page_size=20&search=${encodeURIComponent(keyword)}`, {
+        headers: CLIENT_HEADERS,
+      });
       const data = await res.json();
       setEntries((prev) => (nextPage === 0 ? data.history || [] : [...prev, ...(data.history || [])]));
       setHasMore(data.has_more);
@@ -41,7 +44,7 @@ export default function History({ onClose, onLoadEntry }) {
   }, [fetchHistory, search]);
 
   const handleDelete = async (id) => {
-    await fetch(`${API_BASE}/history/${id}`, { method: "DELETE" });
+    await fetch(`${API_BASE}/history/${id}`, { method: "DELETE", headers: CLIENT_HEADERS });
     fetchHistory(0, search);
   };
 
@@ -113,7 +116,7 @@ export default function History({ onClose, onLoadEntry }) {
               <div className="mt-3 flex gap-2">
                 {entry.images.slice(0, 4).map((filename) => (
                   <div key={filename} className="h-14 w-16 overflow-hidden rounded-md border border-border-subtle bg-bg-primary">
-                    <img src={`${API_BASE}/images/${filename}`} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    <img src={apiAssetUrl("images", filename)} alt="" className="h-full w-full object-cover" loading="lazy" />
                   </div>
                 ))}
               </div>

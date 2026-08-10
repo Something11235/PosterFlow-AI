@@ -16,6 +16,7 @@ import {
   isProviderConfigComplete,
   PROVIDER_PRESETS,
 } from "../lib/provider";
+import { CLIENT_HEADERS } from "../lib/client";
 
 const API_BASE = "/api";
 
@@ -97,7 +98,7 @@ export default function ProviderSettings({
     try {
       const response = await fetch(`${API_BASE}/provider/validate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...buildProviderHeaders(draft) },
+        headers: { "Content-Type": "application/json", ...CLIENT_HEADERS, ...buildProviderHeaders(draft) },
       });
       const data = await response.json();
       if (!response.ok || data.error) {
