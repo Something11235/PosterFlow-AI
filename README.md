@@ -1,5 +1,11 @@
 # PosterFlow AI
 
+## 在线使用
+
+访问 **[PosterFlow AI 在线版](https://www.posterflow-ai.xyz)**，无需下载或安装。打开网页后，在“图片服务”中配置自己的 API Key、图片生成接口和模型标识，即可直接开始创作！
+
+> API Key 仅保存在当前浏览器标签页的会话存储中，不会写入生成历史或云端图片存储。请仅使用可信服务商提供的 HTTPS 接口。
+
 此工具为 AI 图片工作台。前端使用 React、Vite 和 Tailwind CSS，后端使用 Flask 转发 OpenAI 兼容图片生成请求。
 此工具对比市面上其他同等质量工具拥有花费极低、速度极快且自定义强的优势，但需要自行配置API，请认真阅读以下教程。
 
