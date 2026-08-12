@@ -1,5 +1,7 @@
 import React from "react";
-import { Clock3, KeyRound, PanelRightOpen, Settings2, Sparkles } from "lucide-react";
+import { Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles } from "lucide-react";
+
+const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
 
 export default function Sidebar({
   mode,
@@ -25,6 +27,16 @@ export default function Sidebar({
         </div>
 
         <div className="flex items-center gap-2 lg:hidden">
+          <a
+            href={GITHUB_REPOSITORY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-border-subtle bg-bg-tertiary text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary"
+            aria-label="在 GitHub 查看项目源码"
+            title="GitHub 项目源码"
+          >
+            <CodeXml size={17} />
+          </a>
           <button
             type="button"
             onClick={onOpenProvider}
@@ -111,6 +123,18 @@ export default function Sidebar({
           <PanelRightOpen size={16} />
           历史与复用
         </button>
+
+        <a
+          href={GITHUB_REPOSITORY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary px-3 text-sm text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary"
+          aria-label="在 GitHub 查看项目源码"
+        >
+          <CodeXml size={16} />
+          <span>GitHub 项目</span>
+          <ExternalLink size={14} className="ml-auto text-text-muted" />
+        </a>
       </div>
     </aside>
   );
