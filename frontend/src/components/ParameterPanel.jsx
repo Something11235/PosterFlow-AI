@@ -1,5 +1,5 @@
 import React from "react";
-import { Gauge, ImageDown, LayoutTemplate, SlidersHorizontal } from "lucide-react";
+import { Gauge, ImageDown, LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
 
 const FALLBACK_SIZES = {
   square_1_1: { label: "正方形 1:1", width: 1024, height: 1024 },
@@ -28,6 +28,8 @@ const QUALITY_META = {
 export default function ParameterPanel({
   size,
   onSizeChange,
+  customSize,
+  onCustomSizeChange,
   quality,
   onQualityChange,
   count,
@@ -39,6 +41,12 @@ export default function ParameterPanel({
 }) {
   const sizeMap = Object.keys(sizes || {}).length ? sizes : FALLBACK_SIZES;
   const showStrength = mode === "image-to-image" || mode === "iterative";
+  const customSizeActive = size === "custom";
+
+  const updateCustomDimension = (dimension, value) => {
+    onCustomSizeChange({ ...customSize, [dimension]: value });
+    if (!customSizeActive) onSizeChange("custom");
+  };
 
   return (
     <div className="surface rounded-lg p-4">
@@ -83,7 +91,59 @@ export default function ParameterPanel({
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => onSizeChange("custom")}
+            className={`min-h-16 rounded-lg border p-3 text-left transition ${
+              customSizeActive
+                ? "border-accent/45 bg-accent/12"
+                : "border-border-subtle bg-bg-tertiary/72 hover:border-border-default hover:bg-bg-elevated"
+            }`}
+            aria-pressed={customSizeActive}
+          >
+            <span className={`flex items-center gap-1.5 text-sm font-semibold ${customSizeActive ? "text-accent" : "text-text-primary"}`}>
+              <Scaling size={14} />自定义
+            </span>
+            <span className="mt-0.5 block text-xs text-text-muted">精确宽高</span>
+            <span className="mt-1 block text-[11px] text-text-muted">
+              {customSize.width || "-"} x {customSize.height || "-"}
+            </span>
+          </button>
         </div>
+        {customSizeActive && (
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 border-t border-border-subtle pt-3">
+            <div>
+              <label htmlFor="custom-image-width" className="text-xs font-medium text-text-muted">宽度（px）</label>
+              <input
+                id="custom-image-width"
+                type="number"
+                inputMode="numeric"
+                min="256"
+                max="4096"
+                step="8"
+                value={customSize.width}
+                onChange={(event) => updateCustomDimension("width", event.target.value)}
+                className="mt-1.5 min-h-11 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary focus:border-accent/65"
+              />
+            </div>
+            <span className="pb-3 text-sm text-text-muted" aria-hidden="true">x</span>
+            <div>
+              <label htmlFor="custom-image-height" className="text-xs font-medium text-text-muted">高度（px）</label>
+              <input
+                id="custom-image-height"
+                type="number"
+                inputMode="numeric"
+                min="256"
+                max="4096"
+                step="8"
+                value={customSize.height}
+                onChange={(event) => updateCustomDimension("height", event.target.value)}
+                className="mt-1.5 min-h-11 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary focus:border-accent/65"
+              />
+            </div>
+            <p className="col-span-3 text-xs leading-5 text-text-muted">单边 256–4096 px，最终支持范围以图片服务商为准。</p>
+          </div>
+        )}
       </fieldset>
 
       <fieldset className="mb-4">

@@ -364,6 +364,9 @@ SIZE_OPTIONS = {
     "wide_21_9": {"label": "超宽 21:9", "width": 2016, "height": 864},
 }
 QUALITY_OPTIONS = {"auto", "medium", "high"}
+CUSTOM_SIZE_MIN = 256
+CUSTOM_SIZE_MAX = 4096
+CUSTOM_SIZE_MAX_PIXELS = 16_000_000
 
 
 def load_history():
@@ -501,8 +504,8 @@ def decode_provider_image(image_data):
     )
 
 
-def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landscape_16_9", quality="high", count=1):
-    size_cfg = SIZE_OPTIONS.get(size, SIZE_OPTIONS["landscape_16_9"])
+def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landscape_16_9", quality="high", count=1, custom_size=None):
+    size_cfg = custom_size or SIZE_OPTIONS.get(size, SIZE_OPTIONS["landscape_16_9"])
     payload = {
         "model": provider.model,
         "prompt": prompt,
@@ -617,7 +620,7 @@ def parse_generation_request(data):
         )
     size = data.get("size", "landscape_16_9")
     quality = data.get("quality", "high")
-    if size not in SIZE_OPTIONS or quality not in QUALITY_OPTIONS:
+    if (size not in SIZE_OPTIONS and size != "custom") or quality not in QUALITY_OPTIONS:
         raise ProviderError(
             "PARAMETER_INVALID",
             "生成参数无效",
@@ -625,7 +628,18 @@ def parse_generation_request(data):
             "尺寸或画质不在允许范围内。",
             ["重新选择尺寸", "重新选择画质", "再次生成"],
         )
+    custom_size = None
     try:
+        if size == "custom":
+            custom_width = int(data.get("custom_width", 0))
+            custom_height = int(data.get("custom_height", 0))
+            if not (
+                CUSTOM_SIZE_MIN <= custom_width <= CUSTOM_SIZE_MAX
+                and CUSTOM_SIZE_MIN <= custom_height <= CUSTOM_SIZE_MAX
+                and custom_width * custom_height <= CUSTOM_SIZE_MAX_PIXELS
+            ):
+                raise ValueError("custom size outside supported bounds")
+            custom_size = {"width": custom_width, "height": custom_height}
         count = max(1, min(int(data.get("count", 1)), 4))
         strength = max(0.0, min(float(data.get("strength", 0.65)), 1.0))
     except (TypeError, ValueError) as exc:
@@ -633,10 +647,10 @@ def parse_generation_request(data):
             "PARAMETER_INVALID",
             "生成参数无效",
             400,
-            "批量数量或参考强度格式不正确。",
-            ["恢复默认参数", "重新选择参数", "再次生成"],
+            "自定义尺寸、批量数量或参考强度格式不正确。自定义尺寸单边应为 256–4096 px，且总像素不超过 1600 万。",
+            ["检查自定义宽高", "恢复默认参数", "再次生成"],
         ) from exc
-    return prompt, size, quality, count, strength
+    return prompt, size, custom_size, quality, count, strength
 
 
 @app.errorhandler(413)
@@ -681,11 +695,11 @@ def generate():
     data = request.get_json(silent=True) or {}
     try:
         provider = resolve_provider_config()
-        prompt, size, quality, count, strength = parse_generation_request(data)
+        prompt, size, custom_size, quality, count, strength = parse_generation_request(data)
         style_name = data.get("style_name", "")
         if style_name in STYLE_TEMPLATES and STYLE_TEMPLATES[style_name] not in prompt:
             prompt = f"{prompt}。{STYLE_TEMPLATES[style_name]}"
-        images = generate_images(provider, prompt, data.get("reference_b64"), strength, size, quality, count)
+        images = generate_images(provider, prompt, data.get("reference_b64"), strength, size, quality, count, custom_size)
     except ProviderError as error:
         return provider_error_response(error)
     except Exception:
@@ -705,6 +719,7 @@ def generate():
         "prompt": prompt,
         "style": style_name,
         "size": size,
+        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
         "quality": quality,
         "strength": strength,
         "count": len(images),
@@ -722,7 +737,7 @@ def modify():
     data = request.get_json(silent=True) or {}
     try:
         provider = resolve_provider_config()
-        prompt, size, quality, _count, strength = parse_generation_request(data)
+        prompt, size, custom_size, quality, _count, strength = parse_generation_request(data)
         previous_image = os.path.basename(str(data.get("previous_image", "")))
         ref_b64 = stored_image_to_base64(previous_image) if previous_image else None
         if not ref_b64:
@@ -733,7 +748,7 @@ def modify():
                 "局部重绘需要一张仍保存在服务端的上一轮图片。",
                 ["重新生成一张图片", "确认没有清理输出目录", "再发起局部重绘"],
             )
-        images = generate_images(provider, prompt, ref_b64, strength, size, quality, 1)
+        images = generate_images(provider, prompt, ref_b64, strength, size, quality, 1, custom_size)
     except ProviderError as error:
         return provider_error_response(error)
     except Exception:
@@ -753,6 +768,7 @@ def modify():
         "prompt": prompt,
         "style": "迭代修改",
         "size": size,
+        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
         "quality": quality,
         "strength": strength,
         "count": 1,

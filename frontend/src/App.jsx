@@ -126,8 +126,9 @@ export default function App() {
   const [prompt, setPrompt] = useState(DEFAULT_PRESET.prompt);
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);
   const [size, setSize] = useState("landscape_16_9");
+  const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
   const [quality, setQuality] = useState("high");
-  const [count, setCount] = useState(2);
+  const [count, setCount] = useState(1);
   const [strength, setStrength] = useState(0.65);
   const [referenceFile, setReferenceFile] = useState(null);
   const [referencePreview, setReferencePreview] = useState(null);
@@ -272,12 +273,14 @@ export default function App() {
             previous_image: images[0].filename,
             strength,
             size,
+            ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
             parent_id: historyId,
           }
         : {
             prompt: prompt.trim(),
             size,
+            ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
             count,
             strength,
@@ -315,6 +318,8 @@ export default function App() {
     }
   }, [
     count,
+    customSize.height,
+    customSize.width,
     fileToBase64,
     historyId,
     images,
@@ -343,6 +348,7 @@ export default function App() {
             previous_image: prevImage,
             strength,
             size,
+            ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
             parent_id: historyId,
           }),
@@ -374,7 +380,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [historyId, providerHeaders, quality, size, strength],
+    [customSize.height, customSize.width, historyId, providerHeaders, quality, size, strength],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -396,6 +402,12 @@ export default function App() {
     setPrompt(entry.prompt);
     setActivePreset(null);
     setSize(entry.size || "landscape_16_9");
+    if (entry.size === "custom") {
+      setCustomSize({
+        width: String(entry.custom_width || 1024),
+        height: String(entry.custom_height || 1024),
+      });
+    }
     if (entry.quality) setQuality(entry.quality);
     if (entry.strength !== undefined) setStrength(entry.strength);
     if (entry.count !== undefined) setCount(entry.count);
@@ -549,6 +561,8 @@ export default function App() {
               <ParameterPanel
                 size={size}
                 onSizeChange={setSize}
+                customSize={customSize}
+                onCustomSizeChange={setCustomSize}
                 quality={quality}
                 onQualityChange={setQuality}
                 count={count}
