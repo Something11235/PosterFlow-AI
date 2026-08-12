@@ -8,7 +8,7 @@ import socket
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit
 
 import requests
@@ -49,6 +49,7 @@ ALLOWED_ORIGINS = [
 ALLOW_PRIVATE_PROVIDER_HOSTS = os.getenv("ALLOW_PRIVATE_PROVIDER_HOSTS", "0") == "1"
 ALLOW_INSECURE_PROVIDER_HTTP = os.getenv("ALLOW_INSECURE_PROVIDER_HTTP", "0") == "1"
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
+HISTORY_RETENTION_DAYS = 30
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_REQUEST_BYTES", str(24 * 1024 * 1024)))
@@ -405,8 +406,60 @@ def write_history(history):
         json.dump(records, file, ensure_ascii=False, indent=2)
 
 
+def parse_history_timestamp(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def partition_expired_history(history, now=None):
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    cutoff = current_time.astimezone(timezone.utc) - timedelta(days=HISTORY_RETENTION_DAYS)
+    retained = []
+    expired = []
+    for entry in history:
+        timestamp = parse_history_timestamp(entry.get("timestamp")) if isinstance(entry, dict) else None
+        if timestamp is not None and timestamp < cutoff:
+            expired.append(entry)
+        else:
+            retained.append(entry)
+    return retained, expired
+
+
+def cleanup_expired_history(history=None, persist=True, now=None):
+    original = load_history() if history is None else history
+    retained, expired = partition_expired_history(original, now=now)
+    if not expired:
+        return original
+
+    filenames = []
+    for entry in expired:
+        images = entry.get("images", [])
+        if isinstance(images, list):
+            filenames.extend(filename for filename in images if isinstance(filename, str) and filename)
+    try:
+        remove_stored_images(filenames)
+        if persist:
+            write_history(retained)
+    except (OSError, ProviderError, requests.RequestException):
+        app.logger.exception("Failed to clean expired generation history")
+        return original
+    return retained
+
+
 def save_history_entry(entry):
-    history = load_history()
+    history = cleanup_expired_history(load_history(), persist=False)
     history.insert(0, entry)
     write_history(history)
 
@@ -723,7 +776,7 @@ def generate():
         "quality": quality,
         "strength": strength,
         "count": len(images),
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "images": [image["filename"] for image in images],
         "provider": provider.host,
         "model": provider.model,
@@ -772,7 +825,7 @@ def modify():
         "quality": quality,
         "strength": strength,
         "count": 1,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "images": [image["filename"] for image in images],
         "parent_id": data.get("parent_id"),
         "provider": provider.host,
@@ -787,7 +840,7 @@ def get_history():
     page = max(0, request.args.get("page", 0, type=int))
     page_size = max(1, min(request.args.get("page_size", 20, type=int), 100))
     search = request.args.get("search", "").strip().lower()
-    history = load_history()
+    history = cleanup_expired_history()
     if search:
         history = [entry for entry in history if search in entry.get("prompt", "").lower()]
     total = len(history)
@@ -894,7 +947,8 @@ def health():
             "default_provider_host": default_host,
             "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
             "history_scope": "browser" if BLOB_STORAGE_ENABLED else "local-instance",
-            "timestamp": datetime.now().isoformat(),
+            "history_retention_days": HISTORY_RETENTION_DAYS,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
 

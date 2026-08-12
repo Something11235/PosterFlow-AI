@@ -41,6 +41,9 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q backend legacy
 
+      - name: Test history retention
+        run: python -m unittest discover -s tests -p "test_*.py"
+
       - name: Reject OpenRouter-looking secrets
         shell: bash
         run: |

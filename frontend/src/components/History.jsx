@@ -55,7 +55,7 @@ export default function History({ onClose, onLoadEntry }) {
           <Clock3 size={17} className="text-accent" />
           <div>
             <p className="text-sm font-semibold text-text-primary">历史记录</p>
-            <p className="text-xs text-text-muted">{total} 条生成任务</p>
+            <p className="text-xs text-text-muted">{total} 条生成任务 · 保留 30 天</p>
           </div>
         </div>
         <button
