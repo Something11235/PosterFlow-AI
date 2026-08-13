@@ -9,6 +9,14 @@ export const PROVIDER_PRESETS = {
     model: "openai/gpt-image-2",
     authType: "bearer",
   },
+  micu: {
+    id: "micu",
+    label: "米醋 API",
+    description: "使用米醋 API 的 OpenAI 图片兼容接口",
+    endpoint: "https://www.micuapi.ai/v1/images/generations",
+    model: "gpt-image-2",
+    authType: "bearer",
+  },
   custom: {
     id: "custom",
     label: "自定义中转站",
@@ -63,6 +71,7 @@ export function buildProviderHeaders(config) {
 export function getProviderDisplayName(config, serverHost = "") {
   if (isProviderConfigComplete(config)) {
     if (config.preset === "openrouter") return "OpenRouter";
+    if (config.preset === "micu") return "米醋 API";
     try {
       return new URL(config.endpoint).hostname;
     } catch {

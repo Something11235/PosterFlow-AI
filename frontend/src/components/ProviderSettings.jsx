@@ -146,7 +146,7 @@ export default function ProviderSettings({
               <h2 id="provider-settings-title" className="text-base font-semibold text-text-primary">
                 图片服务配置
               </h2>
-              <p className="mt-1 text-sm leading-6 text-text-muted">连接 OpenRouter 或其他 OpenAI 兼容图片中转站。</p>
+              <p className="mt-1 text-sm leading-6 text-text-muted">选择预设服务，或连接其他 OpenAI 兼容图片中转站。</p>
             </div>
           </div>
           <button
@@ -172,7 +172,7 @@ export default function ProviderSettings({
 
           <fieldset>
             <legend className="mb-2 text-sm font-medium text-text-secondary">服务类型</legend>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {Object.values(PROVIDER_PRESETS).map((preset) => {
                 const active = draft.preset === preset.id;
                 return (
@@ -234,7 +234,7 @@ export default function ProviderSettings({
                 id="provider-endpoint"
                 type="url"
                 value={draft.endpoint}
-                onChange={(event) => updateDraft({ endpoint: event.target.value, preset: draft.preset === "openrouter" ? "custom" : draft.preset })}
+                onChange={(event) => updateDraft({ endpoint: event.target.value, preset: "custom" })}
                 placeholder="https://example.com/v1/images/generations"
                 className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary placeholder:text-text-muted focus:border-accent/65"
               />
