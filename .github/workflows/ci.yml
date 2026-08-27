@@ -47,7 +47,7 @@ jobs:
       - name: Reject API-key-looking secrets
         shell: bash
         run: |
-          if grep -RIE --exclude-dir=.git --exclude=ci.yml 'sk-[[:alnum:]_-]{20,}' .; then
+          if git grep -IEn 'sk-[[:alnum:]_-]{20,}' -- . ':(exclude).github/workflows/ci.yml'; then
             echo "Potential API key found"
             exit 1
           fi
