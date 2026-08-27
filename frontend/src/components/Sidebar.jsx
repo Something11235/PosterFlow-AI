@@ -65,7 +65,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      <nav className="mt-4 grid min-w-0 grid-cols-3 gap-2 lg:flex lg:flex-col" aria-label="功能模式">
+      <nav className="mt-4 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:flex lg:flex-col" aria-label="功能模式">
         {Object.entries(modes).map(([key, item]) => {
           const Icon = item.icon;
           const active = mode === key;

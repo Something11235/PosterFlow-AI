@@ -8,6 +8,7 @@ import {
   ImagePlus,
   Loader2,
   Maximize2,
+  PanelsTopLeft,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -28,6 +29,7 @@ export default function Gallery({
   onSelectAll,
   onClearSelection,
   onDownloadBatch,
+  onAddToCanvas,
   onCopyPrompt,
   onRetry,
   providerModel,
@@ -90,6 +92,19 @@ export default function Gallery({
               >
                 <Download size={14} />
                 批量导出
+              </button>
+              <button
+                type="button"
+                onClick={() => onAddToCanvas([...selectedImages])}
+                disabled={selectedCount === 0}
+                className={`inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition ${
+                  selectedCount === 0
+                    ? "cursor-not-allowed border-border-subtle text-text-muted"
+                    : "border-accent/40 bg-accent/10 text-accent hover:bg-accent/16"
+                }`}
+              >
+                <PanelsTopLeft size={14} />
+                加入画布
               </button>
             </>
           )}
@@ -171,14 +186,26 @@ export default function Gallery({
                       <p className="truncate text-sm font-medium text-text-primary">生成图片版本 {index + 1}</p>
                       <p className="mt-0.5 truncate text-xs text-text-muted">PNG · {providerModel || "图片模型"} · 可下载</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onPreview(img.filename)}
-                      className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border-subtle text-text-muted transition hover:bg-bg-elevated hover:text-text-primary"
-                      title="查看原图"
-                    >
-                      <Maximize2 size={15} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onAddToCanvas([img.filename])}
+                        className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border-subtle text-text-muted transition hover:border-accent/35 hover:bg-accent/10 hover:text-accent"
+                        aria-label="加入无限画布"
+                        title="加入无限画布"
+                      >
+                        <PanelsTopLeft size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onPreview(img.filename)}
+                        className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-border-subtle text-text-muted transition hover:bg-bg-elevated hover:text-text-primary"
+                        aria-label="查看原图"
+                        title="查看原图"
+                      >
+                        <Maximize2 size={15} />
+                      </button>
+                    </div>
                   </div>
                 </article>
               );

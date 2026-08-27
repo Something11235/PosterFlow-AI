@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Copy,
@@ -6,6 +6,7 @@ import {
   History as HistoryIcon,
   Image as ImageIcon,
   Layers3,
+  PanelsTopLeft,
   PanelRightOpen,
   ServerCog,
   WandSparkles,
@@ -28,6 +29,8 @@ import {
 } from "./lib/provider";
 import { CLIENT_HEADERS } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
+
+const CanvasWorkspace = lazy(() => import("./components/CanvasWorkspace"));
 
 const API_BASE = "/api";
 const DEFAULT_ERROR = {
@@ -119,6 +122,12 @@ const MODE_META = {
     description: "自动参考上一轮结果，只根据本次追加要求重绘",
     icon: Layers3,
   },
+  canvas: {
+    label: "无限画布",
+    eyebrow: "本机项目",
+    description: "自由排版、标注、导入图片并导出完整视觉画布",
+    icon: PanelsTopLeft,
+  },
 };
 
 export default function App() {
@@ -147,6 +156,7 @@ export default function App() {
   const [stylesData, setStylesData] = useState(FALLBACK_STYLE_DATA);
   const [providerConfig, setProviderConfig] = useState(loadProviderConfig);
   const [serverProvider, setServerProvider] = useState({ configured: false, host: "" });
+  const [pendingCanvasImport, setPendingCanvasImport] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -208,15 +218,40 @@ export default function App() {
     [providerConfig],
   );
 
-  const workspaceStats = useMemo(
-    () => [
+  const workspaceStats = useMemo(() => {
+    if (mode === "canvas") {
+      return [
+        { label: "存储", value: "当前浏览器" },
+        { label: "可用素材", value: `${images.length} 张` },
+        { label: "画布", value: "自动保存" },
+      ];
+    }
+    return [
       { label: "画幅", value: sizeInfo ? sizeInfo.label : "横版 16:9" },
       { label: "预设", value: activePreset?.name || "自由创作" },
       { label: "画质", value: quality === "high" ? "高清" : quality === "medium" ? "标准" : "自动" },
       { label: "批量", value: `${count} 张` },
-    ],
-    [activePreset, count, quality, sizeInfo],
-  );
+    ];
+  }, [activePreset, count, images.length, mode, quality, sizeInfo]);
+
+  const handleAddToCanvas = useCallback((filenames) => {
+    const uniqueFilenames = [...new Set(filenames.filter(Boolean))];
+    if (!uniqueFilenames.length) return;
+    setPendingCanvasImport({
+      id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+      filenames: uniqueFilenames,
+    });
+    setSelectedImages(new Set());
+    setShowHistory(false);
+    setMode("canvas");
+    setNotice(`正在送入画布：${uniqueFilenames.length} 张图片`);
+  }, []);
+
+  const handleCanvasGenerated = useCallback(({ image, prompt: generatedPrompt, historyId: generatedHistoryId }) => {
+    setImages([image]);
+    setCurrentPrompt(generatedPrompt);
+    setHistoryId(generatedHistoryId);
+  }, []);
 
   const fileToBase64 = useCallback((file) => {
     return new Promise((resolve, reject) => {
@@ -459,7 +494,7 @@ export default function App() {
 
   useEffect(() => {
     const handler = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      if (mode !== "canvas" && (e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         handleGenerate();
       }
@@ -470,7 +505,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleGenerate]);
+  }, [handleGenerate, mode]);
 
   return (
     <div className="min-h-dvh bg-bg-primary text-text-primary subtle-grid lg:h-dvh lg:overflow-hidden">
@@ -495,7 +530,9 @@ export default function App() {
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                  <h1 className="truncate text-base font-semibold text-text-primary">AI图片工坊</h1>
+                    <h1 className="truncate text-base font-semibold text-text-primary">
+                      {mode === "canvas" ? "视觉无限画布" : "AI图片工坊"}
+                    </h1>
                     <span className="rounded-md border border-mint/25 bg-mint/10 px-2 py-0.5 text-[11px] font-medium text-mint">
                       多服务商在线工作台
                     </span>
@@ -506,9 +543,14 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                 {workspaceStats.map((item) => (
-                  <div key={item.label} className="rounded-lg border border-border-subtle bg-bg-secondary px-3 py-2">
+                  <div
+                    key={item.label}
+                    className={`rounded-lg border border-border-subtle bg-bg-secondary px-3 py-2 ${
+                      mode === "canvas" ? "hidden sm:block" : ""
+                    }`}
+                  >
                     <p className="text-[11px] text-text-muted">{item.label}</p>
                     <p className="mt-0.5 text-xs font-medium text-text-secondary">{item.value}</p>
                   </div>
@@ -516,7 +558,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowHistory((p) => !p)}
-                  className="col-span-2 flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-secondary px-3 text-sm text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary sm:col-span-1"
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-secondary px-3 text-sm text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary"
                 >
                   <HistoryIcon size={16} />
                   历史
@@ -526,7 +568,7 @@ export default function App() {
                   onClick={() => setShowProviderSettings(true)}
                   aria-label="图片服务配置"
                   title="图片服务配置"
-                  className={`col-span-2 flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm transition sm:col-span-1 ${
+                  className={`flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border px-3 text-sm transition ${
                     providerConfigured
                       ? "border-mint/30 bg-mint/10 text-mint hover:bg-mint/15"
                       : "border-gold/35 bg-gold/10 text-gold hover:bg-gold/15"
@@ -539,7 +581,40 @@ export default function App() {
             </div>
           </header>
 
-          <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(360px,430px)_minmax(0,1fr)] lg:overflow-hidden lg:p-6">
+          {mode === "canvas" && (
+            <div className="h-[680px] flex-none lg:h-auto lg:min-h-0 lg:flex-1">
+              <Suspense
+                fallback={
+                  <div className="flex h-full min-h-[680px] items-center justify-center gap-3 bg-bg-primary text-sm text-text-muted lg:min-h-0">
+                    <Activity size={17} className="animate-spin-soft text-accent" />
+                    正在加载画布
+                  </div>
+                }
+              >
+                <CanvasWorkspace
+                  galleryImages={images}
+                  pendingImport={pendingCanvasImport}
+                  onImportHandled={(id) =>
+                    setPendingCanvasImport((current) => (current?.id === id ? null : current))
+                  }
+                  onNotice={setNotice}
+                  providerConfigured={providerConfigured}
+                  providerName={providerName}
+                  providerHeaders={providerHeaders}
+                  onOpenProvider={() => setShowProviderSettings(true)}
+                  onCanvasGenerated={handleCanvasGenerated}
+                />
+              </Suspense>
+            </div>
+          )}
+
+          <div
+            className={
+              mode === "canvas"
+                ? "hidden"
+                : "grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(360px,430px)_minmax(0,1fr)] lg:overflow-hidden lg:p-6"
+            }
+          >
             <section className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pr-1">
               <PresetLibrary activePresetId={activePreset?.id} onApplyPreset={handleApplyPreset} />
               <PromptEditor
@@ -589,6 +664,7 @@ export default function App() {
                 onSelectAll={() => setSelectedImages(new Set(images.map((img) => img.filename)))}
                 onClearSelection={() => setSelectedImages(new Set())}
                 onDownloadBatch={handleDownloadBatch}
+                onAddToCanvas={handleAddToCanvas}
                 onCopyPrompt={handleCopyPrompt}
                 onRetry={handleGenerate}
                 providerModel={hasBrowserProvider ? providerConfig.model : "服务器默认模型"}

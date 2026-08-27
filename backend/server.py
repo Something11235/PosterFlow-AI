@@ -49,6 +49,7 @@ ALLOWED_ORIGINS = [
 ALLOW_PRIVATE_PROVIDER_HOSTS = os.getenv("ALLOW_PRIVATE_PROVIDER_HOSTS", "0") == "1"
 ALLOW_INSECURE_PROVIDER_HTTP = os.getenv("ALLOW_INSECURE_PROVIDER_HTTP", "0") == "1"
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
+MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
 HISTORY_RETENTION_DAYS = 30
 
 app = Flask(__name__, static_folder=None)
@@ -336,8 +337,10 @@ def resolve_provider_config(resolve_dns=True):
     return ProviderConfig(api_key, endpoint, model, auth_type, source)
 
 
-def provider_headers(provider):
-    headers = {"Content-Type": "application/json"}
+def provider_headers(provider, content_type="application/json"):
+    headers = {}
+    if content_type:
+        headers["Content-Type"] = content_type
     if provider.auth_type == "x-api-key":
         headers["x-api-key"] = provider.api_key
     else:
@@ -486,6 +489,117 @@ def stored_image_to_base64(filename):
     return image_to_base64(path) if os.path.exists(path) else None
 
 
+def validate_reference_image_b64(value):
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ProviderError(
+            "REFERENCE_IMAGE_INVALID",
+            "参考图格式无效",
+            400,
+            "参考图必须使用 Base64 字符串传输。",
+            ["重新选择参考图", "使用 PNG、JPG、WebP 或 GIF", "再次生成"],
+        )
+
+    encoded = value.strip()
+    if encoded.startswith("data:"):
+        match = re.fullmatch(
+            r"data:image/(png|jpe?g|webp|gif);base64,(.+)",
+            encoded,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            raise ProviderError(
+                "REFERENCE_IMAGE_INVALID",
+                "参考图格式无效",
+                400,
+                "参考图 Data URL 不是受支持的图片 Base64。",
+                ["重新选择参考图", "使用 PNG、JPG、WebP 或 GIF", "再次生成"],
+            )
+        encoded = match.group(2).strip()
+
+    try:
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ProviderError(
+            "REFERENCE_IMAGE_INVALID",
+            "参考图无法读取",
+            400,
+            "参考图 Base64 内容不完整或已损坏。",
+            ["重新导入图片", "降低图片大小", "再次生成"],
+        ) from exc
+
+    if len(image_bytes) > MAX_REFERENCE_IMAGE_BYTES:
+        raise ProviderError(
+            "REFERENCE_IMAGE_TOO_LARGE",
+            "参考图超过大小限制",
+            413,
+            "参考图解码后不能超过 16 MB。",
+            ["压缩参考图", "降低画布导出分辨率", "再次生成"],
+        )
+
+    supported = (
+        image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        or image_bytes.startswith(b"\xff\xd8\xff")
+        or image_bytes.startswith((b"GIF87a", b"GIF89a"))
+        or (len(image_bytes) >= 12 and image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP")
+    )
+    if not supported:
+        raise ProviderError(
+            "REFERENCE_IMAGE_UNSUPPORTED",
+            "不支持此参考图格式",
+            400,
+            "参考图仅支持 PNG、JPG、WebP 或 GIF。",
+            ["转换图片格式", "重新导入图片", "再次生成"],
+        )
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def validate_reference_images_b64(values):
+    if values in (None, ""):
+        return []
+    if not isinstance(values, list) or not 1 <= len(values) <= 4:
+        raise ProviderError(
+            "REFERENCE_IMAGES_INVALID",
+            "参考图数量无效",
+            400,
+            "参考图列表必须包含 1 至 4 张图片。",
+            ["重新选择画布原图", "减少参考图数量", "再次生成"],
+        )
+    return [validate_reference_image_b64(value) for value in values]
+
+
+def reference_image_upload(encoded, index):
+    image_bytes = base64.b64decode(encoded, validate=True)
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        extension, mime = "png", "image/png"
+    elif image_bytes.startswith(b"\xff\xd8\xff"):
+        extension, mime = "jpg", "image/jpeg"
+    elif image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        extension, mime = "gif", "image/gif"
+    else:
+        extension, mime = "webp", "image/webp"
+    return f"reference-{index}.{extension}", image_bytes, mime
+
+
+def provider_edit_endpoint(provider):
+    parsed = urlsplit(provider.endpoint)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/images/generations"):
+        path = f"{path[:-len('/images/generations')]}/images/edits"
+    elif not path.endswith("/images/edits"):
+        raise ProviderError(
+            "PROVIDER_EDIT_ENDPOINT_UNKNOWN",
+            "无法确定图片编辑接口",
+            400,
+            "当前生成接口地址不是标准的 /v1/images/generations，无法自动推导 /v1/images/edits。",
+            ["将接口地址改为标准 OpenAI 图片生成端点", "确认服务商支持图片编辑", "重新保存服务配置"],
+        )
+    edit_endpoint = parsed._replace(path=path).geturl()
+    validate_provider_endpoint(edit_endpoint, resolve_dns=False)
+    return edit_endpoint
+
+
 def store_generated_image(filename, image_bytes):
     if BLOB_STORAGE_ENABLED:
         _blob_put(_image_blob_path(filename), image_bytes, "image/png")
@@ -566,17 +680,36 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
         "size": f"{size_cfg['width']}x{size_cfg['height']}",
         "quality": quality,
     }
-    if ref_b64:
-        payload["image_b64"] = ref_b64
-        payload["strength"] = strength
+    references = ref_b64 if isinstance(ref_b64, list) else ([ref_b64] if ref_b64 else [])
 
     try:
-        response = requests.post(
-            provider.endpoint,
-            headers=provider_headers(provider),
-            json=payload,
-            timeout=300,
-        )
+        if references:
+            normalized_references = [validate_reference_image_b64(value) for value in references]
+            file_field = "image" if len(normalized_references) == 1 else "image[]"
+            files = [
+                (file_field, reference_image_upload(encoded, index))
+                for index, encoded in enumerate(normalized_references, start=1)
+            ]
+            response = requests.post(
+                provider_edit_endpoint(provider),
+                headers=provider_headers(provider, content_type=None),
+                data={
+                    "model": provider.model,
+                    "prompt": prompt,
+                    "n": str(count),
+                    "size": payload["size"],
+                    "response_format": "b64_json",
+                },
+                files=files,
+                timeout=300,
+            )
+        else:
+            response = requests.post(
+                provider.endpoint,
+                headers=provider_headers(provider),
+                json=payload,
+                timeout=300,
+            )
     except requests.exceptions.Timeout as exc:
         raise ProviderError(
             "PROVIDER_TIMEOUT",
@@ -622,7 +755,11 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
             "图片生成服务拒绝了本次请求",
             response.status_code if response.status_code >= 400 else 502,
             str(provider_error),
-            ["检查 API Key、余额与模型权限", "核对接口地址和模型标识", "降低批量数量后重试"],
+            [
+                "检查 API Key、余额与模型权限",
+                "参考图编辑需确认服务商支持 /v1/images/edits",
+                "核对接口地址和模型标识",
+            ],
         )
 
     items = result.get("data") or result.get("images") or []
@@ -752,7 +889,8 @@ def generate():
         style_name = data.get("style_name", "")
         if style_name in STYLE_TEMPLATES and STYLE_TEMPLATES[style_name] not in prompt:
             prompt = f"{prompt}。{STYLE_TEMPLATES[style_name]}"
-        images = generate_images(provider, prompt, data.get("reference_b64"), strength, size, quality, count, custom_size)
+        reference_b64 = validate_reference_image_b64(data.get("reference_b64"))
+        images = generate_images(provider, prompt, reference_b64, strength, size, quality, count, custom_size)
     except ProviderError as error:
         return provider_error_response(error)
     except Exception:
@@ -791,15 +929,19 @@ def modify():
     try:
         provider = resolve_provider_config()
         prompt, size, custom_size, quality, _count, strength = parse_generation_request(data)
-        previous_image = os.path.basename(str(data.get("previous_image", "")))
-        ref_b64 = stored_image_to_base64(previous_image) if previous_image else None
+        direct_references = validate_reference_images_b64(data.get("reference_images_b64"))
+        if not direct_references:
+            single_reference = validate_reference_image_b64(data.get("reference_b64"))
+            direct_references = [single_reference] if single_reference else []
+        previous_image = os.path.basename(str(data.get("previous_image", ""))) if not direct_references else ""
+        ref_b64 = direct_references or (stored_image_to_base64(previous_image) if previous_image else None)
         if not ref_b64:
             raise ProviderError(
                 "PREVIOUS_IMAGE_MISSING",
-                "找不到上一轮图片",
+                "找不到重绘参考图",
                 400,
-                "局部重绘需要一张仍保存在服务端的上一轮图片。",
-                ["重新生成一张图片", "确认没有清理输出目录", "再发起局部重绘"],
+                "局部重绘需要一张仍保存在服务端的历史图片，或由画布提交一张参考图。",
+                ["重新选择画布图片", "确认历史图片没有过期", "再发起局部重绘"],
             )
         images = generate_images(provider, prompt, ref_b64, strength, size, quality, 1, custom_size)
     except ProviderError as error:
@@ -819,7 +961,7 @@ def modify():
     history_entry = {
         "id": uuid.uuid4().hex[:12],
         "prompt": prompt,
-        "style": "迭代修改",
+        "style": "画布标注重绘" if direct_references else "迭代修改",
         "size": size,
         **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
         "quality": quality,
@@ -971,5 +1113,6 @@ if __name__ == "__main__":
     print("  Configure a provider in the browser or with environment variables")
     print("=" * 58)
     debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    host = os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1"
     port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)
+    app.run(host=host, port=port, debug=debug, use_reloader=False)

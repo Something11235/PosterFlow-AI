@@ -44,12 +44,11 @@ jobs:
       - name: Test history retention
         run: python -m unittest discover -s tests -p "test_*.py"
 
-      - name: Reject OpenRouter-looking secrets
+      - name: Reject API-key-looking secrets
         shell: bash
         run: |
-          secret_prefix="sk-or-v1"
-          if grep -RIE --exclude-dir=.git --exclude=ci.yml "${secret_prefix}-[[:alnum:]]{20,}" .; then
-            echo "Potential OpenRouter secret found"
+          if grep -RIE --exclude-dir=.git --exclude=ci.yml 'sk-[[:alnum:]_-]{20,}' .; then
+            echo "Potential API key found"
             exit 1
           fi
 
