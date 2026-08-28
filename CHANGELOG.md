@@ -3,6 +3,7 @@
 ## 0.2.0 - 2026-08-28
 
 - Added an IndexedDB-backed infinite canvas with local image import, gallery handoff, layout tools, and PNG export.
+- Replaced the production-gated tldraw canvas with MIT-licensed Fabric.js so local image rendering works on public domains without a canvas license key.
 - Added AI image frames for seven common aspect ratios and in-place generated-image replacement.
 - Added annotation redraw with large red arrows and text, automatic nearby-annotation detection, and recognized text extraction.
 - Added a no-cost preflight preview showing the clean reference, annotated reference, recognized instructions, and compressed sizes.

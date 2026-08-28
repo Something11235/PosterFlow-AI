@@ -30,7 +30,7 @@ import {
 import { CLIENT_HEADERS } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
 
-const CanvasWorkspace = lazy(() => import("./components/CanvasWorkspace"));
+const CanvasWorkspace = lazy(() => import("./components/FabricCanvasWorkspace"));
 
 const API_BASE = "/api";
 const DEFAULT_ERROR = {
