@@ -40,8 +40,10 @@ const CANVAS_DB_KEY = "main-v1";
 const CANVAS_AI_DRAFT_KEY = "posterflow-ai.canvas-ai-drafts.v1";
 const IMPORT_DISPLAY_MAX_WIDTH = 1090;
 const IMPORT_DISPLAY_MAX_HEIGHT = 1000;
-const REFERENCE_EXPORT_MAX_EDGE = 2048;
-const REFERENCE_EXPORT_MAX_BYTES = 3.2 * 1024 * 1024;
+const REFERENCE_EXPORT_MAX_EDGE = 1600;
+const CLEAN_REFERENCE_MAX_BYTES = 1.35 * 1024 * 1024;
+const ANNOTATED_REFERENCE_MAX_BYTES = 1.05 * 1024 * 1024;
+const CANVAS_AI_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
 const ANNOTATION_COLOR = "#ef4444";
 const ANNOTATION_TYPES = new Set(["annotation-arrow", "annotation-text", "annotation-shape"]);
 
@@ -331,8 +333,8 @@ function blobToBase64(blob) {
   });
 }
 
-async function compressReferenceBlob(blob) {
-  if (blob.size <= REFERENCE_EXPORT_MAX_BYTES) return blob;
+async function compressReferenceBlob(blob, maxBytes) {
+  if (blob.size <= maxBytes) return blob;
   const bitmap = await createImageBitmap(blob);
   let scale = 1;
   let quality = 0.9;
@@ -353,7 +355,7 @@ async function compressReferenceBlob(blob) {
           quality,
         );
       });
-      if (compressed.size <= REFERENCE_EXPORT_MAX_BYTES) return compressed;
+      if (compressed.size <= maxBytes) return compressed;
       if (quality > 0.65) quality -= 0.1;
       else {
         scale *= 0.8;
@@ -366,7 +368,7 @@ async function compressReferenceBlob(blob) {
   throw new Error("参考图压缩后仍然过大，请缩小画布选区后重试。");
 }
 
-async function exportObjects(canvas, objects, padding = 0, maxEdge = null) {
+async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBytes = CLEAN_REFERENCE_MAX_BYTES) {
   const targets = objects.filter((object) => object && canvas.getObjects().includes(object));
   const bounds = unionBounds(targets);
   if (!bounds) throw new Error("没有可导出的画布内容");
@@ -391,7 +393,7 @@ async function exportObjects(canvas, objects, padding = 0, maxEdge = null) {
       multiplier,
     });
     const blob = dataUrlToBlob(dataUrl);
-    return maxEdge ? compressReferenceBlob(blob) : blob;
+    return maxEdge ? compressReferenceBlob(blob, maxBytes) : blob;
   } finally {
     visibility.forEach((visible, object) => object.set("visible", visible));
     canvas.backgroundColor = previousBackground;
@@ -431,6 +433,23 @@ function apiError(data, fallback) {
   };
 }
 
+
+async function readApiResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    const requestTooLarge = response.status === 413 || /request (entity|body) too large/i.test(text);
+    return {
+      error: requestTooLarge ? "重绘参考图超过在线传输限制" : "图片服务返回了无法识别的响应",
+      code: requestTooLarge ? "REQUEST_TOO_LARGE" : "INVALID_RESPONSE",
+      detail: requestTooLarge
+        ? "参考图经过编码后仍超过 Vercel 请求体限制，请重新检查参考图后再生成。"
+        : "接口返回的不是 JSON 数据。HTTP " + response.status + "。",
+    };
+  }
+}
 function ReferencePreview({ preview, closeButtonRef, onClose }) {
   return (
     <div
@@ -1178,9 +1197,21 @@ export default function FabricCanvasWorkspace({
         };
       } else {
         endpoint = "/api/modify";
-        const cleanReference = await exportObjects(canvas, [target.raw], 0, REFERENCE_EXPORT_MAX_EDGE);
+        const cleanReference = await exportObjects(
+          canvas,
+          [target.raw],
+          0,
+          REFERENCE_EXPORT_MAX_EDGE,
+          CLEAN_REFERENCE_MAX_BYTES,
+        );
         const annotationReference = currentSelection.annotationCount
-          ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE)
+          ? await exportObjects(
+              canvas,
+              currentSelection.objects,
+              24,
+              REFERENCE_EXPORT_MAX_EDGE,
+              ANNOTATED_REFERENCE_MAX_BYTES,
+            )
           : null;
         const referenceImages = [await blobToBase64(cleanReference)];
         if (annotationReference) referenceImages.push(await blobToBase64(annotationReference));
@@ -1211,12 +1242,22 @@ export default function FabricCanvasWorkspace({
         };
       }
 
+      const requestBody = JSON.stringify(body);
+      const requestBytes = new Blob([requestBody]).size;
+      if (requestBytes > CANVAS_AI_REQUEST_MAX_BYTES) {
+        setAiError({
+          message: "重绘参考图超过在线传输限制",
+          detail: "本次请求编码后为 " + formatBytes(requestBytes) + "，请重新检查参考图后再生成。",
+        });
+        setStatus({ type: "error", message: "重绘请求体积过大" });
+        return;
+      }
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...providerHeaders },
-        body: JSON.stringify(body),
+        body: requestBody,
       });
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok || data.error) {
         setAiError(apiError(data, workflow === "frame" ? "图框生成失败" : "画布重绘失败"));
         setStatus({ type: "error", message: workflow === "frame" ? "图框生成失败" : "画布重绘失败" });
@@ -1254,9 +1295,21 @@ export default function FabricCanvasWorkspace({
     previewReturnFocusRef.current = document.activeElement;
     setStatus({ type: "loading", message: "正在准备重绘检查" });
     try {
-      const cleanBlob = await exportObjects(canvas, [currentSelection.image.raw], 0, REFERENCE_EXPORT_MAX_EDGE);
+      const cleanBlob = await exportObjects(
+        canvas,
+        [currentSelection.image.raw],
+        0,
+        REFERENCE_EXPORT_MAX_EDGE,
+        CLEAN_REFERENCE_MAX_BYTES,
+      );
       const annotationBlob = currentSelection.annotationCount
-        ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE)
+        ? await exportObjects(
+            canvas,
+            currentSelection.objects,
+            24,
+            REFERENCE_EXPORT_MAX_EDGE,
+            ANNOTATED_REFERENCE_MAX_BYTES,
+          )
         : null;
       setReferencePreview({
         cleanUrl: URL.createObjectURL(cleanBlob),
