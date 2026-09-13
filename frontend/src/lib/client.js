@@ -20,7 +20,7 @@ export function getClientId() {
 export const CLIENT_ID = getClientId();
 export const CLIENT_HEADERS = Object.freeze({ "X-Client-Id": CLIENT_ID });
 
-export function apiAssetUrl(kind, filename) {
+export function apiAssetUrl(kind, filename, { authenticated = false } = {}) {
   const safeFilename = encodeURIComponent(filename);
-  return `/api/${kind}/${safeFilename}?client_id=${encodeURIComponent(CLIENT_ID)}`;
+  return authenticated ? `/api/${kind}/${safeFilename}` : `/api/${kind}/${safeFilename}?client_id=${encodeURIComponent(CLIENT_ID)}`;
 }

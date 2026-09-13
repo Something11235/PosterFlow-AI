@@ -1,10 +1,9 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Copy,
   Download,
   History as HistoryIcon,
-  Image as ImageIcon,
   Layers3,
   PanelsTopLeft,
   PanelRightOpen,
@@ -14,6 +13,9 @@ import {
 import Gallery from "./components/Gallery";
 import History from "./components/History";
 import ImageModal from "./components/ImageModal";
+import AuthModal from "./components/AuthModal";
+import AccountPanel from "./components/AccountPanel";
+import AdminMetricsPanel from "./components/AdminMetricsPanel";
 import ParameterPanel from "./components/ParameterPanel";
 import PromptEditor from "./components/PromptEditor";
 import PresetLibrary from "./components/PresetLibrary";
@@ -25,14 +27,20 @@ import {
   getProviderDisplayName,
   isProviderConfigComplete,
   loadProviderConfig,
+  MAX_REFERENCE_IMAGES,
   saveProviderConfig,
 } from "./lib/provider";
 import { CLIENT_HEADERS } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
+import { supabase, supabaseConfigured } from "./lib/supabase";
 
 const CanvasWorkspace = lazy(() => import("./components/FabricCanvasWorkspace"));
 
 const API_BASE = "/api";
+
+function createRequestId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 const DEFAULT_ERROR = {
   message: "生成失败，请检查接口配置",
   code: "GENERATE_FAILED",
@@ -104,17 +112,11 @@ const FALLBACK_STYLE_DATA = {
 };
 
 const MODE_META = {
-  "text-to-image": {
-    label: "文生图",
-    eyebrow: "独立生成",
-    description: "每次只使用当前提示词，不继承上一轮图片或文字",
+  create: {
+    label: "AI创作",
+    eyebrow: "文字 + 素材",
+    description: "像 GPT 图片一样，用提示词和可选参考素材共同创作",
     icon: WandSparkles,
-  },
-  "image-to-image": {
-    label: "图生图",
-    eyebrow: "独立生成",
-    description: "每次只使用当前提示词，可选一张参考图",
-    icon: ImageIcon,
   },
   iterative: {
     label: "局部重绘",
@@ -131,16 +133,15 @@ const MODE_META = {
 };
 
 export default function App() {
-  const [mode, setMode] = useState("text-to-image");
+  const [mode, setMode] = useState("create");
   const [prompt, setPrompt] = useState(DEFAULT_PRESET.prompt);
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);
   const [size, setSize] = useState("landscape_16_9");
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
   const [quality, setQuality] = useState("high");
   const [count, setCount] = useState(1);
-  const [strength, setStrength] = useState(0.65);
-  const [referenceFile, setReferenceFile] = useState(null);
-  const [referencePreview, setReferencePreview] = useState(null);
+  const [referenceFiles, setReferenceFiles] = useState([]);
+  const [referencePreviews, setReferencePreviews] = useState([]);
 
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -155,8 +156,17 @@ export default function App() {
   const [selectedImages, setSelectedImages] = useState(new Set());
   const [stylesData, setStylesData] = useState(FALLBACK_STYLE_DATA);
   const [providerConfig, setProviderConfig] = useState(loadProviderConfig);
-  const [serverProvider, setServerProvider] = useState({ configured: false, host: "" });
+  const [serverProvider, setServerProvider] = useState({ configured: false, platformConfigured: false, host: "" });
   const [pendingCanvasImport, setPendingCanvasImport] = useState(null);
+  const [billingMode, setBillingMode] = useState("platform");
+  const [session, setSession] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const sessionRef = useRef(null);
+  const accountRequestRef = useRef(0);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -182,6 +192,82 @@ export default function App() {
     };
   }, []);
 
+  const authHeaders = useMemo(
+    () => ({ ...CLIENT_HEADERS, ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) }),
+    [session],
+  );
+
+  const refreshAccount = useCallback(async (activeSession) => {
+    const targetSession = activeSession || sessionRef.current;
+    const requestNumber = ++accountRequestRef.current;
+    if (!targetSession?.access_token) {
+      setAccount(null);
+      setAccountLoading(false);
+      return null;
+    }
+    setAccountLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/account`, {
+        headers: { ...CLIENT_HEADERS, Authorization: `Bearer ${targetSession.access_token}` },
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.detail || data.error || "账户信息加载失败");
+      if (requestNumber === accountRequestRef.current) setAccount(data);
+      return data;
+    } catch (reason) {
+      if (requestNumber === accountRequestRef.current) {
+        setError({ message: "账户信息暂时不可用", code: "ACCOUNT_LOAD_FAILED", detail: reason.message, recovery: ["检查 Supabase 配置", "刷新页面", "稍后重试"] });
+      }
+      return null;
+    } finally {
+      if (requestNumber === accountRequestRef.current) setAccountLoading(false);
+    }
+  }, []);
+
+  const syncBackendSession = useCallback(async (nextSession) => {
+    if (!nextSession?.access_token) return;
+    try {
+      await fetch(`${API_BASE}/auth/session`, {
+        method: "POST",
+        headers: { ...CLIENT_HEADERS, Authorization: `Bearer ${nextSession.access_token}` },
+        credentials: "include",
+      });
+    } catch {
+      // Protected requests still carry the bearer token; the cookie is a convenience for asset requests.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase) return undefined;
+    let alive = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!alive) return;
+      sessionRef.current = data.session;
+      setSession(data.session);
+      if (data.session) {
+        syncBackendSession(data.session);
+        refreshAccount(data.session);
+      }
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      if (nextSession) {
+        syncBackendSession(nextSession);
+        refreshAccount(nextSession);
+      } else {
+        accountRequestRef.current += 1;
+        setAccount(null);
+        setAccountLoading(false);
+      }
+    });
+    return () => {
+      alive = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [refreshAccount, syncBackendSession]);
+
   useEffect(() => {
     let alive = true;
     fetch(`${API_BASE}/health`, { headers: CLIENT_HEADERS })
@@ -190,11 +276,13 @@ export default function App() {
         if (!alive) return;
         setServerProvider({
           configured: Boolean(data?.server_provider_configured),
-          host: data?.default_provider_host || "",
+          platformConfigured: Boolean(data?.platform_provider_configured),
+          host: data?.default_provider_host || data?.platform_provider_name || "",
+          platformHost: data?.platform_provider_name || "",
         });
       })
       .catch(() => {
-        if (alive) setServerProvider({ configured: false, host: "" });
+        if (alive) setServerProvider({ configured: false, platformConfigured: false, host: "" });
       });
     return () => {
       alive = false;
@@ -211,12 +299,54 @@ export default function App() {
   const sizeInfo = stylesData.sizes?.[size];
   const selectedCount = selectedImages.size;
   const hasBrowserProvider = isProviderConfigComplete(providerConfig);
-  const providerConfigured = hasBrowserProvider || serverProvider.configured;
-  const providerName = getProviderDisplayName(providerConfig, serverProvider.host);
+  const platformReady = Boolean(serverProvider.platformConfigured && session);
+  const providerConfigured = billingMode === "platform" ? platformReady : hasBrowserProvider;
+  const providerName = billingMode === "platform" ? (serverProvider.host || "平台积分服务") : getProviderDisplayName(providerConfig, serverProvider.host);
   const providerHeaders = useMemo(
-    () => ({ ...CLIENT_HEADERS, ...buildProviderHeaders(providerConfig) }),
-    [providerConfig],
+    () => ({
+      ...authHeaders,
+      "X-Billing-Mode": billingMode,
+      ...(billingMode === "own_key" ? buildProviderHeaders(providerConfig) : {}),
+    }),
+    [authHeaders, billingMode, providerConfig],
   );
+
+  const updateCreditBalance = useCallback((balance) => {
+    if (balance === undefined || balance === null) return;
+    setAccount((current) => {
+      if (!current) return current;
+      return { ...current, credits: { ...(current.credits || {}), balance } };
+    });
+  }, []);
+
+  const requireGenerationAccess = useCallback(() => {
+    if (billingMode === "platform" && !session) {
+      setAuthOpen(true);
+      setNotice("请先登录，验证邮箱后即可领取 10 个免费积分");
+      return false;
+    }
+    if (billingMode === "platform" && !serverProvider.platformConfigured) {
+      setShowProviderSettings(true);
+      setError({
+        message: "平台积分服务尚未配置",
+        code: "PLATFORM_PROVIDER_NOT_CONFIGURED",
+        detail: "管理员还没有配置平台侧图片服务，请切换到自带 API Key 模式，或稍后再试。",
+        recovery: ["切换到自带 API Key 模式", "联系管理员配置平台服务"],
+      });
+      return false;
+    }
+    if (billingMode === "own_key" && !hasBrowserProvider && !serverProvider.configured) {
+      setShowProviderSettings(true);
+      setError({
+        message: "请先配置图片服务",
+        code: "PROVIDER_KEY_MISSING",
+        detail: "自带 Key 模式需要填写 API Key、接口地址和模型标识。",
+        recovery: ["打开图片服务配置", "选择中转站并填写 Key"],
+      });
+      return false;
+    }
+    return true;
+  }, [billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
 
   const workspaceStats = useMemo(() => {
     if (mode === "canvas") {
@@ -262,15 +392,13 @@ export default function App() {
     });
   }, []);
 
-  const handleReferenceChange = useCallback((file) => {
-    setReferenceFile(file);
-    if (!file) {
-      setReferencePreview(null);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => setReferencePreview(e.target.result);
-    reader.readAsDataURL(file);
+  const handleReferenceChange = useCallback((files) => {
+    const nextFiles = Array.isArray(files) ? files.slice(0, MAX_REFERENCE_IMAGES) : files ? [files] : [];
+    setReferenceFiles(nextFiles);
+    setReferencePreviews([]);
+    Promise.all(nextFiles.map((file) => new Promise((resolve) => {
+      const reader = new FileReader(); reader.onload = (event) => resolve(event.target.result); reader.onerror = () => resolve(""); reader.readAsDataURL(file);
+    }))).then(setReferencePreviews);
   }, []);
 
   const handleApplyPreset = useCallback((preset) => {
@@ -289,11 +417,15 @@ export default function App() {
       });
       return;
     }
+    if (!requireGenerationAccess()) return;
     if (!providerConfigured) {
       setShowProviderSettings(true);
       setNotice("请先配置图片服务");
       return;
     }
+    const previousImages = images;
+    const previousHistoryId = historyId;
+    const requestId = createRequestId();
     setError(null);
     setNotice("");
     setIsGenerating(true);
@@ -301,16 +433,15 @@ export default function App() {
     setSelectedImages(new Set());
 
     try {
-      const redrawFromPrevious = mode === "iterative" && images.length > 0;
+      const redrawFromPrevious = mode === "iterative" && previousImages.length > 0;
       const body = redrawFromPrevious
         ? {
             prompt: prompt.trim(),
-            previous_image: images[0].filename,
-            strength,
+            previous_image: previousImages[0].filename,
             size,
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
-            parent_id: historyId,
+            parent_id: previousHistoryId,
           }
         : {
             prompt: prompt.trim(),
@@ -318,28 +449,32 @@ export default function App() {
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
             count,
-            strength,
           };
+      body.request_id = requestId;
 
-      if (referenceFile && mode !== "text-to-image" && !redrawFromPrevious) {
-        body.reference_b64 = await fileToBase64(referenceFile);
+      if (referenceFiles.length && !redrawFromPrevious) {
+        body.reference_images_b64 = await Promise.all(referenceFiles.map(fileToBase64));
       }
 
       const res = await fetch(`${API_BASE}/${redrawFromPrevious ? "modify" : "generate"}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...providerHeaders },
+        headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
         body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
         const nextError = normalizeApiError(data);
         setError(nextError);
+        if (nextError.code === "EMAIL_UNVERIFIED") setNotice("请先完成邮箱验证，验证后即可使用免费积分");
         if (nextError.code === "PROVIDER_KEY_MISSING") setShowProviderSettings(true);
+        await refreshAccount();
         return;
       }
       setImages(data.images || []);
       setCurrentPrompt(data.prompt || prompt);
       setHistoryId(data.history_id);
+      updateCreditBalance(data.credit_balance);
+      await refreshAccount();
       setNotice(redrawFromPrevious ? "局部重绘完成，已写入历史记录" : "生成完成，已写入历史记录");
     } catch {
       setError({
@@ -363,46 +498,53 @@ export default function App() {
     providerConfigured,
     providerHeaders,
     quality,
-    referenceFile,
+    referenceFiles,
     size,
-    strength,
+    refreshAccount,
+    requireGenerationAccess,
+    updateCreditBalance,
   ]);
 
   const handleModify = useCallback(
     async (modifyPrompt, prevImage) => {
       if (!modifyPrompt.trim()) return;
+      if (!requireGenerationAccess()) return;
+      const requestId = createRequestId();
       setError(null);
       setIsGenerating(true);
 
       try {
         const res = await fetch(`${API_BASE}/modify`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...providerHeaders },
+          headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
           body: JSON.stringify({
             prompt: modifyPrompt.trim(),
             previous_image: prevImage,
-            strength,
             size,
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality,
             parent_id: historyId,
+            request_id: requestId,
           }),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
-          setError(
-            normalizeApiError(data, {
-              message: "迭代失败",
-              code: "MODIFY_FAILED",
-              detail: "本次迭代请求没有完成。",
-              recovery: ["检查后端服务", "确认原图仍存在", "重新发起迭代"],
-            }),
-          );
+          const nextError = normalizeApiError(data, {
+            message: "迭代失败",
+            code: "MODIFY_FAILED",
+            detail: "本次迭代请求没有完成。",
+            recovery: ["检查后端服务", "确认原图仍存在", "重新发起迭代"],
+          });
+          setError(nextError);
+          if (nextError.code === "EMAIL_UNVERIFIED") setNotice("请先完成邮箱验证，验证后即可使用免费积分");
+          await refreshAccount();
           return;
         }
         setImages(data.images || []);
         setCurrentPrompt(data.prompt || modifyPrompt);
         setHistoryId(data.history_id);
+        updateCreditBalance(data.credit_balance);
+        await refreshAccount();
         setNotice("迭代版本已生成");
       } catch {
         setError({
@@ -415,7 +557,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [customSize.height, customSize.width, historyId, providerHeaders, quality, size, strength],
+    [customSize.height, customSize.width, historyId, providerHeaders, quality, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -444,7 +586,6 @@ export default function App() {
       });
     }
     if (entry.quality) setQuality(entry.quality);
-    if (entry.strength !== undefined) setStrength(entry.strength);
     if (entry.count !== undefined) setCount(entry.count);
     setShowHistory(false);
     setNotice("历史提示词已载入");
@@ -471,7 +612,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/download-batch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...CLIENT_HEADERS },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ filenames: [...selectedImages] }),
       });
       const blob = await res.blob();
@@ -490,7 +631,22 @@ export default function App() {
         recovery: ["确认图片仍在输出目录", "重新选择图片", "再次导出"],
       });
     }
-  }, [selectedImages]);
+  }, [authHeaders, selectedImages]);
+
+  const handleSignOut = useCallback(async () => {
+    await supabase?.auth.signOut();
+    await fetch(API_BASE + "/auth/session", { method: "DELETE", headers: CLIENT_HEADERS, credentials: "include" });
+    sessionRef.current = null; accountRequestRef.current += 1;
+    setSession(null); setAccount(null); setAccountLoading(false); setAccountOpen(false); setNotice("已退出登录");
+  }, []);
+
+  const handleDeleteAccount = useCallback(async () => {
+    const response = await fetch(API_BASE + "/account", { method: "DELETE", headers: authHeaders, credentials: "include" });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.detail || data.error || "删除账号失败");
+    await supabase?.auth.signOut(); sessionRef.current = null; accountRequestRef.current += 1;
+    setSession(null); setAccount(null); setAccountLoading(false); setAccountOpen(false); setNotice("账号已删除");
+  }, [authHeaders]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -519,6 +675,12 @@ export default function App() {
           providerConfigured={providerConfigured}
           providerName={providerName}
           onOpenProvider={() => setShowProviderSettings(true)}
+          session={session}
+          account={account}
+          accountLoading={accountLoading}
+          onOpenAuth={() => setAuthOpen(true)}
+          onOpenAccount={() => setAccountOpen(true)}
+          onOpenMetrics={() => setMetricsOpen(true)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
@@ -601,6 +763,10 @@ export default function App() {
                   providerConfigured={providerConfigured}
                   providerName={providerName}
                   providerHeaders={providerHeaders}
+                  billingMode={billingMode}
+                  authenticated={Boolean(session)}
+                  onAuthRequired={() => { setAuthOpen(true); setNotice("请先登录，验证邮箱后即可使用免费积分"); }}
+                  onAccountRefresh={refreshAccount}
                   onOpenProvider={() => setShowProviderSettings(true)}
                   onCanvasGenerated={handleCanvasGenerated}
                 />
@@ -623,14 +789,15 @@ export default function App() {
                 onGenerate={handleGenerate}
                 isGenerating={isGenerating}
                 currentPrompt={currentPrompt}
-                referenceFile={referenceFile}
+                referenceFiles={referenceFiles}
                 onReferenceChange={handleReferenceChange}
-                referencePreview={referencePreview}
+                referencePreviews={referencePreviews}
                 mode={mode}
                 onCopyPrompt={handleCopyPrompt}
                 providerConfigured={providerConfigured}
                 presetName={activePreset?.name}
                 presetCategory={activePreset?.category}
+                authenticated={Boolean(session)}
                 hasPreviousImage={images.length > 0}
               />
               <ParameterPanel
@@ -642,8 +809,6 @@ export default function App() {
                 onQualityChange={setQuality}
                 count={count}
                 onCountChange={setCount}
-                strength={strength}
-                onStrengthChange={setStrength}
                 sizes={stylesData.sizes}
                 mode={mode}
               />
@@ -670,12 +835,13 @@ export default function App() {
                 providerModel={hasBrowserProvider ? providerConfig.model : "服务器默认模型"}
                 presetName={activePreset?.name}
                 presetCategory={activePreset?.category}
+                authenticated={Boolean(session)}
               />
             </section>
           </div>
         </main>
 
-        {showHistory && <History onClose={() => setShowHistory(false)} onLoadEntry={handleLoadFromHistory} />}
+        {showHistory && <History onClose={() => setShowHistory(false)} onLoadEntry={handleLoadFromHistory} authHeaders={authHeaders} authenticated={Boolean(session)} />}
       </div>
 
       {previewImage && (
@@ -683,6 +849,7 @@ export default function App() {
           filename={previewImage}
           onClose={() => setPreviewImage(null)}
           onModify={mode === "iterative" ? handleModify : null}
+          authenticated={Boolean(session)}
         />
       )}
 
@@ -693,8 +860,17 @@ export default function App() {
         serverProviderHost={serverProvider.host}
         onSave={handleSaveProvider}
         onClear={handleClearProvider}
+        billingMode={billingMode}
+        onBillingModeChange={setBillingMode}
+        platformReady={platformReady}
+        session={session}
+        account={account}
         onClose={() => setShowProviderSettings(false)}
       />
+
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onNotice={setNotice} />
+      <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} />
+      <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
 
       {(notice || selectedCount > 0) && (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-default bg-bg-secondary px-4 py-3 text-sm text-text-secondary shadow-2xl">

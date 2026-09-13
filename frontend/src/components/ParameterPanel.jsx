@@ -1,5 +1,5 @@
 import React from "react";
-import { Gauge, ImageDown, LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
+import { ImageDown, LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
 
 const FALLBACK_SIZES = {
   square_1_1: { label: "正方形 1:1", width: 1024, height: 1024 },
@@ -34,13 +34,10 @@ export default function ParameterPanel({
   onQualityChange,
   count,
   onCountChange,
-  strength,
-  onStrengthChange,
   sizes,
   mode,
 }) {
   const sizeMap = Object.keys(sizes || {}).length ? sizes : FALLBACK_SIZES;
-  const showStrength = mode === "image-to-image" || mode === "iterative";
   const customSizeActive = size === "custom";
 
   const updateCustomDimension = (dimension, value) => {
@@ -197,38 +194,10 @@ export default function ParameterPanel({
         </div>
       </fieldset>
 
-      {showStrength && (
-        <fieldset className="mb-4">
-          <legend className="mb-2 flex items-center justify-between text-sm font-medium text-text-secondary">
-            <span className="flex items-center gap-2">
-              <Gauge size={16} />
-              参考强度
-            </span>
-            <span className="font-semibold text-accent">{Math.round(strength * 100)}%</span>
-          </legend>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={Math.round(strength * 100)}
-            onChange={(e) => onStrengthChange(Number(e.target.value) / 100)}
-            className="h-2 w-full cursor-pointer appearance-none rounded-full"
-            style={{
-              background: `linear-gradient(to right, #4f8cff 0%, #4f8cff ${strength * 100}%, #243142 ${strength * 100}%, #243142 100%)`,
-            }}
-            aria-label="参考图强度"
-          />
-          <div className="mt-2 flex justify-between text-xs text-text-muted">
-            <span>创意改动</span>
-            <span>贴近原图</span>
-          </div>
-        </fieldset>
-      )}
 
       <div className="rounded-lg border border-border-subtle bg-bg-primary/55 p-3">
         <p className="text-xs leading-6 text-text-muted">
-          {mode === "text-to-image" && "当前会根据提示词直接生成全新视觉，适合从零创作任何类型的图片。"}
-          {mode === "image-to-image" && "当前会读取参考图结构或调性，强度越高越接近原图。"}
+          {mode === "create" && "输入提示词即可文生图；上传参考素材后，会按 @图1、@图2 参与构图、主体和风格控制。"}
           {mode === "iterative" && "当前会基于上一张结果继续优化，适合逐轮微调标题、留白、光效和主体结构。"}
         </p>
       </div>

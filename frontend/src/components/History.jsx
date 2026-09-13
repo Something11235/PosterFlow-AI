@@ -14,7 +14,7 @@ function formatTime(iso) {
   return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function History({ onClose, onLoadEntry }) {
+export default function History({ onClose, onLoadEntry, authHeaders = CLIENT_HEADERS, authenticated = false }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -26,7 +26,8 @@ export default function History({ onClose, onLoadEntry }) {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/history?page=${nextPage}&page_size=20&search=${encodeURIComponent(keyword)}`, {
-        headers: CLIENT_HEADERS,
+        headers: authHeaders,
+        credentials: "include",
       });
       const data = await res.json();
       setEntries((prev) => (nextPage === 0 ? data.history || [] : [...prev, ...(data.history || [])]));
@@ -36,7 +37,7 @@ export default function History({ onClose, onLoadEntry }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authHeaders]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => fetchHistory(0, search), 180);
@@ -44,7 +45,7 @@ export default function History({ onClose, onLoadEntry }) {
   }, [fetchHistory, search]);
 
   const handleDelete = async (id) => {
-    await fetch(`${API_BASE}/history/${id}`, { method: "DELETE", headers: CLIENT_HEADERS });
+    await fetch(`${API_BASE}/history/${id}`, { method: "DELETE", headers: authHeaders, credentials: "include" });
     fetchHistory(0, search);
   };
 
@@ -116,7 +117,7 @@ export default function History({ onClose, onLoadEntry }) {
               <div className="mt-3 flex gap-2">
                 {entry.images.slice(0, 4).map((filename) => (
                   <div key={filename} className="h-14 w-16 overflow-hidden rounded-md border border-border-subtle bg-bg-primary">
-                    <img src={apiAssetUrl("images", filename)} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    <img src={apiAssetUrl("images", filename, { authenticated })} alt="" className="h-full w-full object-cover" loading="lazy" />
                   </div>
                 ))}
               </div>

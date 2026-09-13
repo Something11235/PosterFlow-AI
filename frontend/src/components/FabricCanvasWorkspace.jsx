@@ -5,15 +5,19 @@ import {
   FabricImage,
   FabricObject,
   Group,
+  Ellipse,
   Line,
+  Path,
   Point,
   Rect,
   Textbox,
   Triangle,
 } from "fabric";
+import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 import {
   ArrowUpRight,
   CheckCircle2,
+  Circle,
   Download,
   Eye,
   FileImage,
@@ -23,8 +27,10 @@ import {
   Images,
   Loader2,
   MousePointer2,
+  Pencil,
   Redo2,
   Sparkles,
+  Square,
   Trash2,
   TriangleAlert,
   Type,
@@ -45,7 +51,7 @@ const CLEAN_REFERENCE_MAX_BYTES = 1.35 * 1024 * 1024;
 const ANNOTATED_REFERENCE_MAX_BYTES = 1.05 * 1024 * 1024;
 const CANVAS_AI_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
 const ANNOTATION_COLOR = "#ef4444";
-const ANNOTATION_TYPES = new Set(["annotation-arrow", "annotation-text", "annotation-shape"]);
+const ANNOTATION_TYPES = new Set(["annotation-arrow", "annotation-text", "annotation-shape", "annotation-brush"]);
 
 const CANVAS_FRAME_RATIOS = {
   square: { label: "1:1", width: 1024, height: 1024, displayWidth: 560, displayHeight: 560 },
@@ -264,6 +270,76 @@ function createAnnotationText(point) {
   return markObject(text, "annotation-text");
 }
 
+function createAnnotationBrush(points) {
+  if (points.length < 2) return null;
+  const pathData = points.reduce(
+    (commands, point, index) => commands + (index === 0 ? `M ${point.x} ${point.y}` : ` L ${point.x} ${point.y}`),
+    "",
+  );
+  return markObject(
+    new Path(pathData, {
+      stroke: ANNOTATION_COLOR,
+      strokeWidth: 28,
+      strokeLineCap: "round",
+      strokeLineJoin: "round",
+      fill: "",
+      selectable: true,
+      evented: true,
+      objectCaching: false,
+    }),
+    "annotation-brush",
+    { shape: "freehand" },
+  );
+}
+
+function createAnnotationRect(start, end) {
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  return markObject(
+    new Rect({
+      left,
+      top,
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+      fill: "rgba(239,68,68,0.06)",
+      stroke: ANNOTATION_COLOR,
+      strokeWidth: 6,
+      strokeUniform: true,
+      cornerColor: ANNOTATION_COLOR,
+      borderColor: ANNOTATION_COLOR,
+      transparentCorners: false,
+      cornerSize: 12,
+    }),
+    "annotation-shape",
+    { shape: "rectangle" },
+  );
+}
+
+function createAnnotationEllipse(start, end) {
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  return markObject(
+    new Ellipse({
+      left: Math.min(start.x, end.x),
+      top: Math.min(start.y, end.y),
+      rx: width / 2,
+      ry: height / 2,
+      originX: "left",
+      originY: "top",
+      fill: "rgba(239,68,68,0.06)",
+      stroke: ANNOTATION_COLOR,
+      strokeWidth: 6,
+      strokeUniform: true,
+      cornerColor: ANNOTATION_COLOR,
+      borderColor: ANNOTATION_COLOR,
+      transparentCorners: false,
+      cornerSize: 12,
+    }),
+    "annotation-shape",
+    { shape: "ellipse" },
+  );
+}
+
 function wrapObject(object) {
   if (!object) return null;
   const bounds = objectBounds(object);
@@ -283,7 +359,7 @@ function selectionSnapshot(canvas) {
   const selected = canvas?.getActiveObjects?.() || [];
   const holders = selected.filter((object) => object.posterflowType === "ai-frame");
   const images = selected.filter((object) => object.posterflowType === "image" || object.type === "image");
-  const image = images.length === 1 ? images[0] : null;
+  const image = images.length ? images[0] : null;
   let annotations = image ? selected.filter((object) => object !== image && ANNOTATION_TYPES.has(object.posterflowType)) : [];
   let annotationSource = annotations.length ? "selected" : "none";
   if (image && !annotations.length) {
@@ -308,7 +384,8 @@ function selectionSnapshot(canvas) {
     annotationCount: annotations.length,
     annotationTexts: annotations.map(annotationText).filter(Boolean),
     annotationSource,
-    objects: image ? [image, ...annotations] : selected,
+    images: images.map(wrapObject),
+    objects: images.length ? [...images, ...annotations] : selected,
   };
 }
 
@@ -402,6 +479,48 @@ async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBy
     else if (previousSelection.length > 1) canvas.setActiveObject(new ActiveSelection(previousSelection, { canvas }));
     canvas.requestRenderAll();
   }
+}
+
+
+async function exportEditMask(canvas, target, annotations, maxEdge = REFERENCE_EXPORT_MAX_EDGE) {
+  const targetBounds = objectBounds(target);
+  const selected = annotations.filter((object) => object && boxesOverlap(targetBounds, objectBounds(object), 0));
+  if (!selected.length) return null;
+  const multiplier = Math.min(2, maxEdge / Math.max(1, targetBounds.w, targetBounds.h));
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = Math.max(1, Math.round(targetBounds.w * multiplier));
+  maskCanvas.height = Math.max(1, Math.round(targetBounds.h * multiplier));
+  const context = maskCanvas.getContext("2d");
+  if (!context) throw new Error("浏览器无法创建局部编辑蒙版。");
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+  context.fillStyle = "#fff";
+  selected.forEach((object) => {
+    const bounds = objectBounds(object);
+    const left = (bounds.x - targetBounds.x) * multiplier;
+    const top = (bounds.y - targetBounds.y) * multiplier;
+    const width = bounds.w * multiplier;
+    const height = bounds.h * multiplier;
+    if (object.posterflowMeta?.shape === "ellipse") {
+      context.beginPath();
+      context.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+      context.fill();
+    } else if (object.posterflowType === "annotation-brush" && Array.isArray(object.path)) {
+      context.beginPath();
+      object.path.forEach((command) => {
+        if (command[0] === "M") context.moveTo((command[1] - targetBounds.x) * multiplier, (command[2] - targetBounds.y) * multiplier);
+        else if (command[0] === "L") context.lineTo((command[1] - targetBounds.x) * multiplier, (command[2] - targetBounds.y) * multiplier);
+      });
+      context.strokeStyle = "#fff";
+      context.lineWidth = (Number(object.strokeWidth) || 28) * multiplier;
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      context.stroke();
+    } else context.fillRect(left, top, width, height);
+  });
+  return new Promise((resolve, reject) => {
+    maskCanvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("局部编辑蒙版生成失败。"))), "image/png");
+  });
 }
 
 function downloadBlob(blob, filename) {
@@ -558,6 +677,10 @@ export default function FabricCanvasWorkspace({
   providerConfigured,
   providerName,
   providerHeaders,
+  billingMode = "own_key",
+  authenticated = false,
+  onAuthRequired,
+  onAccountRefresh,
   onOpenProvider,
   onCanvasGenerated,
 }) {
@@ -572,7 +695,6 @@ export default function FabricCanvasWorkspace({
   const [workflow, setWorkflow] = useState("frame");
   const [ratioKey, setRatioKey] = useState("landscape_16_9");
   const [drafts, setDrafts] = useState(loadCanvasDrafts);
-  const [strength, setStrength] = useState(0.65);
   const [quality, setQuality] = useState("high");
   const [aiError, setAiError] = useState(null);
   const [selection, setSelection] = useState(() => selectionSnapshot(null));
@@ -636,6 +758,8 @@ export default function FabricCanvasWorkspace({
     let persistTimer = 0;
     let panState = null;
     let arrowState = null;
+    let shapeState = null;
+    let brushState = null;
 
     const snapshot = () => ({
       canvas: editor.toJSON(["posterflowId", "posterflowType", "posterflowMeta"]),
@@ -769,6 +893,34 @@ export default function FabricCanvasWorkspace({
         editor.requestRenderAll();
         return;
       }
+      if (toolRef.current === "brush" && event.button === 0) {
+        const point = editor.getScenePoint(event);
+        brushState = { points: [point], preview: null };
+        batchRef.current = true;
+        editor.requestRenderAll();
+        return;
+      }
+      if ((toolRef.current === "rect" || toolRef.current === "ellipse") && event.button === 0) {
+        const point = editor.getScenePoint(event);
+        const preview =
+          toolRef.current === "rect"
+            ? new Rect({ left: point.x, top: point.y, width: 1, height: 1 })
+            : new Ellipse({ left: point.x, top: point.y, rx: 0.5, ry: 0.5, originX: "left", originY: "top" });
+        preview.set({
+          fill: "rgba(239,68,68,0.06)",
+          stroke: ANNOTATION_COLOR,
+          strokeWidth: 6,
+          strokeUniform: true,
+          selectable: false,
+          evented: false,
+          excludeFromExport: true,
+        });
+        shapeState = { start: point, preview, type: toolRef.current };
+        batchRef.current = true;
+        editor.add(preview);
+        editor.requestRenderAll();
+        return;
+      }
       if (toolRef.current === "text" && event.button === 0) {
         const point = editor.getScenePoint(event);
         const textObject = createAnnotationText(point);
@@ -803,15 +955,60 @@ export default function FabricCanvasWorkspace({
         arrowState.preview.setCoords();
         editor.requestRenderAll();
       }
+      if (brushState) {
+        const point = editor.getScenePoint(event);
+        brushState.points.push(point);
+        if (brushState.preview) editor.remove(brushState.preview);
+        brushState.preview = createAnnotationBrush(brushState.points);
+        if (brushState.preview) {
+          brushState.preview.set({ selectable: false, evented: false, excludeFromExport: true });
+          editor.add(brushState.preview);
+        }
+        editor.requestRenderAll();
+      }
+      if (shapeState) {
+        const point = editor.getScenePoint(event);
+        const { start, preview, type } = shapeState;
+        const left = Math.min(start.x, point.x);
+        const top = Math.min(start.y, point.y);
+        const width = Math.max(1, Math.abs(point.x - start.x));
+        const height = Math.max(1, Math.abs(point.y - start.y));
+        if (type === "rect") preview.set({ left, top, width, height });
+        else preview.set({ left, top, rx: width / 2, ry: height / 2 });
+        preview.setCoords();
+        editor.requestRenderAll();
+      }
     };
     const handleMouseUp = (options) => {
       if (panState) {
         panState = null;
         editor.selection = toolRef.current === "select";
         editor.defaultCursor =
-          toolRef.current === "hand" ? "grab" : toolRef.current === "arrow" ? "crosshair" : "default";
+          toolRef.current === "hand" ? "grab" : ["arrow", "rect", "ellipse", "brush", "text"].includes(toolRef.current) ? "crosshair" : "default";
         editor.setCursor(editor.defaultCursor);
         persist();
+        return;
+      }
+      if (shapeState) {
+        const point = editor.getScenePoint(options.e);
+        const { start, preview, type } = shapeState;
+        shapeState = null;
+        editor.remove(preview);
+        const width = Math.abs(point.x - start.x);
+        const height = Math.abs(point.y - start.y);
+        if (width >= 12 && height >= 12) {
+          const shape = type === "rect" ? createAnnotationRect(start, point) : createAnnotationEllipse(start, point);
+          editor.add(shape);
+          editor.setActiveObject(shape);
+        }
+        batchRef.current = false;
+        setTool("select");
+        toolRef.current = "select";
+        editor.selection = true;
+        editor.skipTargetFind = false;
+        editor.defaultCursor = "default";
+        editor.requestRenderAll();
+        commitRef.current();
         return;
       }
       if (!arrowState) return;
@@ -938,7 +1135,7 @@ export default function FabricCanvasWorkspace({
       canvas.selection = nextTool === "select";
       canvas.skipTargetFind = nextTool !== "select";
       canvas.defaultCursor =
-        nextTool === "hand" ? "grab" : nextTool === "arrow" || nextTool === "text" ? "crosshair" : "default";
+        nextTool === "hand" ? "grab" : ["arrow", "rect", "ellipse", "brush", "text"].includes(nextTool) ? "crosshair" : "default";
       canvas.setCursor(canvas.defaultCursor);
       canvas.requestRenderAll();
     },
@@ -999,11 +1196,11 @@ export default function FabricCanvasWorkspace({
   );
 
   const fetchGeneratedFile = useCallback(async (filename) => {
-    const response = await fetch(apiAssetUrl("images", filename));
+    const response = await fetch(apiAssetUrl("images", filename, { authenticated }), { credentials: "include" });
     if (!response.ok) throw new Error("图片请求失败：" + response.status);
     const blob = await response.blob();
     return new File([blob], imageFilename(filename, blob.type), { type: blob.type || "image/png" });
-  }, []);
+  }, [authenticated]);
 
   const addGeneratedImages = useCallback(
     async (filenames) => {
@@ -1156,6 +1353,10 @@ export default function FabricCanvasWorkspace({
   );
 
   const handleAiGenerate = async () => {
+    if (billingMode === "platform" && !authenticated) {
+      onAuthRequired?.();
+      return;
+    }
     if (!canvas || !providerConfigured || aiBusy) return;
     const currentSelection = selectionSnapshot(canvas);
     const manualPrompt = drafts[workflow].trim();
@@ -1172,7 +1373,7 @@ export default function FabricCanvasWorkspace({
     if (!target) {
       setAiError({
         message: workflow === "frame" ? "请选择一个 AI 图片框" : "请选择一张画布图片",
-        detail: workflow === "frame" ? "可以先新建图框，再输入提示词生成。" : "重绘时一次只能选择一张原图。",
+        detail: workflow === "frame" ? "可以先新建图框，再输入提示词生成。" : "可同时选择多张图片，按选择顺序作为 @图1、@图2……参考素材。",
       });
       return;
     }
@@ -1197,51 +1398,47 @@ export default function FabricCanvasWorkspace({
         };
       } else {
         endpoint = "/api/modify";
-        const cleanReference = await exportObjects(
-          canvas,
-          [target.raw],
-          0,
-          REFERENCE_EXPORT_MAX_EDGE,
-          CLEAN_REFERENCE_MAX_BYTES,
-        );
-        const annotationReference = currentSelection.annotationCount
-          ? await exportObjects(
-              canvas,
-              currentSelection.objects,
-              24,
-              REFERENCE_EXPORT_MAX_EDGE,
-              ANNOTATED_REFERENCE_MAX_BYTES,
-            )
+        const selectedImages = (currentSelection.images || [target]).slice(0, MAX_REFERENCE_IMAGES);
+        const cleanReferences = await Promise.all(selectedImages.map((item) => exportObjects(
+          canvas, [item.raw], 0, REFERENCE_EXPORT_MAX_EDGE, CLEAN_REFERENCE_MAX_BYTES,
+        )));
+        const annotationReference = currentSelection.annotationCount && cleanReferences.length < MAX_REFERENCE_IMAGES
+          ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE, ANNOTATED_REFERENCE_MAX_BYTES)
           : null;
-        const referenceImages = [await blobToBase64(cleanReference)];
+        const referenceImages = await Promise.all(cleanReferences.map(blobToBase64));
+        const maskBlob = currentSelection.annotationCount
+          ? await exportEditMask(canvas, target, currentSelection.objects.filter((object) => object !== target && ANNOTATION_TYPES.has(object.posterflowType)))
+          : null;
         if (annotationReference) referenceImages.push(await blobToBase64(annotationReference));
         const annotationList = currentSelection.annotationTexts
           .map((textValue, index) => String(index + 1) + ". " + textValue)
           .join("\n");
-        const redrawPercent = Math.round((1 - strength) * 100);
         const size = normalizedImageSize(target.props.w, target.props.h);
         const editPrompt = [
           "执行局部图片编辑，不要重新创作一张不同风格的图片。",
-          "输入图1是唯一的干净原图。严格保留它的画风、人物身份、脸部、姿势、构图、背景、光影、配色和宽高比例。",
+          "输入图1至输入图" + referenceImages.length + "按顺序对应用户提示词中的 @图1 至 @图" + referenceImages.length + "。请综合所有参考图完成合成与编辑。",
+          "输入图1是主要目标图，严格保留它的画风、人物身份、脸部、姿势、构图、背景、光影、配色和宽高比例。",
           annotationReference
             ? "输入图2是标注说明图，只用于定位和理解红色箭头与红色文字。箭头尖端精确指向需要修改的目标，逐一建立文字、箭头与目标区域的对应关系，不要把标注痕迹画进结果。"
             : "仅根据用户要求修改必要区域，不要改变无关内容。",
           manualPrompt ? "用户补充要求：" + manualPrompt : "用户没有补充文字要求，以标注文字清单为准。",
           annotationList ? "必须逐条执行以下标注文字：\n" + annotationList : "没有可提取的标注文字，请结合标注图和用户补充要求判断修改位置。",
-          "本次重绘幅度为 " + redrawPercent + "%。只允许为完成上述要求而做必要改动，未点名区域必须与输入图1保持一致。",
+          "请根据用户要求自行判断需要修改的范围。未被要求修改的区域尽量保持原始构图、风格、主体身份和背景关系。",
           "输出一张与输入图1同画风、同构图的干净成图，不要输出对比图、说明文字、箭头、边框或编辑器界面。",
         ].join("\n");
         body = {
           prompt: editPrompt,
           reference_images_b64: referenceImages,
+          ...(maskBlob ? { mask_b64: await blobToBase64(maskBlob) } : {}),
           size: "custom",
           custom_width: size.width,
           custom_height: size.height,
           quality,
-          strength,
         };
       }
 
+      const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      body.request_id = requestId;
       const requestBody = JSON.stringify(body);
       const requestBytes = new Blob([requestBody]).size;
       if (requestBytes > CANVAS_AI_REQUEST_MAX_BYTES) {
@@ -1254,13 +1451,14 @@ export default function FabricCanvasWorkspace({
       }
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...providerHeaders },
+        headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
         body: requestBody,
       });
       const data = await readApiResponse(response);
       if (!response.ok || data.error) {
         setAiError(apiError(data, workflow === "frame" ? "图框生成失败" : "画布重绘失败"));
         setStatus({ type: "error", message: workflow === "frame" ? "图框生成失败" : "画布重绘失败" });
+        await onAccountRefresh?.();
         return;
       }
       const result = data.images?.[0];
@@ -1274,10 +1472,12 @@ export default function FabricCanvasWorkspace({
       onCanvasGenerated?.({ image: result, prompt: data.prompt || prompt, historyId: data.history_id });
       setStatus({ type: "saved", message: workflow === "frame" ? "图框内容已生成" : "重绘版本已放到原图右侧" });
       onNotice?.(workflow === "frame" ? "AI 图片框已替换为生成结果" : "重绘版本已生成并保留原图");
+      await onAccountRefresh?.();
     } catch (error) {
       console.error("Fabric canvas AI generation failed", error);
       setAiError({ message: "画布 AI 生成失败", detail: error.message || "浏览器未能完成服务请求或结果插入。" });
       setStatus({ type: "error", message: "画布 AI 生成失败" });
+      if (billingMode === "platform") await onAccountRefresh?.();
     } finally {
       setAiBusy(false);
     }
@@ -1287,7 +1487,7 @@ export default function FabricCanvasWorkspace({
     if (!canvas || previewBusy || aiBusy) return;
     const currentSelection = selectionSnapshot(canvas);
     if (!currentSelection.image) {
-      setAiError({ message: "请选择一张画布图片", detail: "检查参考图时一次只能选择一张重绘原图。" });
+      setAiError({ message: "请选择画布图片", detail: "可同时选择多张图片，按选择顺序作为参考素材。" });
       return;
     }
     setPreviewBusy(true);
@@ -1343,6 +1543,9 @@ export default function FabricCanvasWorkspace({
     { id: "select", label: "选择", icon: MousePointer2 },
     { id: "hand", label: "平移", icon: Hand },
     { id: "arrow", label: "红色箭头", icon: ArrowUpRight },
+    { id: "rect", label: "矩形框", icon: Square },
+    { id: "ellipse", label: "圆形框", icon: Circle },
+    { id: "brush", label: "画笔选区", icon: Pencil },
     { id: "text", label: "红色文字", icon: Type },
   ];
 
@@ -1519,8 +1722,6 @@ export default function FabricCanvasWorkspace({
             selection={selection}
             prompt={drafts[workflow]}
             onPromptChange={(value) => setDrafts((current) => ({ ...current, [workflow]: value }))}
-            strength={strength}
-            onStrengthChange={setStrength}
             quality={quality}
             onQualityChange={setQuality}
             onPreviewReferences={handlePreviewReferences}

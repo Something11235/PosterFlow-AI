@@ -1,5 +1,5 @@
 import React from "react";
-import { Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles } from "lucide-react";
+import { BarChart3, Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
 
@@ -12,7 +12,14 @@ export default function Sidebar({
   providerConfigured,
   providerName,
   onOpenProvider,
+  session,
+  account,
+  accountLoading,
+  onOpenAuth,
+  onOpenAccount,
+  onOpenMetrics,
 }) {
+  const accountLabel = account?.profile?.username || session?.user?.email || "登录 / 注册";
   return (
     <aside className="border-b border-border-subtle bg-bg-secondary/96 px-4 py-3 lg:flex lg:w-64 lg:flex-col lg:border-b-0 lg:border-r lg:px-3 lg:py-4">
       <div className="flex items-center justify-between gap-3 lg:block">
@@ -27,6 +34,7 @@ export default function Sidebar({
         </div>
 
         <div className="flex items-center gap-2 lg:hidden">
+          <button type="button" onClick={session ? onOpenAccount : onOpenAuth} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-border-subtle bg-bg-tertiary text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary" aria-label={session ? "账户中心" : "登录或注册"} title={accountLabel}><UserRound size={17} /></button>
           <a
             href={GITHUB_REPOSITORY_URL}
             target="_blank"
@@ -90,6 +98,8 @@ export default function Sidebar({
       </nav>
 
       <div className="mt-auto hidden space-y-3 pt-6 lg:block">
+        <button type="button" onClick={session ? onOpenAccount : onOpenAuth} className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary px-3 text-left text-sm text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary"><UserRound size={16} /><span className="min-w-0 flex-1 truncate">{accountLabel}</span>{session && <span className={`text-xs ${accountLoading ? "animate-pulse text-text-muted" : "text-accent"}`}>{accountLoading ? "积分同步中…" : `${account?.credits?.balance ?? "--"} 积分`}</span>}</button>
+        {session && account?.profile?.role === "admin" && <button type="button" onClick={onOpenMetrics} className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-accent/25 bg-accent/8 px-3 text-sm text-accent transition hover:bg-accent/12"><BarChart3 size={16} />运营统计</button>}
         <button
           type="button"
           onClick={onOpenProvider}

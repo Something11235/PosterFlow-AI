@@ -35,6 +35,7 @@ export default function Gallery({
   providerModel,
   presetName,
   presetCategory,
+  authenticated = false,
 }) {
   const [modifyTarget, setModifyTarget] = useState(null);
   const [modifyText, setModifyText] = useState("");
@@ -128,7 +129,7 @@ export default function Gallery({
                 >
                   <div className="relative aspect-[16/10] overflow-hidden bg-bg-primary">
                     <img
-                      src={apiAssetUrl("images", img.filename)}
+                      src={apiAssetUrl("images", img.filename, { authenticated })}
                       alt={`AI生成图片 ${index + 1}`}
                       className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
                       loading="lazy"
@@ -158,7 +159,7 @@ export default function Gallery({
                         <Expand size={16} />
                       </button>
                       <a
-                        href={apiAssetUrl("download", img.filename)}
+                        href={apiAssetUrl("download", img.filename, { authenticated })}
                         download
                         className="flex min-h-10 min-w-10 items-center justify-center rounded-md bg-bg-secondary/90 text-text-secondary transition hover:text-text-primary"
                         title="下载"

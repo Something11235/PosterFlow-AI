@@ -3,6 +3,30 @@ import io
 import ipaddress
 import json
 import os
+
+
+def _load_local_env():
+    """Load the project-root .env during local development, without overriding process env."""
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    if not os.path.isfile(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as env_file:
+            for raw_line in env_file:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {chr(34), chr(39)}:
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except OSError:
+        return
+
+
+_load_local_env()
 import re
 import socket
 import time
@@ -12,8 +36,27 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit
 
 import requests
-from flask import Flask, Response, jsonify, request, send_file, send_from_directory, stream_with_context
+from flask import Flask, Response, g, jsonify, request, send_file, send_from_directory, stream_with_context
 from flask_cors import CORS
+
+try:
+    from backend.supabase_service import (
+        AuthenticatedUser,
+        SupabaseError,
+        SupabaseGateway,
+        authenticate_access_token,
+        is_supabase_configured,
+        utc_milliseconds_since,
+    )
+except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
+    from supabase_service import (
+        AuthenticatedUser,
+        SupabaseError,
+        SupabaseGateway,
+        authenticate_access_token,
+        is_supabase_configured,
+        utc_milliseconds_since,
+    )
 
 
 APP_DIR = os.path.dirname(__file__)
@@ -27,11 +70,21 @@ BLOB_API_VERSION = "12"
 BLOB_STORAGE_ENABLED = bool(BLOB_READ_WRITE_TOKEN)
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/images"
-OPENROUTER_MODEL = "openai/gpt-image-2"
+OPENROUTER_MODEL = "openai/gpt-image-2.5-flare"
 DEFAULT_API_KEY = os.getenv("IMAGE_API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEY", "").strip()
 DEFAULT_ENDPOINT = os.getenv("IMAGE_API_ENDPOINT", "").strip()
 DEFAULT_MODEL = os.getenv("IMAGE_API_MODEL", "").strip()
 DEFAULT_AUTH_TYPE = os.getenv("IMAGE_API_AUTH_TYPE", "bearer").strip().lower()
+ALLOW_LEGACY_SERVER_PROVIDER = os.getenv("ALLOW_LEGACY_SERVER_PROVIDER", "0") == "1"
+PLATFORM_API_KEY = os.getenv("PLATFORM_IMAGE_API_KEY", "").strip()
+PLATFORM_ENDPOINT = os.getenv("PLATFORM_IMAGE_API_ENDPOINT", "").strip()
+PLATFORM_MODEL = os.getenv("PLATFORM_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
+PLATFORM_AUTH_TYPE = os.getenv("PLATFORM_IMAGE_AUTH_TYPE", "bearer").strip().lower()
+PLATFORM_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("PLATFORM_DAILY_IMAGE_LIMIT", "1000")))
+USER_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("USER_DAILY_IMAGE_LIMIT", "20")))
+ADMIN_USER_IDS = {item.strip() for item in os.getenv("ADMIN_USER_IDS", "").split(",") if item.strip()}
+AUTH_COOKIE_NAME = "posterflow_session"
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "1" if os.getenv("VERCEL") else "0") == "1"
 
 # Keep the former OpenRouter environment variable working without embedding a secret.
 if os.getenv("OPENROUTER_API_KEY", "").strip():
@@ -50,6 +103,7 @@ ALLOW_PRIVATE_PROVIDER_HOSTS = os.getenv("ALLOW_PRIVATE_PROVIDER_HOSTS", "0") ==
 ALLOW_INSECURE_PROVIDER_HTTP = os.getenv("ALLOW_INSECURE_PROVIDER_HTTP", "0") == "1"
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
+MAX_REFERENCE_IMAGES = 8
 HISTORY_RETENTION_DAYS = 30
 
 app = Flask(__name__, static_folder=None)
@@ -64,7 +118,11 @@ CORS(
         "X-Provider-Model",
         "X-Provider-Auth-Type",
         "X-Client-Id",
+        "Authorization",
+        "X-Billing-Mode",
+        "X-Request-Id",
     ],
+    supports_credentials=True,
 )
 if not BLOB_STORAGE_ENABLED:
     os.makedirs(SAVE_FOLDER, exist_ok=True)
@@ -95,12 +153,103 @@ class ProviderConfig:
 
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 
+REQUEST_RATE_WINDOWS = {}
+
+
+def current_storage_scope():
+    return getattr(g, "posterflow_storage_scope", None) or current_client_id()
+
+
+def storage_scope_name():
+    """Return a path-safe per-user/browser storage namespace."""
+    candidate = current_storage_scope()
+    if re.fullmatch(r"(?:user-)?[A-Za-z0-9_-]{8,96}", candidate):
+        return candidate
+    return "local-user"
+
 
 def current_client_id():
     candidate = request.headers.get("X-Client-Id", "").strip() or request.args.get("client_id", "").strip()
     if CLIENT_ID_PATTERN.fullmatch(candidate):
         return candidate
     return "local-user"
+
+
+def access_token_from_request():
+    authorization = request.headers.get("Authorization", "").strip()
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return request.cookies.get(AUTH_COOKIE_NAME, "").strip()
+
+
+def optional_authenticated_user():
+    token = access_token_from_request()
+    if not token:
+        return None
+    try:
+        return authenticate_access_token(token)
+    except SupabaseError:
+        # A stale resource cookie must not prevent anonymous self-key usage.
+        if request.headers.get("Authorization", "").strip():
+            raise
+        return None
+
+
+def require_authenticated_user():
+    user = optional_authenticated_user()
+    if not user:
+        raise ProviderError(
+            "AUTH_REQUIRED",
+            "请先登录后再使用平台积分",
+            401,
+            "平台积分模式需要已登录且邮箱已验证的 PosterFlow AI 账户。",
+            ["登录账户", "完成邮箱验证", "或改用自带 Key 模式"],
+        )
+    g.posterflow_storage_scope = f"user-{user.id}"
+    return user
+
+
+def set_optional_storage_scope():
+    user = optional_authenticated_user()
+    if user:
+        g.posterflow_storage_scope = f"user-{user.id}"
+    return user
+
+
+def parse_billing_mode(data):
+    value = str(data.get("billing_mode") or request.headers.get("X-Billing-Mode") or "own_key").strip().lower()
+    if value not in {"platform", "own_key"}:
+        raise ProviderError(
+            "BILLING_MODE_INVALID",
+            "生图模式无效",
+            400,
+            "请在平台积分模式与自带 Key 模式之间选择其一。",
+        )
+    return value
+
+
+def parse_request_id(data):
+    value = str(data.get("request_id") or request.headers.get("X-Request-Id") or uuid.uuid4()).strip()
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, TypeError) as exc:
+        raise ProviderError("REQUEST_ID_INVALID", "请求标识无效", 400, "请重新发起本次生成请求。") from exc
+
+
+def enforce_rate_limit(bucket, subject, maximum, window_seconds):
+    now = time.monotonic()
+    key = (bucket, subject)
+    attempts = [value for value in REQUEST_RATE_WINDOWS.get(key, []) if value > now - window_seconds]
+    if len(attempts) >= maximum:
+        raise ProviderError(
+            "RATE_LIMITED",
+            "操作过于频繁，请稍后再试",
+            429,
+            "为保护平台积分和图片服务，本操作暂时触发了频率限制。",
+            ["稍等一分钟", "避免重复点击生成", "确认上一任务已结束"],
+        )
+    attempts.append(now)
+    REQUEST_RATE_WINDOWS[key] = attempts
 
 
 def _blob_store_id():
@@ -195,11 +344,11 @@ def _blob_download(pathname, stream=False):
 
 
 def _image_blob_path(filename):
-    return f"posterflow/{current_client_id()}/images/{filename}"
+    return f"posterflow/{storage_scope_name()}/images/{filename}"
 
 
 def _history_blob_prefix():
-    return f"posterflow/{current_client_id()}/history/"
+    return f"posterflow/{storage_scope_name()}/history/"
 
 
 def provider_error_response(error):
@@ -292,20 +441,44 @@ def validate_provider_endpoint(endpoint, resolve_dns=True):
     return parsed
 
 
-def resolve_provider_config(resolve_dns=True):
-    request_key = request.headers.get("X-Provider-Api-Key", "").strip()
-    endpoint = request.headers.get("X-Provider-Endpoint", "").strip() or DEFAULT_ENDPOINT
-    model = request.headers.get("X-Provider-Model", "").strip() or DEFAULT_MODEL
-    auth_type = request.headers.get("X-Provider-Auth-Type", "").strip().lower() or DEFAULT_AUTH_TYPE
-    api_key = request_key or DEFAULT_API_KEY
-    source = "browser" if request_key else "server"
+def resolve_provider_config(billing_mode="own_key", resolve_dns=True):
+    """Resolve an image provider without ever mixing platform and user keys."""
+    if billing_mode == "platform":
+        if any(request.headers.get(header, "").strip() for header in (
+            "X-Provider-Api-Key", "X-Provider-Endpoint", "X-Provider-Model", "X-Provider-Auth-Type"
+        )):
+            raise ProviderError(
+                "PLATFORM_PROVIDER_OVERRIDE_BLOCKED",
+                "平台积分模式不能使用浏览器中的服务商配置",
+                400,
+                "请切换到自带 Key 模式，或清除个人服务配置后使用平台积分。",
+                ["切换到自带 Key", "或使用平台默认服务"],
+            )
+        api_key = PLATFORM_API_KEY
+        endpoint = PLATFORM_ENDPOINT
+        model = PLATFORM_MODEL
+        auth_type = PLATFORM_AUTH_TYPE
+        source = "platform"
+    else:
+        request_key = request.headers.get("X-Provider-Api-Key", "").strip()
+        api_key = request_key
+        endpoint = request.headers.get("X-Provider-Endpoint", "").strip()
+        model = request.headers.get("X-Provider-Model", "").strip()
+        auth_type = request.headers.get("X-Provider-Auth-Type", "").strip().lower()
+        source = "browser"
+        if ALLOW_LEGACY_SERVER_PROVIDER and not request_key:
+            api_key = DEFAULT_API_KEY
+            endpoint = endpoint or DEFAULT_ENDPOINT
+            model = model or DEFAULT_MODEL
+            auth_type = auth_type or DEFAULT_AUTH_TYPE
+            source = "legacy-server"
 
     if not api_key:
         raise ProviderError(
             "PROVIDER_KEY_MISSING",
             "尚未配置图片服务 API Key",
             400,
-            "请在页面的“服务配置”中填写自己的 Key，Key 不会写入服务器历史记录。",
+            "自带 Key 模式需要在当前浏览器标签页填写自己的 Key。",
             ["打开服务配置", "填写 API Key", "保存后重新生成"],
         )
     if not endpoint:
@@ -348,6 +521,156 @@ def provider_headers(provider, content_type="application/json"):
     return headers
 
 
+RPC_ERROR_MESSAGES = {
+    "EMAIL_UNVERIFIED": ("请先完成邮箱验证", 403, "验证邮箱后会自动获得 10 个免费积分。", ["打开邮箱完成验证", "重新登录后刷新账户"]),
+    "ACCOUNT_FROZEN": ("账户当前不可使用平台积分", 403, "该账户已被平台暂停使用。", ["联系平台管理员", "切换到自带 Key 模式"]),
+    "CREDITS_INSUFFICIENT": ("平台积分不足", 402, "本次生成所需积分高于当前可用积分。", ["切换到自带 Key 模式", "等待管理员补充积分"]),
+    "USER_DAILY_LIMIT": ("今日平台积分生成额度已用完", 429, "请明天再试，或切换到自带 Key 模式。", ["切换到自带 Key", "明日再生成"]),
+    "PLATFORM_DAILY_LIMIT": ("平台今日免费生成额度已用完", 429, "平台限额会在下一日自动恢复。", ["稍后再试", "切换到自带 Key 模式"]),
+    "REQUEST_ID_CONFLICT": ("该生成请求不能重复使用", 409, "请重新发起生成请求。", ["重新点击生成"]),
+}
+
+
+def as_provider_error(error):
+    if isinstance(error, ProviderError):
+        return error
+    if isinstance(error, SupabaseError):
+        return ProviderError(error.code, error.message, error.status, error.detail)
+    return ProviderError("SERVER_ERROR", "服务暂时不可用，请稍后重试", 503)
+
+
+def raise_for_rpc_result(result):
+    if isinstance(result, dict) and result.get("ok") is False:
+        code = str(result.get("code") or "ACCOUNT_OPERATION_FAILED")
+        message, status, detail, recovery = RPC_ERROR_MESSAGES.get(
+            code,
+            ("账户或积分处理失败", 503, "平台没有完成本次账户处理。", ["稍后重试", "检查账户状态"]),
+        )
+        raise ProviderError(code, message, status, detail, recovery)
+    return result or {}
+
+
+def platform_provider_configured():
+    return bool(PLATFORM_API_KEY and PLATFORM_ENDPOINT and PLATFORM_MODEL)
+
+
+def history_entry_for_generation(prompt, style, size, custom_size, quality, strength, images, provider, parent_id=None):
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "prompt": prompt,
+        "style": style,
+        "size": size,
+        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
+        "quality": quality,
+        "strength": strength,
+        "count": len(images),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "images": [image["filename"] for image in images],
+        "parent_id": parent_id,
+        "provider": provider.host,
+        "model": provider.model,
+    }
+
+
+def execute_generation(data, *, requested_count, prompt, generate_callback):
+    """Run one image request with isolated keys, idempotency and credit settlement."""
+    billing_mode = parse_billing_mode(data)
+    request_id = parse_request_id(data)
+    user = None
+    gateway = None
+    job_id = None
+    provider = None
+    created_filenames = []
+    started_at = time.monotonic()
+
+    try:
+        if billing_mode == "platform":
+            if not platform_provider_configured():
+                raise ProviderError(
+                    "PLATFORM_PROVIDER_NOT_CONFIGURED",
+                    "平台免费生图暂未配置",
+                    503,
+                    "管理员尚未在服务端配置平台图片服务。",
+                    ["切换到自带 Key 模式", "稍后重试"],
+                )
+            user = require_authenticated_user()
+            gateway = SupabaseGateway()
+            provider = resolve_provider_config("platform")
+            enforce_rate_limit("platform-generate", user.id, 8, 60)
+            reservation = raise_for_rpc_result(
+                gateway.reserve_credits(
+                    user.id,
+                    request_id,
+                    requested_count,
+                    provider.host,
+                    provider.model,
+                    prompt,
+                    USER_DAILY_IMAGE_LIMIT or None,
+                    PLATFORM_DAILY_IMAGE_LIMIT or None,
+                )
+            )
+            job_id = reservation.get("job_id")
+            if reservation.get("existing"):
+                status = reservation.get("status")
+                if status == "succeeded":
+                    filenames = [name for name in reservation.get("images", []) if isinstance(name, str)]
+                    return {
+                        "images": [{"filename": name, "index": index + 1} for index, name in enumerate(filenames)],
+                        "history_id": str(job_id or ""),
+                        "credit_balance": reservation.get("balance"),
+                        "idempotent": True,
+                        "provider": provider,
+                    }
+                raise ProviderError(
+                    "REQUEST_ALREADY_PROCESSED",
+                    "该生成请求已处理，请重新发起",
+                    409,
+                    "重复请求不会再次扣除积分或重复调用图片服务。",
+                    ["重新点击生成", "刷新账户积分"],
+                )
+        else:
+            user = optional_authenticated_user()
+            if user:
+                g.posterflow_storage_scope = f"user-{user.id}"
+            provider = resolve_provider_config("own_key")
+
+        images = generate_callback(provider)
+        filenames = [image["filename"] for image in images]
+        created_filenames = filenames
+        duration_ms = utc_milliseconds_since(started_at)
+        credit_balance = None
+        if billing_mode == "platform":
+            settled = raise_for_rpc_result(gateway.settle_generation(job_id, len(images), duration_ms, filenames))
+            credit_balance = settled.get("balance")
+        elif user:
+            # Own-key requests are logged only after success and never include the API key.
+            gateway = SupabaseGateway()
+            gateway.record_own_key_generation(
+                user.id, request_id, provider.host, provider.model, prompt, requested_count, len(images), duration_ms, filenames
+            )
+        return {"images": images, "history_id": None, "credit_balance": credit_balance, "idempotent": False, "provider": provider}
+    except Exception as error:
+        if billing_mode == "platform" and gateway and job_id:
+            if created_filenames:
+                try:
+                    remove_stored_images(created_filenames)
+                except Exception:
+                    app.logger.exception("Failed to remove orphaned generated images")
+            try:
+                gateway.refund_generation(job_id, getattr(error, "code", "generation_failed"))
+            except SupabaseError:
+                app.logger.exception("Failed to refund platform generation")
+        elif billing_mode == "own_key" and user and provider:
+            try:
+                (gateway or SupabaseGateway()).record_own_key_generation(
+                    user.id, request_id, provider.host, provider.model, prompt, requested_count, 0,
+                    utc_milliseconds_since(started_at), [], getattr(error, "code", "generation_failed")
+                )
+            except SupabaseError:
+                app.logger.exception("Failed to record own-key generation failure")
+        raise as_provider_error(error)
+
+
 STYLE_TEMPLATES = {
     "商务科技": "国际商务科技风，主色为深海蓝、科技银灰和冷白高光。构图理性克制，几何线条与低饱和科技元素交织，现代无衬线字体排版，适合企业招商海报。",
     "极简高级": "极简主义设计，大量留白，深色背景配金色或白色点缀。几何构图精准，字体纤细现代，画面干净克制，突出主体。",
@@ -385,10 +708,11 @@ def load_history():
         except (ProviderError, requests.RequestException, ValueError, KeyError):
             app.logger.exception("Failed to read Blob generation history")
             return []
-    if not os.path.exists(HISTORY_FILE):
+    history_file = HISTORY_FILE if storage_scope_name() == "local-user" else os.path.join(DATA_DIR, "history", f"{storage_scope_name()}.json")
+    if not os.path.exists(history_file):
         return []
     try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as file:
+        with open(history_file, "r", encoding="utf-8") as file:
             return json.load(file)
     except (OSError, json.JSONDecodeError):
         app.logger.exception("Failed to read generation history")
@@ -405,7 +729,9 @@ def write_history(history):
         stale = [item.get("url") for item in _blob_list(prefix) if item.get("url") != saved.get("url")]
         _blob_delete(stale)
         return
-    with open(HISTORY_FILE, "w", encoding="utf-8") as file:
+    history_file = HISTORY_FILE if storage_scope_name() == "local-user" else os.path.join(DATA_DIR, "history", f"{storage_scope_name()}.json")
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+    with open(history_file, "w", encoding="utf-8") as file:
         json.dump(records, file, ensure_ascii=False, indent=2)
 
 
@@ -485,7 +811,8 @@ def stored_image_to_base64(filename):
         except requests.RequestException:
             app.logger.exception("Failed to read Blob reference image")
             return None
-    path = os.path.join(SAVE_FOLDER, filename)
+    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+    path = os.path.join(image_folder, filename)
     return image_to_base64(path) if os.path.exists(path) else None
 
 
@@ -558,15 +885,33 @@ def validate_reference_image_b64(value):
 def validate_reference_images_b64(values):
     if values in (None, ""):
         return []
-    if not isinstance(values, list) or not 1 <= len(values) <= 4:
+    if not isinstance(values, list) or not 1 <= len(values) <= MAX_REFERENCE_IMAGES:
         raise ProviderError(
             "REFERENCE_IMAGES_INVALID",
             "参考图数量无效",
             400,
-            "参考图列表必须包含 1 至 4 张图片。",
+            "参考图列表必须包含 1 至 8 张图片。",
             ["重新选择画布原图", "减少参考图数量", "再次生成"],
         )
     return [validate_reference_image_b64(value) for value in values]
+
+
+def reference_image_data_url(encoded):
+    image_bytes = base64.b64decode(encoded, validate=True)
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime = "image/png"
+    elif image_bytes.startswith(b"\xff\xd8\xff"):
+        mime = "image/jpeg"
+    elif image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        mime = "image/gif"
+    else:
+        mime = "image/webp"
+    return f"data:{mime};base64,{encoded}"
+
+
+def is_openrouter_image_endpoint(endpoint):
+    parsed = urlsplit(endpoint)
+    return parsed.hostname == "openrouter.ai" and parsed.path.rstrip("/").endswith("/api/v1/images")
 
 
 def reference_image_upload(encoded, index):
@@ -604,7 +949,9 @@ def store_generated_image(filename, image_bytes):
     if BLOB_STORAGE_ENABLED:
         _blob_put(_image_blob_path(filename), image_bytes, "image/png")
         return
-    with open(os.path.join(SAVE_FOLDER, filename), "wb") as file:
+    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+    os.makedirs(image_folder, exist_ok=True)
+    with open(os.path.join(image_folder, filename), "wb") as file:
         file.write(image_bytes)
 
 
@@ -613,8 +960,9 @@ def remove_stored_images(filenames):
     if BLOB_STORAGE_ENABLED:
         _blob_delete([_image_blob_path(filename) for filename in safe_names])
         return
+    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
     for filename in safe_names:
-        path = os.path.join(SAVE_FOLDER, filename)
+        path = os.path.join(image_folder, filename)
         if os.path.exists(path):
             os.remove(path)
 
@@ -671,7 +1019,7 @@ def decode_provider_image(image_data):
     )
 
 
-def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landscape_16_9", quality="high", count=1, custom_size=None):
+def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landscape_16_9", quality="high", count=1, custom_size=None, mask_b64=None):
     size_cfg = custom_size or SIZE_OPTIONS.get(size, SIZE_OPTIONS["landscape_16_9"])
     payload = {
         "model": provider.model,
@@ -685,24 +1033,51 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
     try:
         if references:
             normalized_references = [validate_reference_image_b64(value) for value in references]
-            file_field = "image" if len(normalized_references) == 1 else "image[]"
-            files = [
-                (file_field, reference_image_upload(encoded, index))
-                for index, encoded in enumerate(normalized_references, start=1)
-            ]
-            response = requests.post(
-                provider_edit_endpoint(provider),
-                headers=provider_headers(provider, content_type=None),
-                data={
+            if is_openrouter_image_endpoint(provider.endpoint):
+                openrouter_payload = {
                     "model": provider.model,
                     "prompt": prompt,
-                    "n": str(count),
+                    "n": count,
                     "size": payload["size"],
-                    "response_format": "b64_json",
-                },
-                files=files,
-                timeout=300,
-            )
+                    "quality": quality,
+                    # OpenAI-compatible image edit models use high input fidelity to
+                    # preserve the reference composition. This is the closest
+                    # provider-neutral equivalent to the UI's reference strength.
+                    "input_fidelity": "high",
+                    "input_references": [
+                        {"type": "image_url", "image_url": {"url": reference_image_data_url(encoded)}}
+                        for encoded in normalized_references
+                    ],
+                    **({"mask": reference_image_data_url(validate_reference_image_b64(mask_b64))} if mask_b64 else {}),
+                }
+                response = requests.post(
+                    provider.endpoint,
+                    headers=provider_headers(provider),
+                    json=openrouter_payload,
+                    timeout=300,
+                )
+            else:
+                file_field = "image" if len(normalized_references) == 1 else "image[]"
+                files = [
+                    (file_field, reference_image_upload(encoded, index))
+                    for index, encoded in enumerate(normalized_references, start=1)
+                ]
+                if mask_b64:
+                    files.append(("mask", reference_image_upload(validate_reference_image_b64(mask_b64), 0)))
+                response = requests.post(
+                    provider_edit_endpoint(provider),
+                    headers=provider_headers(provider, content_type=None),
+                    data={
+                        "model": provider.model,
+                        "prompt": prompt,
+                        "n": str(count),
+                        "size": payload["size"],
+                        "response_format": "b64_json",
+                        "input_fidelity": "high" if strength >= 0.75 else "low",
+                    },
+                    files=files,
+                    timeout=300,
+                )
         else:
             response = requests.post(
                 provider.endpoint,
@@ -757,7 +1132,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
             str(provider_error),
             [
                 "检查 API Key、余额与模型权限",
-                "参考图编辑需确认服务商支持 /v1/images/edits",
+                "参考图编辑需确认模型支持 input_references 和 input_fidelity",
                 "核对接口地址和模型标识",
             ],
         )
@@ -861,10 +1236,84 @@ def get_styles():
     return jsonify({"styles": STYLE_TEMPLATES, "sizes": SIZE_OPTIONS})
 
 
+@app.route("/api/auth/session", methods=["POST"])
+def create_auth_session():
+    try:
+        user = require_authenticated_user()
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+    response = jsonify({"success": True, "user_id": user.id})
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        access_token_from_request(),
+        max_age=3600,
+        secure=AUTH_COOKIE_SECURE,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+@app.route("/api/auth/session", methods=["DELETE"])
+def delete_auth_session():
+    response = jsonify({"success": True})
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/", secure=AUTH_COOKIE_SECURE, httponly=True, samesite="Lax")
+    return response
+
+
+@app.route("/api/account", methods=["GET"])
+def account():
+    try:
+        user = require_authenticated_user()
+        snapshot = SupabaseGateway().account_snapshot(user.id)
+        bonus = snapshot.get("signup_bonus") or {}
+        if bonus.get("ok") is False and bonus.get("code") != "EMAIL_UNVERIFIED":
+            raise_for_rpc_result(bonus)
+        return jsonify({"success": True, **snapshot})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/account", methods=["DELETE"])
+def delete_account():
+    try:
+        user = require_authenticated_user()
+        SupabaseGateway().delete_user(user.id)
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+    response = jsonify({"success": True})
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/", secure=AUTH_COOKIE_SECURE, httponly=True, samesite="Lax")
+    return response
+
+
+@app.route("/api/admin/metrics", methods=["GET"])
+def admin_metrics():
+    try:
+        user = require_authenticated_user()
+        gateway = SupabaseGateway()
+        profile = gateway.account_snapshot(user.id).get("profile") or {}
+        if user.id not in ADMIN_USER_IDS and profile.get("role") != "admin":
+            raise ProviderError("ADMIN_REQUIRED", "没有查看平台数据的权限", 403, "该页面仅对管理员开放。")
+        today = datetime.now(timezone.utc).date()
+        from_value = request.args.get("from", "")
+        to_value = request.args.get("to", "")
+        try:
+            from_date = datetime.strptime(from_value, "%Y-%m-%d").date() if from_value else today - timedelta(days=29)
+            to_date = datetime.strptime(to_value, "%Y-%m-%d").date() if to_value else today
+        except ValueError as exc:
+            raise ProviderError("METRICS_DATE_INVALID", "统计日期格式无效", 400, "日期格式应为 YYYY-MM-DD。") from exc
+        if from_date > to_date or to_date > today or (to_date - from_date).days > 89:
+            raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
+        return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), "metrics": gateway.admin_metrics(from_date, to_date)})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
 @app.route("/api/provider/validate", methods=["POST"])
 def validate_provider():
     try:
-        provider = resolve_provider_config(resolve_dns=False)
+        provider = resolve_provider_config("own_key", resolve_dns=False)
     except ProviderError as error:
         return provider_error_response(error)
     return jsonify(
@@ -884,14 +1333,29 @@ def validate_provider():
 def generate():
     data = request.get_json(silent=True) or {}
     try:
-        provider = resolve_provider_config()
+        if parse_billing_mode(data) == "platform":
+            require_authenticated_user()
+        else:
+            set_optional_storage_scope()
         prompt, size, custom_size, quality, count, strength = parse_generation_request(data)
         style_name = data.get("style_name", "")
         if style_name in STYLE_TEMPLATES and STYLE_TEMPLATES[style_name] not in prompt:
             prompt = f"{prompt}。{STYLE_TEMPLATES[style_name]}"
-        reference_b64 = validate_reference_image_b64(data.get("reference_b64"))
-        images = generate_images(provider, prompt, reference_b64, strength, size, quality, count, custom_size)
-    except ProviderError as error:
+        reference_b64 = validate_reference_images_b64(data.get("reference_images_b64"))
+        if not reference_b64:
+            single_reference = validate_reference_image_b64(data.get("reference_b64"))
+            reference_b64 = [single_reference] if single_reference else []
+        reference_b64 = reference_b64 or None
+        execution = execute_generation(
+            data,
+            requested_count=count,
+            prompt=prompt,
+            generate_callback=lambda provider: generate_images(
+                provider, prompt, reference_b64, strength, size, quality, count, custom_size
+            ),
+        )
+    except (ProviderError, SupabaseError) as error:
+        error = as_provider_error(error)
         return provider_error_response(error)
     except Exception:
         app.logger.exception("Unexpected generation failure")
@@ -905,29 +1369,23 @@ def generate():
             )
         )
 
-    history_entry = {
-        "id": uuid.uuid4().hex[:12],
-        "prompt": prompt,
-        "style": style_name,
-        "size": size,
-        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
-        "quality": quality,
-        "strength": strength,
-        "count": len(images),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "images": [image["filename"] for image in images],
-        "provider": provider.host,
-        "model": provider.model,
-    }
+    images = execution["images"]
+    if execution["idempotent"]:
+        return jsonify({"success": True, "history_id": execution["history_id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
+    provider = execution["provider"]
+    history_entry = history_entry_for_generation(prompt, style_name, size, custom_size, quality, strength, images, provider)
     save_history_entry(history_entry)
-    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt})
+    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
 
 
 @app.route("/api/modify", methods=["POST"])
 def modify():
     data = request.get_json(silent=True) or {}
     try:
-        provider = resolve_provider_config()
+        if parse_billing_mode(data) == "platform":
+            require_authenticated_user()
+        else:
+            set_optional_storage_scope()
         prompt, size, custom_size, quality, _count, strength = parse_generation_request(data)
         direct_references = validate_reference_images_b64(data.get("reference_images_b64"))
         if not direct_references:
@@ -943,8 +1401,14 @@ def modify():
                 "局部重绘需要一张仍保存在服务端的历史图片，或由画布提交一张参考图。",
                 ["重新选择画布图片", "确认历史图片没有过期", "再发起局部重绘"],
             )
-        images = generate_images(provider, prompt, ref_b64, strength, size, quality, 1, custom_size)
-    except ProviderError as error:
+        execution = execute_generation(
+            data,
+            requested_count=1,
+            prompt=prompt,
+            generate_callback=lambda provider: generate_images(provider, prompt, ref_b64, strength, size, quality, 1, custom_size),
+        )
+    except (ProviderError, SupabaseError) as error:
+        error = as_provider_error(error)
         return provider_error_response(error)
     except Exception:
         app.logger.exception("Unexpected modification failure")
@@ -958,27 +1422,24 @@ def modify():
             )
         )
 
-    history_entry = {
-        "id": uuid.uuid4().hex[:12],
-        "prompt": prompt,
-        "style": "画布标注重绘" if direct_references else "迭代修改",
-        "size": size,
-        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
-        "quality": quality,
-        "strength": strength,
-        "count": 1,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "images": [image["filename"] for image in images],
-        "parent_id": data.get("parent_id"),
-        "provider": provider.host,
-        "model": provider.model,
-    }
+    images = execution["images"]
+    if execution["idempotent"]:
+        return jsonify({"success": True, "history_id": execution["history_id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
+    provider = execution["provider"]
+    history_entry = history_entry_for_generation(
+        prompt, "画布标注重绘" if direct_references else "迭代修改", size, custom_size, quality, strength,
+        images, provider, data.get("parent_id"),
+    )
     save_history_entry(history_entry)
-    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt})
+    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
 
 
 @app.route("/api/history", methods=["GET"])
 def get_history():
+    try:
+        set_optional_storage_scope()
+    except SupabaseError as error:
+        return provider_error_response(as_provider_error(error))
     page = max(0, request.args.get("page", 0, type=int))
     page_size = max(1, min(request.args.get("page_size", 20, type=int), 100))
     search = request.args.get("search", "").strip().lower()
@@ -1001,6 +1462,10 @@ def get_history():
 
 @app.route("/api/history/<history_id>", methods=["DELETE"])
 def delete_history(history_id):
+    try:
+        set_optional_storage_scope()
+    except SupabaseError as error:
+        return provider_error_response(as_provider_error(error))
     history = load_history()
     entry = next((item for item in history if item.get("id") == history_id), None)
     if not entry:
@@ -1012,6 +1477,10 @@ def delete_history(history_id):
 
 @app.route("/api/images/<filename>", methods=["GET"])
 def serve_image(filename):
+    try:
+        set_optional_storage_scope()
+    except SupabaseError as error:
+        return provider_error_response(as_provider_error(error))
     safe_name = os.path.basename(filename)
     if BLOB_STORAGE_ENABLED:
         try:
@@ -1023,7 +1492,8 @@ def serve_image(filename):
             mimetype=upstream.headers.get("content-type", "image/png"),
             headers={"Cache-Control": "private, max-age=300"},
         )
-    path = os.path.join(SAVE_FOLDER, safe_name)
+    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+    path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
     return send_file(path, mimetype="image/png")
@@ -1031,6 +1501,10 @@ def serve_image(filename):
 
 @app.route("/api/download/<filename>", methods=["GET"])
 def download_image(filename):
+    try:
+        set_optional_storage_scope()
+    except SupabaseError as error:
+        return provider_error_response(as_provider_error(error))
     safe_name = os.path.basename(filename)
     if BLOB_STORAGE_ENABLED:
         try:
@@ -1042,7 +1516,8 @@ def download_image(filename):
             mimetype=upstream.headers.get("content-type", "image/png"),
             headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
         )
-    path = os.path.join(SAVE_FOLDER, safe_name)
+    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+    path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
     return send_file(path, mimetype="image/png", as_attachment=True, download_name=safe_name)
@@ -1053,6 +1528,10 @@ def download_batch():
     import zipfile
 
     data = request.get_json(silent=True) or {}
+    try:
+        set_optional_storage_scope()
+    except SupabaseError as error:
+        return provider_error_response(as_provider_error(error))
     filenames = data.get("filenames", [])
     if not isinstance(filenames, list) or not filenames:
         return jsonify({"error": "请选择要下载的图片"}), 400
@@ -1067,7 +1546,8 @@ def download_batch():
                 except ProviderError:
                     app.logger.exception("Failed to add Blob image to archive")
             else:
-                path = os.path.join(SAVE_FOLDER, safe_name)
+                image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+                path = os.path.join(image_folder, safe_name)
                 if os.path.exists(path):
                     archive.write(path, safe_name)
     buffer.seek(0)
@@ -1087,6 +1567,8 @@ def health():
             "status": "ok",
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
             "default_provider_host": default_host,
+            "platform_provider_configured": platform_provider_configured() and is_supabase_configured(),
+            "platform_provider_name": urlsplit(PLATFORM_ENDPOINT).hostname if PLATFORM_ENDPOINT else "",
             "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
             "history_scope": "browser" if BLOB_STORAGE_ENABLED else "local-instance",
             "history_retention_days": HISTORY_RETENTION_DAYS,

@@ -40,15 +40,35 @@ class ReferenceImageValidationTests(unittest.TestCase):
         self.assertEqual(context.exception.code, "REFERENCE_IMAGE_TOO_LARGE")
         self.assertEqual(context.exception.status, 413)
 
-    def test_accepts_up_to_four_reference_images(self):
+    def test_accepts_up_to_eight_reference_images(self):
         encoded = base64.b64encode(VALID_PNG).decode("ascii")
 
         self.assertEqual(server.validate_reference_images_b64([encoded, encoded]), [encoded, encoded])
+        self.assertEqual(server.validate_reference_images_b64([encoded] * 8), [encoded] * 8)
 
         with self.assertRaises(server.ProviderError) as context:
-            server.validate_reference_images_b64([encoded] * 5)
+            server.validate_reference_images_b64([encoded] * 9)
 
         self.assertEqual(context.exception.code, "REFERENCE_IMAGES_INVALID")
+
+
+class ProviderEndpointTests(unittest.TestCase):
+    def test_openrouter_defaults_use_generations_and_qualified_model(self):
+        self.assertEqual(server.OPENROUTER_ENDPOINT, "https://openrouter.ai/api/v1/images")
+        self.assertEqual(server.OPENROUTER_MODEL, "openai/gpt-image-2.5-flare")
+
+    def test_generations_endpoint_derives_edits_endpoint(self):
+        provider = server.ProviderConfig(
+            api_key="test-key",
+            endpoint="https://provider.example/v1/images/generations",
+            model="openai/gpt-image-2.5-flare",
+            auth_type="bearer",
+            source="browser",
+        )
+        self.assertEqual(
+            server.provider_edit_endpoint(provider),
+            "https://provider.example/v1/images/edits",
+        )
 
 
 class ProviderEditRequestTests(unittest.TestCase):
@@ -66,6 +86,27 @@ class ProviderEditRequestTests(unittest.TestCase):
         response = Mock(status_code=200)
         response.json.return_value = {"data": [{"b64_json": self.encoded}]}
         return response
+
+    def test_openrouter_reference_image_uses_json_input_references(self):
+        provider = server.ProviderConfig(
+            api_key="test-key",
+            endpoint="https://openrouter.ai/api/v1/images",
+            model="openai/gpt-image-2.5-flare",
+            auth_type="bearer",
+            source="browser",
+        )
+        with (
+            patch.object(server.requests, "post", return_value=self.provider_response()) as post,
+            patch.object(server, "store_generated_image"),
+        ):
+            server.generate_images(provider, "把图中人物放到椅子旁", [self.encoded, self.encoded])
+
+        request = post.call_args.kwargs
+        self.assertEqual(post.call_args.args[0], provider.endpoint)
+        self.assertIn("json", request)
+        self.assertNotIn("files", request)
+        self.assertEqual(len(request["json"]["input_references"]), 2)
+        self.assertTrue(request["json"]["input_references"][0]["image_url"]["url"].startswith("data:image/png;base64,"))
 
     def test_reference_image_uses_multipart_edits_endpoint(self):
         with (

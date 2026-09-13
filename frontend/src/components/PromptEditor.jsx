@@ -1,5 +1,6 @@
-import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Clipboard, FileImage, FileText, Loader2, Paperclip, Send, Trash2 } from "lucide-react";
+import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 
 export default function PromptEditor({
   prompt,
@@ -8,8 +9,10 @@ export default function PromptEditor({
   isGenerating,
   currentPrompt,
   referenceFile,
+  referenceFiles,
   onReferenceChange,
   referencePreview,
+  referencePreviews,
   mode,
   onCopyPrompt,
   providerConfigured,
@@ -18,6 +21,8 @@ export default function PromptEditor({
   hasPreviousImage,
 }) {
   const fileInputRef = useRef(null);
+  const promptRef = useRef(null);
+  const [mentionHint, setMentionHint] = useState("");
   const charCount = prompt.length;
   const promptQuality = useMemo(() => {
     if (charCount > 180) return "信息充分";
@@ -25,7 +30,15 @@ export default function PromptEditor({
     return "待完善";
   }, [charCount]);
 
-  const showReference = mode !== "text-to-image";
+  const showReference = true;
+  const files = referenceFiles || (referenceFile ? [referenceFile] : []);
+  const previews = referencePreviews || (referencePreview ? [referencePreview] : []);
+  const insertMention = (index) => {
+    const mention = "@图" + (index + 1); const input = promptRef.current;
+    const start = input?.selectionStart ?? prompt.length; const end = input?.selectionEnd ?? start;
+    onPromptChange(prompt.slice(0, start) + mention + prompt.slice(end)); setMentionHint("已插入 " + mention);
+    window.setTimeout(() => { input?.focus(); const cursor = start + mention.length; input?.setSelectionRange(cursor, cursor); setMentionHint(""); }, 0);
+  };
 
   return (
     <div className="surface rounded-lg p-4">
@@ -65,10 +78,11 @@ export default function PromptEditor({
           </div>
         </div>
         <textarea
+          ref={promptRef}
           id="prompt"
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
-          placeholder="描述主体、环境、风格、构图、光线、材质和需要避免的内容。"
+          placeholder="描述你想生成或修改的画面；可在下方上传素材并用 @图1、@图2 引用。"
           rows={8}
           className="min-h-52 w-full resize-y rounded-lg border border-border-default bg-bg-primary/78 px-4 py-3 text-base leading-7 text-text-primary placeholder:text-text-muted transition focus:border-accent/65"
         />
@@ -85,13 +99,14 @@ export default function PromptEditor({
             onClick={() => fileInputRef.current?.click()}
             className="flex min-h-24 w-full items-center justify-center rounded-lg border border-dashed border-border-default bg-bg-tertiary/70 p-3 transition hover:border-accent/45 hover:bg-bg-elevated"
           >
-            {referencePreview ? (
-              <div className="flex w-full items-center gap-3">
-                <img src={referencePreview} alt="参考图预览" className="h-20 w-28 rounded-md object-cover" />
-                <div className="min-w-0 text-left">
-                  <p className="truncate text-sm font-medium text-text-primary">{referenceFile?.name}</p>
-                  <p className="mt-1 text-xs text-text-muted">已作为参考图参与生成。</p>
-                </div>
+            {files.length ? (
+              <div className="grid w-full grid-cols-2 gap-2 text-left sm:grid-cols-4">
+                {files.map((file, index) => (
+                  <button type="button" key={file.name + index} onClick={(event) => { event.stopPropagation(); insertMention(index); }} className="group min-w-0 rounded-md border border-border-subtle bg-bg-primary/60 p-1.5 text-left transition hover:border-accent/50">
+                    <div className="relative">{previews[index] && <img src={previews[index]} alt={"参考图" + (index + 1) + "预览"} className="h-20 w-full rounded object-cover" />}<span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white">图{index + 1}</span></div>
+                    <p className="mt-1 truncate text-xs text-text-primary">{file.name}</p><p className="truncate text-[11px] text-accent">点击插入 @图{index + 1}</p>
+                  </button>
+                ))}
               </div>
             ) : (
               <div className="flex flex-col items-center gap-2 text-text-muted">
@@ -105,13 +120,14 @@ export default function PromptEditor({
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(event) => onReferenceChange(event.target.files?.[0] || null)}
+            multiple
+            onChange={(event) => onReferenceChange(Array.from(event.target.files || []))}
           />
-          {referencePreview && (
+          {files.length > 0 && (
             <button
               type="button"
               onClick={() => {
-                onReferenceChange(null);
+                onReferenceChange([]);
                 if (fileInputRef.current) fileInputRef.current.value = "";
               }}
               className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-xs text-text-muted transition hover:bg-bg-tertiary hover:text-error"
@@ -120,6 +136,8 @@ export default function PromptEditor({
               移除参考图
             </button>
           )}
+          {files.length > 0 && <p className="mt-1 text-xs leading-5 text-text-muted">最多 {MAX_REFERENCE_IMAGES} 张，按顺序对应 @图1、@图2……。想尽量保持图1背景不变，请明确写“只添加/移动主体，其他元素、镜头和背景保持不变”。</p>}
+          {mentionHint && <p className="mt-1 text-xs text-mint" role="status">{mentionHint}</p>}
         </div>
       )}
 

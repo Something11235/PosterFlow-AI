@@ -1,9 +1,9 @@
 import React from "react";
+import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 import {
   CheckCircle2,
   Eye,
   Frame,
-  Gauge,
   Image as ImageIcon,
   Loader2,
   ServerCog,
@@ -29,8 +29,6 @@ export default function CanvasAiPanel({
   selection,
   prompt,
   onPromptChange,
-  strength,
-  onStrengthChange,
   quality,
   onQualityChange,
   onPreviewReferences,
@@ -174,8 +172,8 @@ export default function CanvasAiPanel({
                         " 个标注"
                     : "未检测到邻近标注，仅使用干净原图"
                   : selection.imageCount > 1
-                    ? "一次只能选择一张原图"
-                    : "选中原图后会自动关联图内及附近标注。"}
+                    ? "可同时选择多张原图（最多 " + MAX_REFERENCE_IMAGES + " 张），并按图1、图2顺序用于 @引用。"
+                    : "先用矩形框/圆形框圈出要修改的区域，再用 @图1、@图2 指定素材；未圈选区域会尽量保持不变。"}
             </p>
           </div>
         </div>
@@ -208,33 +206,6 @@ export default function CanvasAiPanel({
           )}
         </div>
 
-        {!isFrameWorkflow && (
-          <fieldset className="mt-4">
-            <legend className="flex w-full items-center justify-between text-xs font-medium text-text-muted">
-              <span className="flex items-center gap-2">
-                <Gauge size={15} />
-                重绘幅度
-              </span>
-              <span className="font-semibold tabular-nums text-accent">{Math.round((1 - strength) * 100)}%</span>
-            </legend>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={Math.round((1 - strength) * 100)}
-              onChange={(event) => onStrengthChange(1 - Number(event.target.value) / 100)}
-              className="mt-3 h-2 w-full cursor-pointer appearance-none rounded-full"
-              style={{
-                background: `linear-gradient(to right, #4f8cff 0%, #4f8cff ${(1 - strength) * 100}%, #243142 ${(1 - strength) * 100}%, #243142 100%)`,
-              }}
-              aria-label="重绘幅度"
-            />
-            <div className="mt-2 flex justify-between text-xs text-text-muted">
-              <span>轻微调整</span>
-              <span>大幅重绘</span>
-            </div>
-          </fieldset>
-        )}
 
         <fieldset className="mt-4">
           <legend className="text-xs font-medium text-text-muted">画质</legend>
