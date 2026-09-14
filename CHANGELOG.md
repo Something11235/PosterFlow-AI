@@ -1,24 +1,27 @@
-# Changelog
+# 更新记录
+
+## 0.3.0 - 2026-09-14
+
+- 加入账号注册、登录和邮箱验证。
+- 验证邮箱后可领取 10 个免费积分。
+- 增加平台积分生图、自带 API Key 两种使用方式。
+- 增加充值订单和支付宝当面付的服务端基础能力，支付功能默认关闭。
+- 增加管理员数据面板和积分流水。
+- 无限画布支持多图组合、标注、AI 图片框和标注重绘。
+- 参考图编辑支持最多 8 张图片，并保留 `@图1`、`@图2` 等顺序引用。
+- 收紧图片上传、接口地址和请求体校验，补充相关测试。
 
 ## 0.2.0 - 2026-08-28
 
-- Added an IndexedDB-backed infinite canvas with local image import, gallery handoff, layout tools, and PNG export.
-- Replaced the production-gated tldraw canvas with MIT-licensed Fabric.js so local image rendering works on public domains without a canvas license key.
-- Added AI image frames for seven common aspect ratios and in-place generated-image replacement.
-- Added annotation redraw with large red arrows and text, automatic nearby-annotation detection, and recognized text extraction.
-- Added a no-cost preflight preview showing the clean reference, annotated reference, recognized instructions, and compressed sizes.
-- Switched reference editing to OpenAI-compatible multipart `/v1/images/edits` requests with single and multi-image support.
-- Reduced canvas redraw reference payloads below hosted request limits and added readable handling for plain-text HTTP 413 responses.
-- Added browser-side reference resizing and compression for Vercel request limits, plus backend validation and regression tests.
-- Changed the local Flask development default to `127.0.0.1`; public container deployment remains handled by Gunicorn.
+- 增加基于 IndexedDB 的无限画布、图片导入、排版工具和 PNG 导出。
+- 使用 Fabric.js 替换原来的画布方案，公开部署不再需要额外的画布许可证。
+- 增加 AI 图片框和按标注重绘。
+- 增加参考图压缩、请求大小控制和多图编辑支持。
+- 改进 Vercel 部署下的请求超时和错误提示。
 
 ## 0.1.0 - 2026-08-13
 
-- Added browser-side provider configuration for OpenRouter and custom OpenAI-compatible relays.
-- Replaced the poster-only Brief workflow with a general preset library and editable prompt workflow.
-- Added eight built-in image categories plus custom preset cover upload, edit, delete, JSON import, and JSON export.
-- Added independent text/image generation and previous-image local redraw behavior.
-- Removed embedded API keys and added environment-based server defaults.
-- Added endpoint, private-network, upload-size, and generation-parameter validation.
-- Added Docker deployment and GitHub Actions verification.
-- Organized legacy scripts, design documents, screenshots, and local review artifacts.
+- 支持 OpenRouter 和自定义 OpenAI 兼容图片服务。
+- 增加通用预设库、自定义预设和提示词编辑。
+- 支持文生图、图生图、历史记录和本地图片下载。
+- 增加服务端默认配置、接口校验和 Docker 部署。

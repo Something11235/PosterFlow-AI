@@ -33,6 +33,7 @@ test-results/
 # Internal development notes
 HANDOFF.md
 CODEX_CONTINUE_PROMPT.md
+CONTINUE_PROMPT.md
 
 # Local history data
 backend/history/

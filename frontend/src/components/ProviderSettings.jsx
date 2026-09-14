@@ -184,7 +184,7 @@ export default function ProviderSettings({
           {billingMode === "platform" ? (
             <div className="space-y-4 rounded-lg border border-accent/30 bg-accent/8 p-4">
               <div><p className="text-sm font-semibold text-text-primary">平台积分生图</p><p className="mt-1 text-sm leading-6 text-text-muted">每张图片消耗 1 个积分。批量生成会按图片数量预扣，失败或超时自动退回。</p></div>
-              <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">{serverProviderHost || "管理员配置"}</p></div></div>
+              <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台图片服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">平台图片服务-Image2.5</p></div></div>
               {!session && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">请先登录。邮箱验证后会自动获得 10 个免费积分。</p>}
               {session && !platformReady && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">平台积分服务尚未完成配置，请切换到自带 Key 模式。</p>}
             </div>

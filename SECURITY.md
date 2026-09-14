@@ -1,18 +1,23 @@
-# Security Policy
+# 安全说明
 
-## API keys
+## 请不要提交密钥
 
-Never commit a real provider key. Browser-supplied keys are stored in `sessionStorage`, sent only to the self-hosted backend for generation requests, and are not written to history or output files.
+不要把任何真实的 API Key、Supabase 服务端密钥、支付密钥或用户图片提交到代码仓库、Issue、截图和日志中。
 
-If a key has appeared in source code or Git history, removing the text is not enough. Revoke the key at the provider, create a new one, and review usage and billing records.
+用户自己填写的图片服务 Key 只保存在当前浏览器会话中，不会写入数据库、生成历史或输出文件。服务端密钥只放在部署平台的服务端环境变量里，不能使用 `VITE_` 前缀。
 
-## Public deployment
+如果密钥曾经出现在代码或 Git 历史中，仅仅删除文件还不够。请先到对应服务商后台撤销旧密钥，再检查账单和调用记录，最后换新密钥。
 
-- Keep `ALLOW_PRIVATE_PROVIDER_HOSTS=0` and `ALLOW_INSECURE_PROVIDER_HTTP=0`.
-- Restrict `ALLOWED_ORIGINS` to the deployed frontend origin when frontend and backend are separated.
-- Add authentication, rate limits, quotas, and persistent storage before offering a shared paid service.
-- Do not log `X-Provider-Api-Key`, request headers, or complete request bodies.
+## 公开部署
 
-## Reporting
+- 生产环境只使用 HTTPS，并限制允许访问的来源。
+- 不要开放私网地址或不安全的 HTTP 图片服务地址，除非你清楚风险并已在受控环境中使用。
+- 对外提供平台服务前，请配置登录、邮箱验证、限流、额度和日志脱敏。
+- 日志中不要记录 `X-Provider-Api-Key`、Authorization、完整请求体或用户图片内容。
+- 支付功能默认关闭。启用前请完成商户资质、回调地址、验签和幂等测试。
 
-Before publishing the repository, replace this section with a private security contact or enable GitHub private vulnerability reporting.
+## 报告安全问题
+
+如果你发现可能泄露密钥、绕过权限或读取他人数据的问题，请不要先公开发布复现细节。可以通过 GitHub 的私密漏洞报告功能联系项目维护者，并附上复现步骤、影响范围和已经做过的脱敏处理。
+
+请不要在报告里提交真实密钥、访问令牌或用户原图。
