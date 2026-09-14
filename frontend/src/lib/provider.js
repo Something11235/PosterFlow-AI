@@ -102,5 +102,5 @@ export function getProviderDisplayName(config, serverHost = "") {
       return "自定义中转站";
     }
   }
-  return serverHost || "未配置";
+  return serverHost || "服务器图片服务";
 }

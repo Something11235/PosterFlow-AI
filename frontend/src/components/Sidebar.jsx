@@ -1,7 +1,11 @@
 import React from "react";
-import { BarChart3, Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpen, Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
+const PROMPT_REFERENCE_LINKS = [
+  { label: "GPT Image 2 提示词库", href: "https://gpt-image2.canghe.ai/" },
+  { label: "GPT Image 2 灵感社区", href: "https://awesome.gptimage2.asia/" },
+];
 
 export default function Sidebar({
   mode,
@@ -14,6 +18,7 @@ export default function Sidebar({
   onOpenProvider,
   session,
   account,
+  isAdmin,
   accountLoading,
   onOpenAuth,
   onOpenAccount,
@@ -95,11 +100,31 @@ export default function Sidebar({
             </button>
           );
         })}
+        <div className="col-span-2 mt-1 rounded-lg border border-border-subtle bg-bg-tertiary/45 p-2 sm:col-span-4 lg:col-span-1" aria-labelledby="prompt-reference-title">
+          <div className="flex items-center gap-2 px-1 py-1 text-xs font-medium text-text-secondary">
+            <BookOpen size={15} className="text-accent" aria-hidden="true" />
+            <span id="prompt-reference-title">提示词参考</span>
+          </div>
+          <div className="mt-1 grid gap-1">
+            {PROMPT_REFERENCE_LINKS.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-h-10 items-center justify-between gap-2 rounded-md px-2 text-xs text-text-muted transition hover:bg-bg-elevated hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                <span className="min-w-0 truncate">{link.label}</span>
+                <ExternalLink size={13} className="flex-none" aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </div>
       </nav>
 
       <div className="mt-auto hidden space-y-3 pt-6 lg:block">
         <button type="button" onClick={session ? onOpenAccount : onOpenAuth} className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary px-3 text-left text-sm text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary"><UserRound size={16} /><span className="min-w-0 flex-1 truncate">{accountLabel}</span>{session && <span className={`text-xs ${accountLoading ? "animate-pulse text-text-muted" : "text-accent"}`}>{accountLoading ? "积分同步中…" : `${account?.credits?.balance ?? "--"} 积分`}</span>}</button>
-        {session && account?.profile?.role === "admin" && <button type="button" onClick={onOpenMetrics} className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-accent/25 bg-accent/8 px-3 text-sm text-accent transition hover:bg-accent/12"><BarChart3 size={16} />运营统计</button>}
+        {session && isAdmin && <button type="button" onClick={onOpenMetrics} className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-accent/25 bg-accent/8 px-3 text-sm text-accent transition hover:bg-accent/12"><BarChart3 size={16} />管理员控制台</button>}
         <button
           type="button"
           onClick={onOpenProvider}
@@ -145,6 +170,7 @@ export default function Sidebar({
           <span>GitHub 项目</span>
           <ExternalLink size={14} className="ml-auto text-text-muted" />
         </a>
+
       </div>
     </aside>
   );

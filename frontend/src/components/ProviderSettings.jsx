@@ -298,7 +298,7 @@ export default function ProviderSettings({
 
           {billingMode === "own_key" && serverProviderConfigured && !hasBrowserConfig && (
             <div className="mt-4 rounded-lg border border-border-subtle bg-bg-tertiary p-3 text-xs leading-6 text-text-muted">
-              当前服务器已配置 {serverProviderHost || "默认图片服务"}。不填写个人 Key 时，生成任务会使用服务器配置。
+              当前服务器已配置 {serverProviderHost || "服务器图片服务"}。不填写个人 Key 时，生成任务会使用服务器配置。
             </div>
           )}
 

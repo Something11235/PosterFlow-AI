@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 import {
   CheckCircle2,
@@ -29,6 +29,7 @@ export default function CanvasAiPanel({
   selection,
   prompt,
   onPromptChange,
+  onInsertMention,
   quality,
   onQualityChange,
   onPreviewReferences,
@@ -40,11 +41,24 @@ export default function CanvasAiPanel({
   providerName,
   onOpenProvider,
 }) {
+  const promptRef = useRef(null);
   const isFrameWorkflow = workflow === "frame";
   const hasTarget = isFrameWorkflow ? Boolean(selection.holder) : Boolean(selection.image);
   const hasInstruction =
     Boolean(prompt.trim()) || (!isFrameWorkflow && Boolean(selection.annotationTexts?.length));
   const generateLabel = isFrameWorkflow ? "生成到选中图框" : "生成重绘版本";
+  const insertMention = (index) => {
+    const mention = `@图${index}`;
+    const input = promptRef.current;
+    const start = input?.selectionStart ?? prompt.length;
+    const end = input?.selectionEnd ?? start;
+    onInsertMention?.(mention, start, end);
+    window.setTimeout(() => {
+      input?.focus();
+      const cursor = start + mention.length;
+      input?.setSelectionRange(cursor, cursor);
+    }, 0);
+  };
 
   return (
     <aside
@@ -151,7 +165,9 @@ export default function CanvasAiPanel({
                   ? `已选 ${selection.holder.meta?.posterflowRatioLabel || "AI 图片框"}`
                   : "请选择一个 AI 图片框"
                 : selection.image
-                  ? "已选重绘原图"
+                  ? selection.imageCount > 1
+                    ? `已选 ${selection.imageCount} 张图，可用 @图1、@图2 指定素材`
+                    : "已选重绘原图"
                   : "请选择一张画布图片"}
             </p>
             <p className="mt-0.5 text-xs leading-5 text-text-muted">
@@ -183,6 +199,7 @@ export default function CanvasAiPanel({
             {isFrameWorkflow ? "生成提示词" : "修改要求"}
           </label>
           <textarea
+            ref={promptRef}
             id="canvas-ai-prompt"
             value={prompt}
             onChange={(event) => onPromptChange(event.target.value)}
@@ -191,6 +208,30 @@ export default function CanvasAiPanel({
             placeholder={isFrameWorkflow ? "描述需要生成的完整画面" : "描述需要修改的区域与最终效果"}
             className="mt-2 w-full resize-y rounded-md border border-border-default bg-bg-primary px-3 py-3 text-base leading-6 text-text-primary placeholder:text-text-muted focus:border-accent/65"
           />
+          {!isFrameWorkflow && selection.images?.length > 0 && (
+            <div className="mt-2 rounded-md border border-border-subtle bg-bg-primary/60 p-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-text-secondary">本次参考图片</p>
+                <span className="text-[11px] text-text-muted">点击插入 @引用</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selection.images.map((image, index) => (
+                  <button
+                    key={image.id || index}
+                    type="button"
+                    onClick={() => insertMention(index + 1)}
+                    className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border-default bg-bg-secondary px-2.5 text-xs text-text-secondary transition hover:border-accent/55 hover:bg-accent/10 hover:text-text-primary"
+                    title={`在提示词中插入 @图${index + 1}`}
+                  >
+                    <ImageIcon size={14} />
+                    @图{index + 1}
+                    {index === 0 && <span className="text-[10px] text-text-muted">主画面</span>}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-text-muted">图1是主要画面，其余图片是可引用素材。比如：把 @图2 的人物放到 @图1 的椅子上。</p>
+            </div>
+          )}
           <p className="mt-1 text-right text-xs tabular-nums text-text-muted">{prompt.length}/6000</p>
           {!isFrameWorkflow && selection.annotationTexts?.length > 0 && (
             <div className="mt-2 border-t border-border-subtle pt-2">

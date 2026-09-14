@@ -16,6 +16,7 @@ import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
 import AdminMetricsPanel from "./components/AdminMetricsPanel";
+import RechargePanel from "./components/RechargePanel";
 import ParameterPanel from "./components/ParameterPanel";
 import PromptEditor from "./components/PromptEditor";
 import PresetLibrary from "./components/PresetLibrary";
@@ -134,11 +135,11 @@ const MODE_META = {
 
 export default function App() {
   const [mode, setMode] = useState("create");
-  const [prompt, setPrompt] = useState(DEFAULT_PRESET.prompt);
+  const [prompt, setPrompt] = useState(DEFAULT_PRESET?.prompt || "");
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);
   const [size, setSize] = useState("landscape_16_9");
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
-  const [quality, setQuality] = useState("high");
+  const [quality, setQuality] = useState("auto");
   const [count, setCount] = useState(1);
   const [referenceFiles, setReferenceFiles] = useState([]);
   const [referencePreviews, setReferencePreviews] = useState([]);
@@ -156,7 +157,7 @@ export default function App() {
   const [selectedImages, setSelectedImages] = useState(new Set());
   const [stylesData, setStylesData] = useState(FALLBACK_STYLE_DATA);
   const [providerConfig, setProviderConfig] = useState(loadProviderConfig);
-  const [serverProvider, setServerProvider] = useState({ configured: false, platformConfigured: false, host: "" });
+  const [serverProvider, setServerProvider] = useState({ configured: false, platformConfigured: false, host: "", paymentEnabled: false, paymentChannels: [] });
   const [pendingCanvasImport, setPendingCanvasImport] = useState(null);
   const [billingMode, setBillingMode] = useState("platform");
   const [session, setSession] = useState(null);
@@ -167,6 +168,7 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
+  const [rechargeOpen, setRechargeOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -277,12 +279,13 @@ export default function App() {
         setServerProvider({
           configured: Boolean(data?.server_provider_configured),
           platformConfigured: Boolean(data?.platform_provider_configured),
-          host: data?.default_provider_host || data?.platform_provider_name || "",
-          platformHost: data?.platform_provider_name || "",
+          host: "",
+          paymentEnabled: Boolean(data?.payment_enabled),
+          paymentChannels: Array.isArray(data?.payment_channels) ? data.payment_channels : [],
         });
       })
       .catch(() => {
-        if (alive) setServerProvider({ configured: false, platformConfigured: false, host: "" });
+        if (alive) setServerProvider({ configured: false, platformConfigured: false, host: "", paymentEnabled: false, paymentChannels: [] });
       });
     return () => {
       alive = false;
@@ -301,7 +304,9 @@ export default function App() {
   const hasBrowserProvider = isProviderConfigComplete(providerConfig);
   const platformReady = Boolean(serverProvider.platformConfigured && session);
   const providerConfigured = billingMode === "platform" ? platformReady : hasBrowserProvider;
-  const providerName = billingMode === "platform" ? (serverProvider.host || "平台积分服务") : getProviderDisplayName(providerConfig, serverProvider.host);
+  // 平台积分模式不向用户暴露实际中转站/服务商域名；自带 Key 模式仍显示用户自己的配置。
+  const providerName = billingMode === "platform" ? "平台图片服务" : getProviderDisplayName(providerConfig, serverProvider.host);
+  const visibleServerProviderHost = billingMode === "platform" ? "平台图片服务" : "服务器图片服务";
   const providerHeaders = useMemo(
     () => ({
       ...authHeaders,
@@ -677,6 +682,7 @@ export default function App() {
           onOpenProvider={() => setShowProviderSettings(true)}
           session={session}
           account={account}
+          isAdmin={Boolean(account?.is_admin)}
           accountLoading={accountLoading}
           onOpenAuth={() => setAuthOpen(true)}
           onOpenAccount={() => setAccountOpen(true)}
@@ -744,7 +750,8 @@ export default function App() {
           </header>
 
           {mode === "canvas" && (
-            <div className="h-[680px] flex-none lg:h-auto lg:min-h-0 lg:flex-1">
+            <>
+              <div className="h-[680px] flex-none lg:h-auto lg:min-h-0 lg:flex-1">
               <Suspense
                 fallback={
                   <div className="flex h-full min-h-[680px] items-center justify-center gap-3 bg-bg-primary text-sm text-text-muted lg:min-h-0">
@@ -769,9 +776,11 @@ export default function App() {
                   onAccountRefresh={refreshAccount}
                   onOpenProvider={() => setShowProviderSettings(true)}
                   onCanvasGenerated={handleCanvasGenerated}
+                  onOpenRecharge={() => setRechargeOpen(true)}
                 />
               </Suspense>
             </div>
+            </>
           )}
 
           <div
@@ -857,7 +866,7 @@ export default function App() {
         open={showProviderSettings}
         config={providerConfig}
         serverProviderConfigured={serverProvider.configured}
-        serverProviderHost={serverProvider.host}
+        serverProviderHost={visibleServerProviderHost}
         onSave={handleSaveProvider}
         onClear={handleClearProvider}
         billingMode={billingMode}
@@ -869,8 +878,9 @@ export default function App() {
       />
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onNotice={setNotice} />
-      <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} />
+      <AccountPanel open={accountOpen} account={account} loading={accountLoading} paymentEnabled={serverProvider.paymentEnabled} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
+      <RechargePanel open={rechargeOpen} authHeaders={authHeaders} account={account} paymentEnabled={serverProvider.paymentEnabled} paymentChannels={serverProvider.paymentChannels} onClose={() => setRechargeOpen(false)} onAccountRefresh={() => refreshAccount()} />
 
       {(notice || selectedCount > 0) && (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-default bg-bg-secondary px-4 py-3 text-sm text-text-secondary shadow-2xl">

@@ -92,6 +92,11 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
           </button>
         </div>
         <form onSubmit={submit} className="space-y-4 px-5 py-5">
+          {mode === "signIn" && (
+            <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-3 text-sm leading-6 text-gold" role="note">
+              如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接；完成邮箱验证后才能领取 10 个免费积分并使用平台服务。
+            </div>
+          )}
           {mode === "signUp" && (
             <>
               <div className="rounded-lg border border-accent/20 bg-accent/8 px-3 py-2 text-xs leading-5 text-text-secondary">

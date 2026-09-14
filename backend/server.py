@@ -48,6 +48,7 @@ try:
         is_supabase_configured,
         utc_milliseconds_since,
     )
+    from backend.payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
     from supabase_service import (
         AuthenticatedUser,
@@ -57,6 +58,7 @@ except ModuleNotFoundError:  # Allows `python backend/server.py` in local develo
         is_supabase_configured,
         utc_milliseconds_since,
     )
+    from payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 
 
 APP_DIR = os.path.dirname(__file__)
@@ -83,6 +85,7 @@ PLATFORM_AUTH_TYPE = os.getenv("PLATFORM_IMAGE_AUTH_TYPE", "bearer").strip().low
 PLATFORM_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("PLATFORM_DAILY_IMAGE_LIMIT", "1000")))
 USER_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("USER_DAILY_IMAGE_LIMIT", "20")))
 ADMIN_USER_IDS = {item.strip() for item in os.getenv("ADMIN_USER_IDS", "").split(",") if item.strip()}
+PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "disabled").strip().lower()
 AUTH_COOKIE_NAME = "posterflow_session"
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "1" if os.getenv("VERCEL") else "0") == "1"
 
@@ -528,12 +531,38 @@ RPC_ERROR_MESSAGES = {
     "USER_DAILY_LIMIT": ("今日平台积分生成额度已用完", 429, "请明天再试，或切换到自带 Key 模式。", ["切换到自带 Key", "明日再生成"]),
     "PLATFORM_DAILY_LIMIT": ("平台今日免费生成额度已用完", 429, "平台限额会在下一日自动恢复。", ["稍后再试", "切换到自带 Key 模式"]),
     "REQUEST_ID_CONFLICT": ("该生成请求不能重复使用", 409, "请重新发起生成请求。", ["重新点击生成"]),
+    "ADMIN_REQUIRED": ("没有管理员权限", 403, "该操作仅对管理员开放。", ["切换管理员账号"]),
+    "CREDIT_DELTA_INVALID": ("积分调整数量无效", 400, "请输入不为 0 的整数积分。", ["检查调整数量"]),
+    "USER_NOT_FOUND": ("用户不存在或已停用", 404, "请选择一个仍处于正常状态的用户。", ["刷新用户列表"]),
+    "CREDITS_BALANCE_INVALID": ("积分不能低于 0", 400, "本次扣减超过了用户当前余额。", ["减少扣减数量"]),
+    "IDEMPOTENCY_KEY_INVALID": ("操作编号无效", 400, "请重新提交这次调整。", ["重新提交"]),
+    "PAYMENT_NOT_CONFIGURED": ("在线支付尚未配置", 503, "管理员需要先配置合规的支付宝当面付商户通道。", ["联系管理员"]),
+    "PAYMENT_AMOUNT_INVALID": ("充值金额无效", 400, "充值金额最低 10 元，且必须是整数元。", ["重新选择金额"]),
+    "PAYMENT_CHANNEL_INVALID": ("支付方式无效", 400, "当前仅支持支付宝当面付。", ["选择支付宝", "联系管理员"]),
+    "PAYMENT_CHANNEL_DISABLED": ("支付方式已停用", 410, "当前仅支持支付宝当面付，微信支付已安全停用。", ["选择支付宝"]),
+    "PAYMENT_PROVIDER_UNAVAILABLE": ("支付平台暂时不可用", 502, "支付平台没有及时响应，请稍后重试。", ["稍后重试", "检查支付商户配置"]),
+    "PAYMENT_PROVIDER_REJECTED": ("支付订单创建失败", 502, "支付平台拒绝了本次下单请求。", ["检查商户配置", "稍后重试"]),
+    "PAYMENT_PROVIDER_BAD_RESPONSE": ("支付平台返回异常", 502, "支付平台没有返回有效的付款二维码。", ["稍后重试", "检查支付商户配置"]),
+    "PAYMENT_SIGNATURE_INVALID": ("支付回调校验失败", 401, "这笔支付无法通过平台签名校验，积分不会到账。", ["联系管理员"]),
+    "PAYMENT_CALLBACK_INVALID": ("支付回调格式错误", 400, "支付平台通知内容不完整，积分不会到账。", ["联系管理员"]),
+    "PAYMENT_MERCHANT_MISMATCH": ("支付商户不匹配", 401, "支付通知来自其他商户，积分不会到账。", ["联系管理员"]),
+    "PAYMENT_CALLBACK_EXPIRED": ("支付回调已过期", 401, "支付通知超过安全时间窗口，积分不会到账。", ["联系管理员"]),
+    "PAYMENT_NOT_SUCCEEDED": ("支付尚未成功", 409, "只有支付平台确认成功后才会到账。", ["等待支付完成"]),
+    "PAYMENT_KEY_INVALID": ("支付密钥配置无效", 503, "管理员需要检查支付商户密钥配置。", ["联系管理员"]),
+    "ORDER_NOT_FOUND": ("充值订单不存在", 404, "请重新创建充值订单。", ["重新充值"]),
+    "ORDER_NOT_PAYABLE": ("充值订单状态不可用", 409, "该订单已经处理或已关闭。", ["重新充值"]),
+    "ORDER_EXPIRED": ("充值订单已过期", 409, "请重新创建充值订单。", ["重新充值"]),
+    "PAYMENT_AMOUNT_MISMATCH": ("支付金额校验失败", 400, "支付平台回调金额与订单金额不一致，积分不会到账。", ["联系管理员"]),
+    "PAYMENT_TRADE_CONFLICT": ("支付交易号冲突", 409, "该支付平台交易号已经用于其他订单，积分不会重复到账。", ["联系管理员"]),
+    "ORDER_CREATE_FAILED": ("充值订单创建失败", 503, "账户服务没有成功创建充值订单，请稍后重试。", ["稍后重试"]),
 }
 
 
 def as_provider_error(error):
     if isinstance(error, ProviderError):
         return error
+    if isinstance(error, PaymentError):
+        return ProviderError(error.code, error.message, error.status, error.detail)
     if isinstance(error, SupabaseError):
         return ProviderError(error.code, error.message, error.status, error.detail)
     return ProviderError("SERVER_ERROR", "服务暂时不可用，请稍后重试", 503)
@@ -1184,7 +1213,7 @@ def parse_generation_request(data):
             ["精简提示词", "保留核心画面要求", "重新生成"],
         )
     size = data.get("size", "landscape_16_9")
-    quality = data.get("quality", "high")
+    quality = data.get("quality", "auto")
     if (size not in SIZE_OPTIONS and size != "custom") or quality not in QUALITY_OPTIONS:
         raise ProviderError(
             "PARAMETER_INVALID",
@@ -1270,7 +1299,8 @@ def account():
         bonus = snapshot.get("signup_bonus") or {}
         if bonus.get("ok") is False and bonus.get("code") != "EMAIL_UNVERIFIED":
             raise_for_rpc_result(bonus)
-        return jsonify({"success": True, **snapshot})
+        profile = snapshot.get("profile") or {}
+        return jsonify({"success": True, "is_admin": user.id in ADMIN_USER_IDS or profile.get("role") == "admin", **snapshot})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 
@@ -1308,6 +1338,129 @@ def admin_metrics():
         return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), "metrics": gateway.admin_metrics(from_date, to_date)})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
+
+
+def require_admin_user():
+    user = require_authenticated_user()
+    gateway = SupabaseGateway()
+    profile = gateway.account_snapshot(user.id).get("profile") or {}
+    if user.id not in ADMIN_USER_IDS and profile.get("role") != "admin":
+        raise ProviderError("ADMIN_REQUIRED", "没有管理员权限", 403, "该操作仅对管理员开放。")
+    return user, gateway
+
+
+@app.route("/api/admin/console", methods=["GET"])
+def admin_console():
+    try:
+        _user, gateway = require_admin_user()
+        today = datetime.now(timezone.utc).date()
+        from_value = request.args.get("from", "")
+        to_value = request.args.get("to", "")
+        try:
+            from_date = datetime.strptime(from_value, "%Y-%m-%d").date() if from_value else today - timedelta(days=29)
+            to_date = datetime.strptime(to_value, "%Y-%m-%d").date() if to_value else today
+        except ValueError as exc:
+            raise ProviderError("METRICS_DATE_INVALID", "统计日期格式无效", 400, "日期格式应为 YYYY-MM-DD。") from exc
+        if from_date > to_date or to_date > today or (to_date - from_date).days > 89:
+            raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
+        snapshot = gateway.admin_console_snapshot(from_date, to_date, request.args.get("search", ""), 100)
+        return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), **snapshot})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/credits/adjust", methods=["POST"])
+def admin_adjust_credits():
+    try:
+        user, gateway = require_admin_user()
+        data = request.get_json(silent=True) or {}
+        user_id = str(data.get("user_id", "")).strip()
+        try:
+            delta = int(data.get("delta"))
+        except (TypeError, ValueError) as exc:
+            raise ProviderError("CREDIT_DELTA_INVALID", "积分调整数量无效", 400, "请输入不为 0 的整数积分。") from exc
+        if not user_id or not -100000 <= delta <= 100000 or delta == 0:
+            raise ProviderError("CREDIT_DELTA_INVALID", "积分调整数量无效", 400, "请输入 -100000 到 100000 之间且不为 0 的整数积分。")
+        reason = str(data.get("reason", "")).strip()[:240]
+        idempotency_key = str(data.get("idempotency_key", "")).strip() or f"admin:{uuid.uuid4()}"
+        result = raise_for_rpc_result(gateway.admin_adjust_credits(user.id, user_id, delta, reason, idempotency_key))
+        return jsonify({"success": True, **result})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/credits/orders", methods=["POST"])
+def create_credit_order():
+    try:
+        user = require_authenticated_user()
+        data = request.get_json(silent=True) or {}
+        channel = str(data.get("channel", "")).strip().lower()
+        try:
+            amount_yuan = int(data.get("amount_yuan"))
+        except (TypeError, ValueError) as exc:
+            raise ProviderError("PAYMENT_AMOUNT_INVALID", "充值金额无效", 400, "充值金额最低 10 元，且必须是整数元。") from exc
+        if channel != "alipay":
+            raise ProviderError("PAYMENT_CHANNEL_INVALID", "支付方式无效", 400, "当前仅支持支付宝当面付。")
+        if amount_yuan < 10 or amount_yuan > 10000:
+            raise ProviderError("PAYMENT_AMOUNT_INVALID", "充值金额无效", 400, "充值金额必须在 10 元到 10000 元之间。")
+        channels = configured_payment_channels()
+        if PAYMENT_PROVIDER not in {"enabled", "alipay"} or channel not in channels:
+            raise ProviderError("PAYMENT_NOT_CONFIGURED", "在线支付尚未配置", 503, "请先在服务端配置已审核的支付宝当面付商户通道。")
+        enforce_rate_limit("credit-order", user.id, 5, 600)
+        expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=30)
+        expires_at = expires_at_dt.isoformat()
+        out_trade_no = f"PF{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}{uuid.uuid4().hex[:14].upper()}"
+        gateway = SupabaseGateway()
+        account_snapshot = gateway.account_snapshot(user.id)
+        if not account_snapshot.get("email_verified"):
+            raise ProviderError("EMAIL_UNVERIFIED", "请先完成邮箱验证", 403, "邮箱验证通过后才能使用在线充值。")
+        order = gateway.create_credit_order(user.id, channel, amount_yuan * 100, amount_yuan * 10, out_trade_no, expires_at)
+        if not order:
+            raise ProviderError("ORDER_CREATE_FAILED", "充值订单创建失败", 503, "数据库没有返回充值订单。")
+        try:
+            checkout = create_checkout(channel, out_trade_no=out_trade_no, amount_fen=amount_yuan * 100, expires_at=expires_at_dt.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+        except PaymentError:
+            gateway.update_credit_order_payment(order["id"], status="failed", metadata={"reason": "provider_order_failed"})
+            raise
+        updated = gateway.update_credit_order_payment(order["id"], code_url=checkout.code_url, payment_url=checkout.payment_url)
+        return jsonify({"success": True, "order": {**(updated or order), "code_url": checkout.code_url, "payment_url": checkout.payment_url}})
+    except (ProviderError, PaymentError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/credits/orders/<order_id>", methods=["GET"])
+def get_credit_order(order_id):
+    try:
+        user = require_authenticated_user()
+        order = SupabaseGateway().get_credit_order(user.id, order_id)
+        if not order:
+            raise ProviderError("ORDER_NOT_FOUND", "充值订单不存在", 404, "请重新创建充值订单。")
+        return jsonify({"success": True, "order": order})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/payments/webhook/<channel>", methods=["POST"])
+def payment_webhook(channel):
+    """Verify an official payment notification and settle the matching order."""
+    try:
+        if channel != "alipay" or channel not in configured_payment_channels():
+            raise PaymentError("PAYMENT_NOT_CONFIGURED", "在线支付尚未配置", 503, "支付回调尚未配置。")
+        paid = parse_wechat_callback(request.headers, request.get_data()) if channel == "wechat" else parse_alipay_callback(request.form.to_dict(flat=True))
+        raise_for_rpc_result(
+            SupabaseGateway().complete_credit_order(
+                paid.out_trade_no,
+                paid.provider_trade_no,
+                paid.paid_amount_fen,
+                paid.metadata,
+            )
+        )
+        return ("success", 200, {"Content-Type": "text/plain; charset=utf-8"})
+    except (ProviderError, PaymentError, SupabaseError, TypeError, ValueError) as error:
+        normalized = as_provider_error(error)
+        if channel == "alipay":
+            return ("failure", normalized.status, {"Content-Type": "text/plain; charset=utf-8"})
+        return jsonify({"code": "FAIL", "message": normalized.message}), normalized.status
 
 
 @app.route("/api/provider/validate", methods=["POST"])
@@ -1561,17 +1714,17 @@ def download_batch():
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    default_host = urlsplit(DEFAULT_ENDPOINT).hostname if DEFAULT_ENDPOINT else None
+    payment_channels = configured_payment_channels()
     return jsonify(
         {
             "status": "ok",
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
-            "default_provider_host": default_host,
             "platform_provider_configured": platform_provider_configured() and is_supabase_configured(),
-            "platform_provider_name": urlsplit(PLATFORM_ENDPOINT).hostname if PLATFORM_ENDPOINT else "",
             "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
             "history_scope": "browser" if BLOB_STORAGE_ENABLED else "local-instance",
             "history_retention_days": HISTORY_RETENTION_DAYS,
+            "payment_enabled": bool(payment_channels),
+            "payment_channels": payment_channels,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )

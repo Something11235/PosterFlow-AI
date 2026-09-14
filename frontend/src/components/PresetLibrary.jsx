@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, ChevronDown, Download, ImageIcon, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import {
-  BUILTIN_PRESETS,
   listCustomPresets,
   PRESET_CATEGORIES,
   removeCustomPreset,
@@ -49,7 +48,7 @@ export default function PresetLibrary({ activePresetId, onApplyPreset }) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [showEditor]);
 
-  const allPresets = useMemo(() => [...BUILTIN_PRESETS, ...customPresets], [customPresets]);
+  const allPresets = customPresets;
   const categoryOptions = useMemo(() => {
     const customCategories = customPresets
       .map((preset) => String(preset.category || "").trim())

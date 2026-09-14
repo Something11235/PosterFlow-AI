@@ -324,6 +324,91 @@ class SupabaseGateway:
     def admin_metrics(self, from_date: date, to_date: date) -> dict[str, Any]:
         return self.rpc("get_admin_metrics", {"p_from": from_date.isoformat(), "p_to": to_date.isoformat()})
 
+    def admin_console_snapshot(self, from_date: date, to_date: date, search: str = "", limit: int = 50) -> dict[str, Any]:
+        return self.rpc(
+            "get_admin_console_snapshot",
+            {
+                "p_from": from_date.isoformat(),
+                "p_to": to_date.isoformat(),
+                "p_search": search[:80],
+                "p_limit": max(1, min(limit, 100)),
+            },
+        )
+
+    def admin_adjust_credits(self, admin_user_id: str, user_id: str, delta: int, reason: str, idempotency_key: str) -> dict[str, Any]:
+        return self.rpc(
+            "admin_adjust_credits",
+            {
+                "p_admin_user_id": admin_user_id,
+                "p_user_id": user_id,
+                "p_delta": delta,
+                "p_reason": reason[:240],
+                "p_idempotency_key": idempotency_key,
+            },
+        )
+
+    def create_credit_order(
+        self,
+        user_id: str,
+        channel: str,
+        amount_fen: int,
+        credits: int,
+        out_trade_no: str,
+        expires_at: str,
+    ) -> dict[str, Any]:
+        rows = self._request(
+            "POST",
+            "/rest/v1/credit_orders",
+            params={"on_conflict": "out_trade_no"},
+            body={
+                "user_id": user_id,
+                "channel": channel,
+                "amount_fen": amount_fen,
+                "credits": credits,
+                "out_trade_no": out_trade_no,
+                "status": "pending",
+                "expires_at": expires_at,
+            },
+            headers={"Prefer": "return=representation,resolution=ignore-duplicates"},
+        )
+        return rows[0] if isinstance(rows, list) and rows else {}
+
+    def update_credit_order_payment(self, order_id: str, **fields: Any) -> dict[str, Any]:
+        rows = self._request(
+            "PATCH",
+            "/rest/v1/credit_orders",
+            params={"id": f"eq.{order_id}"},
+            body=fields,
+            headers={"Prefer": "return=representation"},
+        )
+        return rows[0] if isinstance(rows, list) and rows else {}
+
+    def get_credit_order(self, user_id: str, order_id: str) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "/rest/v1/credit_orders",
+            params={
+                "id": f"eq.{order_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "id,channel,amount_fen,credits,out_trade_no,status,code_url,payment_url,expires_at,paid_at,created_at",
+                "limit": "1",
+            },
+        )
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def complete_credit_order(
+        self, out_trade_no: str, provider_trade_no: str, paid_amount_fen: int, metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return self.rpc(
+            "complete_credit_order",
+            {
+                "p_out_trade_no": out_trade_no,
+                "p_provider_trade_no": provider_trade_no,
+                "p_paid_amount_fen": paid_amount_fen,
+                "p_metadata": metadata or {},
+            },
+        )
+
 
 def utc_milliseconds_since(start_time: float) -> int:
     return max(0, round((time.monotonic() - start_time) * 1000))

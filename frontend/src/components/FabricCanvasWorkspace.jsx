@@ -51,6 +51,7 @@ const CLEAN_REFERENCE_MAX_BYTES = 1.35 * 1024 * 1024;
 const ANNOTATED_REFERENCE_MAX_BYTES = 1.05 * 1024 * 1024;
 const CANVAS_AI_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
 const ANNOTATION_COLOR = "#ef4444";
+const ANNOTATION_COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ffffff"];
 const ANNOTATION_TYPES = new Set(["annotation-arrow", "annotation-text", "annotation-shape", "annotation-brush"]);
 
 const CANVAS_FRAME_RATIOS = {
@@ -117,8 +118,20 @@ function markObject(object, type, meta = {}) {
 }
 
 function objectBounds(object) {
-  const bounds = object.getBoundingRect();
-  return { x: bounds.left, y: bounds.top, w: bounds.width, h: bounds.height };
+  if (!object) return { x: 0, y: 0, w: 0, h: 0 };
+  const bounds = typeof object.getBoundingRect === "function" ? object.getBoundingRect() : null;
+  if (bounds) return { x: bounds.left, y: bounds.top, w: bounds.width, h: bounds.height };
+  const points = typeof object.getCoords === "function" ? object.getCoords() : [];
+  if (points?.length) {
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return { x: left, y: top, w: Math.max(...xs) - left, h: Math.max(...ys) - top };
+  }
+  const width = Number(object.width) || 0;
+  const height = Number(object.height) || 0;
+  return { x: Number(object.left) || 0, y: Number(object.top) || 0, w: width, h: height };
 }
 
 function unionBounds(objects) {
@@ -214,10 +227,17 @@ function setObjectBounds(object, bounds) {
   object.setCoords();
 }
 
-function createArrow(start, end) {
+function hexToRgba(hex, alpha) {
+  const value = hex.replace("#", "");
+  const normalized = value.length === 3 ? value.split("").map((part) => part + part).join("") : value;
+  const number = Number.parseInt(normalized, 16);
+  return `rgba(${number >> 16}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+}
+
+function createArrow(start, end, color = ANNOTATION_COLOR) {
   const angle = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI + 90;
   const line = new Line([start.x, start.y, end.x, end.y], {
-    stroke: ANNOTATION_COLOR,
+    stroke: color,
     strokeWidth: 8,
     strokeLineCap: "round",
     selectable: false,
@@ -228,7 +248,7 @@ function createArrow(start, end) {
     top: end.y,
     width: 28,
     height: 34,
-    fill: ANNOTATION_COLOR,
+    fill: color,
     angle,
     originX: "center",
     originY: "center",
@@ -238,15 +258,15 @@ function createArrow(start, end) {
   const group = new Group([line, head], {
     subTargetCheck: false,
     objectCaching: false,
-    cornerColor: ANNOTATION_COLOR,
-    borderColor: ANNOTATION_COLOR,
+    cornerColor: color,
+    borderColor: color,
     transparentCorners: false,
     cornerSize: 12,
   });
-  return markObject(group, "annotation-arrow");
+  return markObject(group, "annotation-arrow", { color });
 }
 
-function createAnnotationText(point) {
+function createAnnotationText(point, color = ANNOTATION_COLOR) {
   const text = new Textbox("修改说明", {
     left: point.x,
     top: point.y,
@@ -256,21 +276,20 @@ function createAnnotationText(point) {
     lineHeight: 1.25,
     fontWeight: 700,
     fontFamily: "Microsoft YaHei, Noto Sans SC, sans-serif",
-    fill: ANNOTATION_COLOR,
-    stroke: "rgba(255,255,255,0.92)",
-    strokeWidth: 0.8,
-    paintFirst: "stroke",
-    backgroundColor: "rgba(255,255,255,0.88)",
+    fill: color,
+    stroke: undefined,
+    strokeWidth: 0,
+    paintFirst: "fill",
     padding: 10,
-    cornerColor: ANNOTATION_COLOR,
-    borderColor: ANNOTATION_COLOR,
+    cornerColor: color,
+    borderColor: color,
     transparentCorners: false,
     cornerSize: 12,
   });
-  return markObject(text, "annotation-text");
+  return markObject(text, "annotation-text", { color });
 }
 
-function createAnnotationBrush(points) {
+function createAnnotationBrush(points, color = ANNOTATION_COLOR, width = 28) {
   if (points.length < 2) return null;
   const pathData = points.reduce(
     (commands, point, index) => commands + (index === 0 ? `M ${point.x} ${point.y}` : ` L ${point.x} ${point.y}`),
@@ -278,8 +297,8 @@ function createAnnotationBrush(points) {
   );
   return markObject(
     new Path(pathData, {
-      stroke: ANNOTATION_COLOR,
-      strokeWidth: 28,
+      stroke: color,
+      strokeWidth: width,
       strokeLineCap: "round",
       strokeLineJoin: "round",
       fill: "",
@@ -288,34 +307,36 @@ function createAnnotationBrush(points) {
       objectCaching: false,
     }),
     "annotation-brush",
-    { shape: "freehand" },
+    { shape: "freehand", color, width },
   );
 }
 
-function createAnnotationRect(start, end) {
+function createAnnotationRect(start, end, color = ANNOTATION_COLOR) {
   const left = Math.min(start.x, end.x);
   const top = Math.min(start.y, end.y);
   return markObject(
     new Rect({
       left,
       top,
+      originX: "left",
+      originY: "top",
       width: Math.abs(end.x - start.x),
       height: Math.abs(end.y - start.y),
-      fill: "rgba(239,68,68,0.06)",
-      stroke: ANNOTATION_COLOR,
+      fill: hexToRgba(color, 0.06),
+      stroke: color,
       strokeWidth: 6,
       strokeUniform: true,
-      cornerColor: ANNOTATION_COLOR,
-      borderColor: ANNOTATION_COLOR,
+      cornerColor: color,
+      borderColor: color,
       transparentCorners: false,
       cornerSize: 12,
     }),
     "annotation-shape",
-    { shape: "rectangle" },
+    { shape: "rectangle", color },
   );
 }
 
-function createAnnotationEllipse(start, end) {
+function createAnnotationEllipse(start, end, color = ANNOTATION_COLOR) {
   const width = Math.abs(end.x - start.x);
   const height = Math.abs(end.y - start.y);
   return markObject(
@@ -326,17 +347,17 @@ function createAnnotationEllipse(start, end) {
       ry: height / 2,
       originX: "left",
       originY: "top",
-      fill: "rgba(239,68,68,0.06)",
-      stroke: ANNOTATION_COLOR,
+      fill: hexToRgba(color, 0.06),
+      stroke: color,
       strokeWidth: 6,
       strokeUniform: true,
-      cornerColor: ANNOTATION_COLOR,
-      borderColor: ANNOTATION_COLOR,
+      cornerColor: color,
+      borderColor: color,
       transparentCorners: false,
       cornerSize: 12,
     }),
     "annotation-shape",
-    { shape: "ellipse" },
+    { shape: "ellipse", color },
   );
 }
 
@@ -570,6 +591,13 @@ async function readApiResponse(response) {
   }
 }
 function ReferencePreview({ preview, closeButtonRef, onClose }) {
+  const referenceItems = preview.referenceItems?.length
+    ? preview.referenceItems
+    : preview.cleanUrl
+      ? [{ url: preview.cleanUrl, bytes: preview.cleanBytes, label: "主要画面" }]
+      : [];
+  const annotationNumber = referenceItems.length + 1;
+
   return (
     <div
       className="absolute inset-0 z-[650] flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm sm:p-6"
@@ -592,11 +620,8 @@ function ReferencePreview({ preview, closeButtonRef, onClose }) {
                 生成前检查
               </h2>
               <p className="truncate text-xs text-text-muted">
-                {preview.annotationCount
-                  ? (preview.annotationSource === "nearby" ? "自动关联 " : "已选择 ") +
-                    preview.annotationCount +
-                    " 个标注"
-                  : "未检测到标注"}
+                将提交 {referenceItems.length} 张 @参考图
+                {preview.annotationUrl ? "，另附 1 张标注说明图" : "，未附标注说明图"}
               </p>
             </div>
           </div>
@@ -612,20 +637,24 @@ function ReferencePreview({ preview, closeButtonRef, onClose }) {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="grid gap-4 md:grid-cols-2">
-            <figure className="min-w-0">
-              <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-md border border-border-subtle bg-bg-primary">
-                <img
-                  src={preview.cleanUrl}
-                  alt="提交给模型的干净原图"
-                  className="max-h-[52vh] w-full object-contain"
-                />
-              </div>
-              <figcaption className="mt-2 flex items-center justify-between gap-3 text-xs">
-                <span className="font-medium text-text-secondary">图 1 · 干净原图</span>
-                <span className="tabular-nums text-text-muted">{formatBytes(preview.cleanBytes)}</span>
-              </figcaption>
-            </figure>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {referenceItems.map((item, index) => (
+              <figure key={item.url} className="min-w-0">
+                <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-md border border-border-subtle bg-bg-primary">
+                  <img
+                    src={item.url}
+                    alt={`提交给模型的 @图${index + 1} 参考图片`}
+                    className="max-h-[52vh] w-full object-contain"
+                  />
+                </div>
+                <figcaption className="mt-2 flex items-center justify-between gap-3 text-xs">
+                  <span className="font-medium text-text-secondary">
+                    图 {index + 1} · @图{index + 1}（{index === 0 ? "主要画面" : "参考素材"}）
+                  </span>
+                  <span className="tabular-nums text-text-muted">{formatBytes(item.bytes)}</span>
+                </figcaption>
+              </figure>
+            ))}
             <figure className="min-w-0">
               <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-md border border-border-subtle bg-bg-primary">
                 {preview.annotationUrl ? (
@@ -643,13 +672,18 @@ function ReferencePreview({ preview, closeButtonRef, onClose }) {
                 )}
               </div>
               <figcaption className="mt-2 flex items-center justify-between gap-3 text-xs">
-                <span className="font-medium text-text-secondary">图 2 · 标注说明图</span>
+                <span className="font-medium text-text-secondary">
+                  图 {annotationNumber} · 标注说明图（不参与 @引用）
+                </span>
                 <span className="tabular-nums text-text-muted">
                   {preview.annotationUrl ? formatBytes(preview.annotationBytes) : "未生成"}
                 </span>
               </figcaption>
             </figure>
           </div>
+          <p className="mt-4 text-xs leading-5 text-text-muted">
+            上面的 @图编号就是实际发送给模型的素材顺序；标注说明图只帮助模型定位修改区域，不会被当成 @图素材。
+          </p>
           {preview.annotationTexts.length > 0 && (
             <div className="mt-5 border-t border-border-subtle pt-4">
               <p className="text-xs font-medium text-mint">模型将同时收到以下文字要求</p>
@@ -682,6 +716,7 @@ export default function FabricCanvasWorkspace({
   onAuthRequired,
   onAccountRefresh,
   onOpenProvider,
+  onOpenRecharge,
   onCanvasGenerated,
 }) {
   const [canvas, setCanvas] = useState(null);
@@ -695,10 +730,14 @@ export default function FabricCanvasWorkspace({
   const [workflow, setWorkflow] = useState("frame");
   const [ratioKey, setRatioKey] = useState("landscape_16_9");
   const [drafts, setDrafts] = useState(loadCanvasDrafts);
-  const [quality, setQuality] = useState("high");
+  const [quality, setQuality] = useState("auto");
   const [aiError, setAiError] = useState(null);
   const [selection, setSelection] = useState(() => selectionSnapshot(null));
   const [tool, setTool] = useState("select");
+  const [annotationColor, setAnnotationColor] = useState(ANNOTATION_COLOR);
+  const [brushWidth, setBrushWidth] = useState(4);
+  const annotationColorRef = useRef(ANNOTATION_COLOR);
+  const brushWidthRef = useRef(4);
   const [zoom, setZoom] = useState(100);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -717,6 +756,9 @@ export default function FabricCanvasWorkspace({
   const redoRef = useRef(() => {});
   const isBusy = busy || aiBusy || previewBusy;
 
+  useEffect(() => { annotationColorRef.current = annotationColor; }, [annotationColor]);
+  useEffect(() => { brushWidthRef.current = brushWidth; }, [brushWidth]);
+
   useEffect(() => {
     window.localStorage.setItem(CANVAS_AI_DRAFT_KEY, JSON.stringify(drafts));
   }, [drafts]);
@@ -734,8 +776,9 @@ export default function FabricCanvasWorkspace({
     previewCloseButtonRef.current?.focus();
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      if (referencePreview.cleanUrl) URL.revokeObjectURL(referencePreview.cleanUrl);
-      if (referencePreview.annotationUrl) URL.revokeObjectURL(referencePreview.annotationUrl);
+       const urls = referencePreview.referenceItems?.map((item) => item.url) || [referencePreview.cleanUrl];
+       urls.filter(Boolean).forEach((url) => URL.revokeObjectURL(url));
+       if (referencePreview.annotationUrl) URL.revokeObjectURL(referencePreview.annotationUrl);
       previewReturnFocusRef.current?.focus();
     };
   }, [referencePreview]);
@@ -880,7 +923,7 @@ export default function FabricCanvasWorkspace({
       if (toolRef.current === "arrow" && event.button === 0) {
         const point = editor.getScenePoint(event);
         const preview = new Line([point.x, point.y, point.x, point.y], {
-          stroke: ANNOTATION_COLOR,
+          stroke: annotationColorRef.current,
           strokeWidth: 8,
           strokeLineCap: "round",
           selectable: false,
@@ -893,22 +936,15 @@ export default function FabricCanvasWorkspace({
         editor.requestRenderAll();
         return;
       }
-      if (toolRef.current === "brush" && event.button === 0) {
-        const point = editor.getScenePoint(event);
-        brushState = { points: [point], preview: null };
-        batchRef.current = true;
-        editor.requestRenderAll();
-        return;
-      }
       if ((toolRef.current === "rect" || toolRef.current === "ellipse") && event.button === 0) {
         const point = editor.getScenePoint(event);
         const preview =
           toolRef.current === "rect"
-            ? new Rect({ left: point.x, top: point.y, width: 1, height: 1 })
+            ? new Rect({ left: point.x, top: point.y, originX: "left", originY: "top", width: 1, height: 1 })
             : new Ellipse({ left: point.x, top: point.y, rx: 0.5, ry: 0.5, originX: "left", originY: "top" });
         preview.set({
-          fill: "rgba(239,68,68,0.06)",
-          stroke: ANNOTATION_COLOR,
+          fill: hexToRgba(annotationColorRef.current, 0.06),
+          stroke: annotationColorRef.current,
           strokeWidth: 6,
           strokeUniform: true,
           selectable: false,
@@ -923,7 +959,7 @@ export default function FabricCanvasWorkspace({
       }
       if (toolRef.current === "text" && event.button === 0) {
         const point = editor.getScenePoint(event);
-        const textObject = createAnnotationText(point);
+        const textObject = createAnnotationText(point, annotationColorRef.current);
         batchRef.current = true;
         editor.add(textObject);
         batchRef.current = false;
@@ -931,11 +967,6 @@ export default function FabricCanvasWorkspace({
         textObject.enterEditing();
         textObject.selectAll();
         editor.requestRenderAll();
-        setTool("select");
-        toolRef.current = "select";
-        editor.selection = true;
-        editor.skipTargetFind = false;
-        editor.defaultCursor = "default";
         commitRef.current();
       }
     };
@@ -955,17 +986,6 @@ export default function FabricCanvasWorkspace({
         arrowState.preview.setCoords();
         editor.requestRenderAll();
       }
-      if (brushState) {
-        const point = editor.getScenePoint(event);
-        brushState.points.push(point);
-        if (brushState.preview) editor.remove(brushState.preview);
-        brushState.preview = createAnnotationBrush(brushState.points);
-        if (brushState.preview) {
-          brushState.preview.set({ selectable: false, evented: false, excludeFromExport: true });
-          editor.add(brushState.preview);
-        }
-        editor.requestRenderAll();
-      }
       if (shapeState) {
         const point = editor.getScenePoint(event);
         const { start, preview, type } = shapeState;
@@ -980,6 +1000,7 @@ export default function FabricCanvasWorkspace({
       }
     };
     const handleMouseUp = (options) => {
+      const event = options?.e || options;
       if (panState) {
         panState = null;
         editor.selection = toolRef.current === "select";
@@ -990,44 +1011,34 @@ export default function FabricCanvasWorkspace({
         return;
       }
       if (shapeState) {
-        const point = editor.getScenePoint(options.e);
+        const point = editor.getScenePoint(event);
         const { start, preview, type } = shapeState;
         shapeState = null;
         editor.remove(preview);
         const width = Math.abs(point.x - start.x);
         const height = Math.abs(point.y - start.y);
         if (width >= 12 && height >= 12) {
-          const shape = type === "rect" ? createAnnotationRect(start, point) : createAnnotationEllipse(start, point);
+          const shape = type === "rect" ? createAnnotationRect(start, point, annotationColorRef.current) : createAnnotationEllipse(start, point, annotationColorRef.current);
           editor.add(shape);
           editor.setActiveObject(shape);
         }
         batchRef.current = false;
-        setTool("select");
-        toolRef.current = "select";
-        editor.selection = true;
-        editor.skipTargetFind = false;
-        editor.defaultCursor = "default";
         editor.requestRenderAll();
         commitRef.current();
         return;
       }
       if (!arrowState) return;
-      const point = editor.getScenePoint(options.e);
+      const point = editor.getScenePoint(event);
       const { start, preview } = arrowState;
       arrowState = null;
       editor.remove(preview);
       const distance = Math.hypot(point.x - start.x, point.y - start.y);
       if (distance >= 12) {
-        const arrow = createArrow(start, point);
+        const arrow = createArrow(start, point, annotationColorRef.current);
         editor.add(arrow);
         editor.setActiveObject(arrow);
       }
       batchRef.current = false;
-      setTool("select");
-      toolRef.current = "select";
-      editor.selection = true;
-      editor.skipTargetFind = false;
-      editor.defaultCursor = "default";
       editor.requestRenderAll();
       commitRef.current();
     };
@@ -1083,7 +1094,70 @@ export default function FabricCanvasWorkspace({
     editor.on("mouse:wheel", handleMouseWheel);
     editor.on("mouse:down", handleMouseDown);
     editor.on("mouse:move", handleMouseMove);
+    const updateBrushPreview = (event) => {
+      if (!brushState || toolRef.current !== "brush") return;
+      const point = editor.getScenePoint(event);
+      const previous = brushState.points[brushState.points.length - 1];
+      if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 1) return;
+      brushState.points.push(point);
+      if (brushState.preview) editor.remove(brushState.preview);
+      brushState.preview = createAnnotationBrush(brushState.points, brushState.color, brushState.width);
+      if (brushState.preview) {
+        brushState.preview.set({ selectable: false, evented: false, excludeFromExport: true });
+        editor.add(brushState.preview);
+      }
+      editor.requestRenderAll();
+    };
+    const finishBrush = (event) => {
+      if (!brushState) return;
+      const point = event ? editor.getScenePoint(event) : brushState.points[brushState.points.length - 1];
+      const { points, preview, color, width } = brushState;
+      brushState = null;
+      if (preview) editor.remove(preview);
+      if (points.length > 1) {
+        const last = points[points.length - 1];
+        if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= 1) points.push(point);
+        const brush = createAnnotationBrush(points, color, width);
+        if (brush) {
+          editor.add(brush);
+          editor.setActiveObject(brush);
+        }
+      }
+      batchRef.current = false;
+      editor.requestRenderAll();
+      commitRef.current();
+    };
+    const handleBrushPointerDown = (event) => {
+      if (toolRef.current !== "brush" || event.button !== 0) return;
+      event.preventDefault();
+      editor.upperCanvasEl.setPointerCapture?.(event.pointerId);
+      brushState = {
+        points: [editor.getScenePoint(event)],
+        preview: null,
+        color: annotationColorRef.current,
+        width: brushWidthRef.current,
+      };
+      batchRef.current = true;
+      editor.requestRenderAll();
+    };
+    const handleBrushPointerMove = (event) => {
+      if (!brushState || toolRef.current !== "brush" || (event.buttons & 1) !== 1) return;
+      event.preventDefault();
+      updateBrushPreview(event);
+    };
+    const handleBrushPointerUp = (event) => {
+      if (!brushState) return;
+      event.preventDefault();
+      editor.upperCanvasEl.releasePointerCapture?.(event.pointerId);
+      finishBrush(event);
+    };
+
     editor.on("mouse:up", handleMouseUp);
+    editor.upperCanvasEl.addEventListener("pointerdown", handleBrushPointerDown);
+    editor.upperCanvasEl.addEventListener("pointermove", handleBrushPointerMove);
+    editor.upperCanvasEl.addEventListener("pointerup", handleBrushPointerUp);
+    editor.upperCanvasEl.addEventListener("pointercancel", handleBrushPointerUp);
+    window.addEventListener("mouseup", handleMouseUp);
     window.addEventListener("keydown", handleKeyDown);
     resizeObserver.observe(host);
     setCanvas(editor);
@@ -1122,6 +1196,11 @@ export default function FabricCanvasWorkspace({
       window.clearTimeout(persistTimer);
       resizeObserver.disconnect();
       window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mouseup", handleMouseUp);
+      editor.upperCanvasEl.removeEventListener("pointerdown", handleBrushPointerDown);
+      editor.upperCanvasEl.removeEventListener("pointermove", handleBrushPointerMove);
+      editor.upperCanvasEl.removeEventListener("pointerup", handleBrushPointerUp);
+      editor.upperCanvasEl.removeEventListener("pointercancel", handleBrushPointerUp);
       editor.dispose();
     };
   }, []);
@@ -1242,7 +1321,7 @@ export default function FabricCanvasWorkspace({
     setBusy(true);
     setStatus({ type: "loading", message: "正在导出 PNG" });
     try {
-      const blob = await exportObjects(canvas, objects, 32);
+      const blob = await exportObjects(canvas, objects, 0);
       downloadBlob(blob, selected.length ? "posterflow-selection.png" : "posterflow-canvas.png");
       setStatus({ type: "saved", message: selected.length ? "选区已导出" : "画布已导出" });
     } catch (error) {
@@ -1398,7 +1477,10 @@ export default function FabricCanvasWorkspace({
         };
       } else {
         endpoint = "/api/modify";
-        const selectedImages = (currentSelection.images || [target]).slice(0, MAX_REFERENCE_IMAGES);
+        const selectedImages = [
+          target,
+          ...(currentSelection.images || []).filter((item) => item.raw !== target.raw),
+        ].slice(0, MAX_REFERENCE_IMAGES);
         const cleanReferences = await Promise.all(selectedImages.map((item) => exportObjects(
           canvas, [item.raw], 0, REFERENCE_EXPORT_MAX_EDGE, CLEAN_REFERENCE_MAX_BYTES,
         )));
@@ -1416,10 +1498,10 @@ export default function FabricCanvasWorkspace({
         const size = normalizedImageSize(target.props.w, target.props.h);
         const editPrompt = [
           "执行局部图片编辑，不要重新创作一张不同风格的图片。",
-          "输入图1至输入图" + referenceImages.length + "按顺序对应用户提示词中的 @图1 至 @图" + referenceImages.length + "。请综合所有参考图完成合成与编辑。",
+          "前" + selectedImages.length + "张输入图按顺序对应用户提示词中的 @图1 至 @图" + selectedImages.length + "；如果存在最后一张标注说明图，它只用于理解修改位置，不参与 @引用。请综合这些参考图完成合成与编辑。",
           "输入图1是主要目标图，严格保留它的画风、人物身份、脸部、姿势、构图、背景、光影、配色和宽高比例。",
           annotationReference
-            ? "输入图2是标注说明图，只用于定位和理解红色箭头与红色文字。箭头尖端精确指向需要修改的目标，逐一建立文字、箭头与目标区域的对应关系，不要把标注痕迹画进结果。"
+            ? "最后一张输入图是标注说明图，只用于定位和理解箭头、框线、画笔与文字。它不参与 @图引用；请根据标注准确定位修改目标，不要把标注痕迹画进结果。"
             : "仅根据用户要求修改必要区域，不要改变无关内容。",
           manualPrompt ? "用户补充要求：" + manualPrompt : "用户没有补充文字要求，以标注文字清单为准。",
           annotationList ? "必须逐条执行以下标注文字：\n" + annotationList : "没有可提取的标注文字，请结合标注图和用户补充要求判断修改位置。",
@@ -1495,12 +1577,19 @@ export default function FabricCanvasWorkspace({
     previewReturnFocusRef.current = document.activeElement;
     setStatus({ type: "loading", message: "正在准备重绘检查" });
     try {
-      const cleanBlob = await exportObjects(
-        canvas,
-        [currentSelection.image.raw],
-        0,
-        REFERENCE_EXPORT_MAX_EDGE,
-        CLEAN_REFERENCE_MAX_BYTES,
+      const target = currentSelection.image;
+      const selectedImages = [
+        target,
+        ...(currentSelection.images || []).filter((item) => item.raw !== target.raw),
+      ].slice(0, MAX_REFERENCE_IMAGES);
+      const cleanReferences = await Promise.all(
+        selectedImages.map((item) => exportObjects(
+          canvas,
+          [item.raw],
+          0,
+          REFERENCE_EXPORT_MAX_EDGE,
+          CLEAN_REFERENCE_MAX_BYTES,
+        )),
       );
       const annotationBlob = currentSelection.annotationCount
         ? await exportObjects(
@@ -1512,8 +1601,11 @@ export default function FabricCanvasWorkspace({
           )
         : null;
       setReferencePreview({
-        cleanUrl: URL.createObjectURL(cleanBlob),
-        cleanBytes: cleanBlob.size,
+        referenceItems: cleanReferences.map((blob, index) => ({
+          url: URL.createObjectURL(blob),
+          bytes: blob.size,
+          label: index === 0 ? "主要画面" : "参考素材",
+        })),
         annotationUrl: annotationBlob ? URL.createObjectURL(annotationBlob) : "",
         annotationBytes: annotationBlob?.size || 0,
         annotationCount: currentSelection.annotationCount,
@@ -1671,6 +1763,15 @@ export default function FabricCanvasWorkspace({
               </button>
             );
           })}
+          {(tool === "arrow" || tool === "rect" || tool === "ellipse" || tool === "brush" || tool === "text") && (
+            <div className="mt-2 w-36 max-w-[calc(100vw-5rem)] rounded-md border border-border-subtle bg-bg-tertiary p-2">
+              <div className="mb-1 text-[10px] font-medium text-text-muted">颜色</div>
+              <div className="flex flex-wrap gap-2">
+                {ANNOTATION_COLORS.map((color) => <button key={color} type="button" onClick={() => setAnnotationColor(color)} className={`h-5 w-5 rounded-full border ${annotationColor === color ? "ring-2 ring-accent ring-offset-1 ring-offset-bg-tertiary" : "border-white/25"}`} style={{ backgroundColor: color }} aria-label={`选择${color}标注颜色`} />)}
+              </div>
+              {tool === "brush" && <label className="mt-2 block text-[10px] text-text-muted"><span className="flex items-center justify-between"><span>画笔粗细</span><strong className="font-medium text-text-secondary">{brushWidth}px</strong></span><input type="range" min="4" max="64" step="2" value={brushWidth} onChange={(event) => setBrushWidth(Number(event.target.value))} className="mt-1 w-full accent-accent" aria-label="画笔粗细" /></label>}
+            </div>
+          )}
           <div className="my-1 h-px bg-border-subtle" />
           <button
             type="button"
@@ -1722,6 +1823,12 @@ export default function FabricCanvasWorkspace({
             selection={selection}
             prompt={drafts[workflow]}
             onPromptChange={(value) => setDrafts((current) => ({ ...current, [workflow]: value }))}
+            onInsertMention={(mention, start, end) =>
+              setDrafts((current) => {
+                const value = current[workflow] || "";
+                return { ...current, [workflow]: value.slice(0, start) + mention + value.slice(end) };
+              })
+            }
             quality={quality}
             onQualityChange={setQuality}
             onPreviewReferences={handlePreviewReferences}
@@ -1732,6 +1839,7 @@ export default function FabricCanvasWorkspace({
             providerConfigured={providerConfigured}
             providerName={providerName}
             onOpenProvider={onOpenProvider}
+            onOpenRecharge={onOpenRecharge}
           />
         )}
 
