@@ -525,7 +525,7 @@ def provider_headers(provider, content_type="application/json"):
 
 
 RPC_ERROR_MESSAGES = {
-    "EMAIL_UNVERIFIED": ("请先完成邮箱验证", 403, "验证邮箱后会自动获得 10 个免费积分。", ["打开邮箱完成验证", "重新登录后刷新账户"]),
+    "EMAIL_UNVERIFIED": ("请先完成邮箱验证", 403, "验证邮箱后会自动获得注册赠送积分。", ["打开邮箱完成验证", "重新登录后刷新账户"]),
     "ACCOUNT_FROZEN": ("账户当前不可使用平台积分", 403, "该账户已被平台暂停使用。", ["联系平台管理员", "切换到自带 Key 模式"]),
     "CREDITS_INSUFFICIENT": ("平台积分不足", 402, "本次生成所需积分高于当前可用积分。", ["切换到自带 Key 模式", "等待管理员补充积分"]),
     "USER_DAILY_LIMIT": ("今日平台积分生成额度已用完", 429, "请明天再试，或切换到自带 Key 模式。", ["切换到自带 Key", "明日再生成"]),
@@ -533,6 +533,7 @@ RPC_ERROR_MESSAGES = {
     "REQUEST_ID_CONFLICT": ("该生成请求不能重复使用", 409, "请重新发起生成请求。", ["重新点击生成"]),
     "ADMIN_REQUIRED": ("没有管理员权限", 403, "该操作仅对管理员开放。", ["切换管理员账号"]),
     "CREDIT_DELTA_INVALID": ("积分调整数量无效", 400, "请输入不为 0 的整数积分。", ["检查调整数量"]),
+    "SIGNUP_BONUS_INVALID": ("注册赠送积分无效", 400, "请输入 0 到 10000 之间的整数。", ["检查积分数量"]),
     "USER_NOT_FOUND": ("用户不存在或已停用", 404, "请选择一个仍处于正常状态的用户。", ["刷新用户列表"]),
     "CREDITS_BALANCE_INVALID": ("积分不能低于 0", 400, "本次扣减超过了用户当前余额。", ["减少扣减数量"]),
     "IDEMPOTENCY_KEY_INVALID": ("操作编号无效", 400, "请重新提交这次调整。", ["重新提交"]),
@@ -1365,6 +1366,58 @@ def admin_console():
             raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
         snapshot = gateway.admin_console_snapshot(from_date, to_date, request.args.get("search", ""), 100)
         return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), **snapshot})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/settings/credits", methods=["GET"])
+def get_admin_credit_settings():
+    try:
+        _user, gateway = require_admin_user()
+        return jsonify({"success": True, "settings": raise_for_rpc_result(gateway.get_credit_settings())})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/settings/credits", methods=["POST"])
+def update_admin_credit_settings():
+    try:
+        user, gateway = require_admin_user()
+        data = request.get_json(silent=True) or {}
+        raw_credits = data.get("signup_bonus_credits")
+        if isinstance(raw_credits, bool) or (
+            isinstance(raw_credits, float) and not raw_credits.is_integer()
+        ) or (isinstance(raw_credits, str) and not raw_credits.strip().isdigit()):
+            raise ProviderError(
+                "SIGNUP_BONUS_INVALID",
+                "注册赠送积分无效",
+                400,
+                "请输入 0 到 10000 之间的整数。",
+                ["检查积分数量"],
+            )
+        try:
+            signup_bonus_credits = int(raw_credits)
+        except (TypeError, ValueError) as exc:
+            raise ProviderError(
+                "SIGNUP_BONUS_INVALID",
+                "注册赠送积分无效",
+                400,
+                "请输入 0 到 10000 之间的整数。",
+                ["检查积分数量"],
+            ) from exc
+        if not 0 <= signup_bonus_credits <= 10000:
+            raise ProviderError(
+                "SIGNUP_BONUS_INVALID",
+                "注册赠送积分无效",
+                400,
+                "请输入 0 到 10000 之间的整数。",
+                ["检查积分数量"],
+            )
+        reason = str(data.get("reason", "")).strip()[:240]
+        result = raise_for_rpc_result(
+            gateway.update_signup_bonus_credits(user.id, signup_bonus_credits, reason)
+        )
+        return jsonify({"success": True, "settings": result.get("settings", result)})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

@@ -52,7 +52,7 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
           options: { data: { username: username.trim() || email.trim().split("@")[0] } },
         });
         if (authError) throw authError;
-        if (!data.session) onNotice?.("注册成功，请先查收验证邮件；验证后可领取 10 个免费积分");
+        if (!data.session) onNotice?.("注册成功；如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接；点了就行无需其他操作。");
         else onNotice?.("注册成功");
         onClose();
       } else if (mode === "forgot") {
@@ -85,7 +85,7 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.16em] text-accent">PosterFlow Account</p>
             <h2 id="auth-modal-title" className="mt-1 text-lg font-semibold text-text-primary">{title}</h2>
-            <p className="mt-1 text-sm leading-6 text-text-muted">登录后可使用平台积分生图，邮箱验证后赠送 10 个免费积分。</p>
+            <p className="mt-1 text-sm leading-6 text-text-muted">登录后可使用平台积分生图，完成邮箱验证后可获得注册赠送积分。</p>
           </div>
           <button type="button" onClick={onClose} className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-muted hover:bg-bg-elevated hover:text-text-primary" aria-label="关闭登录窗口">
             <X size={18} />
@@ -94,13 +94,13 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
         <form onSubmit={submit} className="space-y-4 px-5 py-5">
           {mode === "signIn" && (
             <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-3 text-sm leading-6 text-gold" role="note">
-              如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接。
+              如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接；点了就行无需其他操作。
             </div>
           )}
           {mode === "signUp" && (
             <>
               <div className="rounded-lg border border-accent/20 bg-accent/8 px-3 py-2 text-xs leading-5 text-text-secondary">
-                注册完成后，请打开邮箱并点击验证链接；验证通过后，系统会自动激活 10 个免费积分。
+                注册完成后，请打开邮箱并点击验证链接；验证通过后，系统会自动发放注册赠送积分。
               </div>
               <div>
                 <label htmlFor="auth-username" className="text-sm font-medium text-text-secondary">用户名</label>

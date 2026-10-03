@@ -327,7 +327,7 @@ export default function App() {
   const requireGenerationAccess = useCallback(() => {
     if (billingMode === "platform" && !session) {
       setAuthOpen(true);
-      setNotice("请先登录，验证邮箱后即可领取 10 个免费积分");
+      setNotice("请先登录，完成邮箱验证后即可领取注册赠送积分");
       return false;
     }
     if (billingMode === "platform" && !serverProvider.platformConfigured) {

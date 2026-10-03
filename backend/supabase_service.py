@@ -347,6 +347,19 @@ class SupabaseGateway:
             },
         )
 
+    def get_credit_settings(self) -> dict[str, Any]:
+        return self.rpc("get_credit_settings", {})
+
+    def update_signup_bonus_credits(self, admin_user_id: str, credits: int, reason: str) -> dict[str, Any]:
+        return self.rpc(
+            "update_signup_bonus_credits",
+            {
+                "p_admin_user_id": admin_user_id,
+                "p_credits": credits,
+                "p_reason": reason[:240],
+            },
+        )
+
     def create_credit_order(
         self,
         user_id: str,

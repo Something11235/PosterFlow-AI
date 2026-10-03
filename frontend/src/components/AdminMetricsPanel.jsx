@@ -20,10 +20,13 @@ function dateValue(offset) {
 }
 
 export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
-  const [snapshot, setSnapshot] = useState({ metrics: {}, users: [], usage: [], orders: [] });
+  const [snapshot, setSnapshot] = useState({ metrics: {}, users: [], usage: [], orders: [], settings: {} });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [adjusting, setAdjusting] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [signupBonusCredits, setSignupBonusCredits] = useState("10");
+  const [settingsReason, setSettingsReason] = useState("");
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState(() => dateValue(-29));
   const [to, setTo] = useState(() => dateValue(0));
@@ -32,6 +35,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
   const [reason, setReason] = useState("管理员发放积分");
   const [success, setSuccess] = useState("");
   const adjustmentKeyRef = useRef(null);
+  const settingsLoadedRef = useRef(false);
 
   useEffect(() => {
     adjustmentKeyRef.current = null;
@@ -46,7 +50,12 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
       const response = await fetch(`/api/admin/console?${params}`, { headers: authHeaders, credentials: "include" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || data.error || "管理数据加载失败");
-      setSnapshot({ metrics: data.metrics || {}, users: data.users || [], usage: data.usage || [], orders: data.orders || [] });
+      const settings = data.settings || {};
+      setSnapshot({ metrics: data.metrics || {}, users: data.users || [], usage: data.usage || [], orders: data.orders || [], settings });
+      if (!settingsLoadedRef.current && settings.signup_bonus_credits !== undefined) {
+        setSignupBonusCredits(String(settings.signup_bonus_credits));
+        settingsLoadedRef.current = true;
+      }
     } catch (reasonValue) {
       setError(reasonValue.message || "管理数据加载失败");
     } finally {
@@ -54,12 +63,38 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
     }
   }, [authHeaders, from, open, search, to]);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    loadSnapshot();
-    const timer = window.setInterval(() => loadSnapshot({ silent: true }), 15000);
-    return () => window.clearInterval(timer);
-  }, [loadSnapshot, open]);
+  const saveSignupBonus = async (event) => {
+    event.preventDefault();
+    if (!/^\d+$/.test(signupBonusCredits.trim())) {
+      setError("新用户注册赠送积分必须是 0 到 10000 之间的整数。");
+      return;
+    }
+    const value = Number(signupBonusCredits);
+    if (!Number.isSafeInteger(value) || value < 0 || value > 10000) {
+      setError("新用户注册赠送积分必须是 0 到 10000 之间的整数。");
+      return;
+    }
+    setSavingSettings(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch("/api/admin/settings/credits", {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ signup_bonus_credits: value, reason: settingsReason }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || data.error || "积分设置保存失败");
+      setSignupBonusCredits(String(data.settings?.signup_bonus_credits ?? value));
+      setSuccess(`已将新用户注册赠送积分设置为 ${data.settings?.signup_bonus_credits ?? value}。只影响尚未领取注册奖励的用户。`);
+      await loadSnapshot({ silent: true });
+    } catch (reasonValue) {
+      setError(reasonValue.message || "积分设置保存失败");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const adjustCredits = async (event) => {
     event.preventDefault();
@@ -104,6 +139,12 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metricEntries.map(([key, value]) => <div key={key} className="rounded-lg border border-border-subtle bg-bg-tertiary p-4"><p className="text-xs text-text-muted">{METRIC_LABELS[key] || key}</p><p className="mt-2 text-xl font-semibold text-text-primary">{formatMetric(key, value)}</p></div>)}</div>
+          <section className="mb-4 rounded-lg border border-accent/25 bg-accent/5 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0"><h3 className="text-sm font-semibold text-text-primary">新用户注册赠送积分</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">只影响还没有领取注册奖励的用户；已经到账的积分不会自动变化。可设置为 0，范围是 0–10000 的整数。</p></div>
+              <form onSubmit={saveSignupBonus} className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto"><label className="sr-only" htmlFor="signup-bonus-credits">注册赠送积分数量</label><input id="signup-bonus-credits" type="number" min="0" max="10000" step="1" value={signupBonusCredits} onChange={(event) => setSignupBonusCredits(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-32" placeholder="10" /><label className="sr-only" htmlFor="signup-bonus-reason">修改原因</label><input id="signup-bonus-reason" value={settingsReason} onChange={(event) => setSettingsReason(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-52" placeholder="修改说明（可选）" /><button type="submit" disabled={savingSettings} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50">{savingSettings ? <Loader2 size={15} className="animate-spin-soft" /> : <CircleDollarSign size={15} />}{savingSettings ? "保存中…" : "保存设置"}</button></form>
+            </div>
+          </section>
           {error && <p className="mb-4 rounded-lg border border-error/35 bg-error/10 px-3 py-3 text-sm text-error" role="alert">{error}</p>}{success && <p className="mb-4 rounded-lg border border-mint/30 bg-mint/10 px-3 py-3 text-sm text-mint" role="status">{success}</p>}
           <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border-subtle bg-bg-tertiary p-3 lg:flex-row lg:items-end">
             <label className="flex-1 text-xs text-text-muted">搜索用户<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="用户名或邮箱" className="mt-1 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent/70" /></label>
