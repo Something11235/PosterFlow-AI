@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CircleDollarSign, CreditCard, Loader2, RefreshCw, Search, Send, ShieldCheck, UsersRound, X } from "lucide-react";
+import AnnouncementManager from "./AnnouncementManager";
 
 const METRIC_LABELS = {
   registered_users: "新增用户", verified_users: "已验证邮箱", daily_active_users: "今日活跃", monthly_active_users: "本月活跃",
@@ -145,6 +146,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
               <form onSubmit={saveSignupBonus} className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto"><label className="sr-only" htmlFor="signup-bonus-credits">注册赠送积分数量</label><input id="signup-bonus-credits" type="number" min="0" max="10000" step="1" value={signupBonusCredits} onChange={(event) => setSignupBonusCredits(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-32" placeholder="10" /><label className="sr-only" htmlFor="signup-bonus-reason">修改原因</label><input id="signup-bonus-reason" value={settingsReason} onChange={(event) => setSettingsReason(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-52" placeholder="修改说明（可选）" /><button type="submit" disabled={savingSettings} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50">{savingSettings ? <Loader2 size={15} className="animate-spin-soft" /> : <CircleDollarSign size={15} />}{savingSettings ? "保存中…" : "保存设置"}</button></form>
             </div>
           </section>
+          <AnnouncementManager authHeaders={authHeaders} />
           {error && <p className="mb-4 rounded-lg border border-error/35 bg-error/10 px-3 py-3 text-sm text-error" role="alert">{error}</p>}{success && <p className="mb-4 rounded-lg border border-mint/30 bg-mint/10 px-3 py-3 text-sm text-mint" role="status">{success}</p>}
           <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border-subtle bg-bg-tertiary p-3 lg:flex-row lg:items-end">
             <label className="flex-1 text-xs text-text-muted">搜索用户<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="用户名或邮箱" className="mt-1 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent/70" /></label>

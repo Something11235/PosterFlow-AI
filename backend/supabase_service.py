@@ -335,6 +335,75 @@ class SupabaseGateway:
             },
         )
 
+    def public_announcements(self, limit: int = 5) -> list[dict[str, Any]]:
+        result = self.rpc("get_public_announcements", {"p_limit": max(1, min(limit, 20))})
+        return result if isinstance(result, list) else []
+
+    def admin_announcements(self, search: str = "", status: str = "all", limit: int = 100) -> list[dict[str, Any]]:
+        result = self.rpc(
+            "get_admin_announcements",
+            {"p_search": search[:80], "p_status": status, "p_limit": max(1, min(limit, 200))},
+        )
+        return result if isinstance(result, list) else []
+
+    def create_announcement(
+        self,
+        admin_user_id: str,
+        title: str,
+        content: str,
+        announcement_type: str,
+        status: str,
+        is_pinned: bool,
+        starts_at: str | None,
+        ends_at: str | None,
+    ) -> dict[str, Any]:
+        return self.rpc(
+            "create_announcement",
+            {
+                "p_admin_user_id": admin_user_id,
+                "p_title": title,
+                "p_content": content,
+                "p_announcement_type": announcement_type,
+                "p_status": status,
+                "p_is_pinned": is_pinned,
+                "p_starts_at": starts_at,
+                "p_ends_at": ends_at,
+            },
+        )
+
+    def update_announcement(
+        self,
+        admin_user_id: str,
+        announcement_id: str,
+        title: str,
+        content: str,
+        announcement_type: str,
+        status: str,
+        is_pinned: bool,
+        starts_at: str | None,
+        ends_at: str | None,
+    ) -> dict[str, Any]:
+        return self.rpc(
+            "update_announcement",
+            {
+                "p_admin_user_id": admin_user_id,
+                "p_id": announcement_id,
+                "p_title": title,
+                "p_content": content,
+                "p_announcement_type": announcement_type,
+                "p_status": status,
+                "p_is_pinned": is_pinned,
+                "p_starts_at": starts_at,
+                "p_ends_at": ends_at,
+            },
+        )
+
+    def delete_announcement(self, admin_user_id: str, announcement_id: str) -> dict[str, Any]:
+        return self.rpc(
+            "delete_announcement",
+            {"p_admin_user_id": admin_user_id, "p_id": announcement_id},
+        )
+
     def admin_adjust_credits(self, admin_user_id: str, user_id: str, delta: int, reason: str, idempotency_key: str) -> dict[str, Any]:
         return self.rpc(
             "admin_adjust_credits",

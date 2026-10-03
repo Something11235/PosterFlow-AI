@@ -534,6 +534,12 @@ RPC_ERROR_MESSAGES = {
     "ADMIN_REQUIRED": ("没有管理员权限", 403, "该操作仅对管理员开放。", ["切换管理员账号"]),
     "CREDIT_DELTA_INVALID": ("积分调整数量无效", 400, "请输入不为 0 的整数积分。", ["检查调整数量"]),
     "SIGNUP_BONUS_INVALID": ("注册赠送积分无效", 400, "请输入 0 到 10000 之间的整数。", ["检查积分数量"]),
+    "ANNOUNCEMENT_TITLE_INVALID": ("公告标题无效", 400, "标题不能为空，且最多 120 个字符。", ["检查公告标题"]),
+    "ANNOUNCEMENT_CONTENT_INVALID": ("公告内容无效", 400, "公告内容不能为空，且最多 5000 个字符。", ["检查公告内容"]),
+    "ANNOUNCEMENT_TYPE_INVALID": ("公告类型无效", 400, "请选择有效的公告类型。", ["检查公告类型"]),
+    "ANNOUNCEMENT_STATUS_INVALID": ("公告状态无效", 400, "请选择草稿、已发布或已下线。", ["检查公告状态"]),
+    "ANNOUNCEMENT_TIME_INVALID": ("公告时间无效", 400, "结束时间必须晚于开始时间。", ["检查展示时间"]),
+    "ANNOUNCEMENT_NOT_FOUND": ("公告不存在", 404, "这条公告可能已被删除或下线。", ["刷新公告列表"]),
     "USER_NOT_FOUND": ("用户不存在或已停用", 404, "请选择一个仍处于正常状态的用户。", ["刷新用户列表"]),
     "CREDITS_BALANCE_INVALID": ("积分不能低于 0", 400, "本次扣减超过了用户当前余额。", ["减少扣减数量"]),
     "IDEMPOTENCY_KEY_INVALID": ("操作编号无效", 400, "请重新提交这次调整。", ["重新提交"]),
@@ -1366,6 +1372,111 @@ def admin_console():
             raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
         snapshot = gateway.admin_console_snapshot(from_date, to_date, request.args.get("search", ""), 100)
         return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), **snapshot})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/announcements", methods=["GET"])
+def public_announcements():
+    try:
+        if not is_supabase_configured():
+            return jsonify({"success": True, "announcements": []})
+        limit = min(max(int(request.args.get("limit", 5)), 1), 20)
+        announcements = SupabaseGateway().public_announcements(limit)
+        return jsonify({"success": True, "announcements": announcements})
+    except (ValueError, SupabaseError) as error:
+        # Announcements should never block the image workspace if the optional
+        # table has not been migrated yet or the account service is unavailable.
+        app.logger.warning("Unable to load public announcements: %s", error)
+        return jsonify({"success": True, "announcements": []})
+
+
+def parse_announcement_payload(data):
+    data = data if isinstance(data, dict) else {}
+    title = str(data.get("title", "")).strip()
+    content = str(data.get("content", "")).strip()
+    announcement_type = str(data.get("announcement_type", "info")).strip().lower()
+    status = str(data.get("status", "draft")).strip().lower()
+    is_pinned = data.get("is_pinned", False)
+    if not isinstance(is_pinned, bool):
+        raise ProviderError("ANNOUNCEMENT_STATUS_INVALID", "公告状态无效", 400, "置顶必须是布尔值。")
+    if not title or len(title) > 120:
+        raise ProviderError("ANNOUNCEMENT_TITLE_INVALID", "公告标题无效", 400, "标题不能为空，且最多 120 个字符。")
+    if not content or len(content) > 5000:
+        raise ProviderError("ANNOUNCEMENT_CONTENT_INVALID", "公告内容无效", 400, "公告内容不能为空，且最多 5000 个字符。")
+    if announcement_type not in {"info", "important", "maintenance"}:
+        raise ProviderError("ANNOUNCEMENT_TYPE_INVALID", "公告类型无效", 400, "请选择有效的公告类型。")
+    if status not in {"draft", "published", "offline"}:
+        raise ProviderError("ANNOUNCEMENT_STATUS_INVALID", "公告状态无效", 400, "请选择草稿、已发布或已下线。")
+
+    def parse_time(value):
+        if value in (None, ""):
+            return None
+        raw = str(value).strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError as exc:
+            raise ProviderError("ANNOUNCEMENT_TIME_INVALID", "公告时间无效", 400, "展示时间格式无效。") from exc
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+
+    starts_at = parse_time(data.get("starts_at"))
+    ends_at = parse_time(data.get("ends_at"))
+    if starts_at and ends_at and datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
+        raise ProviderError("ANNOUNCEMENT_TIME_INVALID", "公告时间无效", 400, "结束时间必须晚于开始时间。")
+    return title, content, announcement_type, status, is_pinned, starts_at, ends_at
+
+
+@app.route("/api/admin/announcements", methods=["GET"])
+def admin_announcements():
+    try:
+        _user, gateway = require_admin_user()
+        status = request.args.get("status", "all").strip().lower()
+        if status not in {"all", "draft", "published", "offline"}:
+            raise ProviderError("ANNOUNCEMENT_STATUS_INVALID", "公告状态无效", 400, "请选择有效的公告筛选状态。")
+        announcements = gateway.admin_announcements(request.args.get("search", ""), status, 200)
+        return jsonify({"success": True, "announcements": announcements})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/announcements", methods=["POST"])
+def create_admin_announcement():
+    try:
+        user, gateway = require_admin_user()
+        values = parse_announcement_payload(request.get_json(silent=True) or {})
+        result = raise_for_rpc_result(gateway.create_announcement(user.id, *values))
+        return jsonify({"success": True, **result})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/announcements/<announcement_id>", methods=["PATCH"])
+def update_admin_announcement(announcement_id):
+    try:
+        user, gateway = require_admin_user()
+        try:
+            uuid.UUID(announcement_id)
+        except ValueError as exc:
+            raise ProviderError("ANNOUNCEMENT_NOT_FOUND", "公告不存在", 404, "公告编号无效。") from exc
+        values = parse_announcement_payload(request.get_json(silent=True) or {})
+        result = raise_for_rpc_result(gateway.update_announcement(user.id, announcement_id, *values))
+        return jsonify({"success": True, **result})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/announcements/<announcement_id>", methods=["DELETE"])
+def delete_admin_announcement(announcement_id):
+    try:
+        user, gateway = require_admin_user()
+        try:
+            uuid.UUID(announcement_id)
+        except ValueError as exc:
+            raise ProviderError("ANNOUNCEMENT_NOT_FOUND", "公告不存在", 404, "公告编号无效。") from exc
+        result = raise_for_rpc_result(gateway.delete_announcement(user.id, announcement_id))
+        return jsonify({"success": True, **result})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

@@ -15,6 +15,7 @@ import History from "./components/History";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
+import AnnouncementBanner from "./components/AnnouncementBanner";
 import AdminMetricsPanel from "./components/AdminMetricsPanel";
 import RechargePanel from "./components/RechargePanel";
 import ParameterPanel from "./components/ParameterPanel";
@@ -748,6 +749,8 @@ export default function App() {
               </div>
             </div>
           </header>
+
+          <AnnouncementBanner />
 
           {mode === "canvas" && (
             <>
