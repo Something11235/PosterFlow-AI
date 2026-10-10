@@ -671,6 +671,14 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
             provider = resolve_provider_config("own_key")
 
         images = generate_callback(provider)
+        if not isinstance(images, list) or not images:
+            raise ProviderError(
+                "PROVIDER_EMPTY_RESULT",
+                "图片生成服务没有返回图片",
+                502,
+                "图片服务没有返回可保存的图片，本次请求不会计费。",
+                ["检查中转站响应格式", "检查模型标识", "重新生成"],
+            )
         filenames = [image["filename"] for image in images]
         created_filenames = filenames
         duration_ms = utc_milliseconds_since(started_at)
@@ -693,8 +701,10 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                 except Exception:
                     app.logger.exception("Failed to remove orphaned generated images")
             try:
-                gateway.refund_generation(job_id, getattr(error, "code", "generation_failed"))
-            except SupabaseError:
+                raise_for_rpc_result(
+                    gateway.refund_generation(job_id, getattr(error, "code", "generation_failed"))
+                )
+            except (ProviderError, SupabaseError):
                 app.logger.exception("Failed to refund platform generation")
         elif billing_mode == "own_key" and user and provider:
             try:
