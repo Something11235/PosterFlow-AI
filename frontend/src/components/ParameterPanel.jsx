@@ -1,5 +1,5 @@
 import React from "react";
-import { ImageDown, LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
+import { LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
 
 const FALLBACK_SIZES = {
   square_1_1: { label: "正方形 1:1", width: 1024, height: 1024 },
@@ -19,19 +19,11 @@ const SIZE_META = {
   wide_21_9: { ratio: "21:9", use: "大屏横幅" },
 };
 
-const QUALITY_META = {
-  auto: { label: "自动", hint: "动态平衡" },
-  medium: { label: "标准", hint: "交付兼顾" },
-  high: { label: "高清", hint: "细节优先" },
-};
-
 export default function ParameterPanel({
   size,
   onSizeChange,
   customSize,
   onCustomSizeChange,
-  quality,
-  onQualityChange,
   count,
   onCountChange,
   sizes,
@@ -90,6 +82,20 @@ export default function ParameterPanel({
           })}
           <button
             type="button"
+            onClick={() => onSizeChange("")}
+            className={`min-h-16 rounded-lg border p-3 text-left transition ${
+              !size
+                ? "border-accent/45 bg-accent/12"
+                : "border-border-subtle bg-bg-tertiary/72 hover:border-border-default hover:bg-bg-elevated"
+            }`}
+            aria-pressed={!size}
+          >
+            <span className={`block text-sm font-semibold ${!size ? "text-accent" : "text-text-primary"}`}>由提示词决定</span>
+            <span className="mt-0.5 block text-xs text-text-muted">不指定画面尺寸</span>
+            <span className="mt-1 block text-[11px] text-text-muted">默认选项</span>
+          </button>
+          <button
+            type="button"
             onClick={() => onSizeChange("custom")}
             className={`min-h-16 rounded-lg border p-3 text-left transition ${
               customSizeActive
@@ -141,36 +147,6 @@ export default function ParameterPanel({
             <p className="col-span-3 text-xs leading-5 text-text-muted">单边 256–4096 px，最终支持范围以图片服务商为准。</p>
           </div>
         )}
-      </fieldset>
-
-      <fieldset className="mb-4">
-        <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
-          <ImageDown size={16} />
-          画质
-        </legend>
-        <div className="grid grid-cols-3 gap-2">
-          {Object.entries(QUALITY_META).map(([key, value]) => {
-            const active = quality === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => onQualityChange(key)}
-                className={`min-h-14 rounded-lg border px-3 py-2 text-left transition ${
-                  active
-                    ? "border-mint/45 bg-mint/12"
-                    : "border-border-subtle bg-bg-tertiary/72 hover:border-border-default hover:bg-bg-elevated"
-                }`}
-                aria-pressed={active}
-              >
-                <span className={`block text-sm font-semibold ${active ? "text-mint" : "text-text-primary"}`}>
-                  {value.label}
-                </span>
-                <span className="mt-0.5 block text-xs text-text-muted">{value.hint}</span>
-              </button>
-            );
-          })}
-        </div>
       </fieldset>
 
       <fieldset className="mb-4">

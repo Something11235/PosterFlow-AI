@@ -151,6 +151,17 @@ class ProviderEditRequestTests(unittest.TestCase):
         self.assertIn("json", post.call_args.kwargs)
         self.assertNotIn("files", post.call_args.kwargs)
 
+    def test_text_to_image_without_size_omits_size_and_uses_auto_quality(self):
+        with (
+            patch.object(server.requests, "post", return_value=self.provider_response()) as post,
+            patch.object(server, "store_generated_image"),
+        ):
+            server.generate_images(self.provider, "按提示词决定尺寸", size="", quality="high")
+
+        payload = post.call_args.kwargs["json"]
+        self.assertNotIn("size", payload)
+        self.assertEqual(payload["quality"], "auto")
+
 
 class CanvasModifyRouteTests(unittest.TestCase):
     def setUp(self):

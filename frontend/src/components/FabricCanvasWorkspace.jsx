@@ -712,6 +712,7 @@ export default function FabricCanvasWorkspace({
   providerName,
   providerHeaders,
   billingMode = "own_key",
+  platformModel,
   authenticated = false,
   onAuthRequired,
   onAccountRefresh,
@@ -730,7 +731,6 @@ export default function FabricCanvasWorkspace({
   const [workflow, setWorkflow] = useState("frame");
   const [ratioKey, setRatioKey] = useState("landscape_16_9");
   const [drafts, setDrafts] = useState(loadCanvasDrafts);
-  const [quality, setQuality] = useState("auto");
   const [aiError, setAiError] = useState(null);
   const [selection, setSelection] = useState(() => selectionSnapshot(null));
   const [tool, setTool] = useState("select");
@@ -1472,7 +1472,8 @@ export default function FabricCanvasWorkspace({
           size: "custom",
           custom_width: Number(target.meta?.posterflowTargetWidth) || ratio.width,
           custom_height: Number(target.meta?.posterflowTargetHeight) || ratio.height,
-          quality,
+          quality: "auto",
+          ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
           count: 1,
         };
       } else {
@@ -1515,7 +1516,8 @@ export default function FabricCanvasWorkspace({
           size: "custom",
           custom_width: size.width,
           custom_height: size.height,
-          quality,
+          quality: "auto",
+          ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
         };
       }
 
@@ -1829,8 +1831,6 @@ export default function FabricCanvasWorkspace({
                 return { ...current, [workflow]: value.slice(0, start) + mention + value.slice(end) };
               })
             }
-            quality={quality}
-            onQualityChange={setQuality}
             onPreviewReferences={handlePreviewReferences}
             previewBusy={previewBusy}
             onGenerate={handleAiGenerate}

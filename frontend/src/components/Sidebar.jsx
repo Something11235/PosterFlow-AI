@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart3, BookOpen, Clock3, CodeXml, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpen, Clock3, CodeXml, CreditCard, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
 const PROMPT_REFERENCE_LINKS = [
@@ -23,6 +23,7 @@ export default function Sidebar({
   onOpenAuth,
   onOpenAccount,
   onOpenMetrics,
+  onOpenRecharge,
 }) {
   const accountLabel = account?.profile?.username || session?.user?.email || "登录 / 注册";
   return (
@@ -100,6 +101,9 @@ export default function Sidebar({
             </button>
           );
         })}
+        <button type="button" onClick={onOpenRecharge} className="col-span-2 flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/8 px-3 text-sm font-medium text-accent transition hover:bg-accent/14 sm:col-span-4 lg:col-span-1 lg:justify-start">
+          <CreditCard size={17} />购买积分
+        </button>
         <div className="col-span-2 mt-1 rounded-lg border border-border-subtle bg-bg-tertiary/45 p-2 sm:col-span-4 lg:col-span-1" aria-labelledby="prompt-reference-title">
           <div className="flex items-center gap-2 px-1 py-1 text-xs font-medium text-text-secondary">
             <BookOpen size={15} className="text-accent" aria-hidden="true" />

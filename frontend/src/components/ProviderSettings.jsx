@@ -15,6 +15,8 @@ import {
   EMPTY_PROVIDER_CONFIG,
   isProviderConfigComplete,
   PROVIDER_PRESETS,
+  IMAGE_MODEL_OPTIONS,
+  DEFAULT_PLATFORM_MODEL,
 } from "../lib/provider";
 import { CLIENT_HEADERS } from "../lib/client";
 
@@ -41,6 +43,8 @@ export default function ProviderSettings({
   billingMode = "own_key",
   onBillingModeChange,
   platformReady = false,
+  platformModel = DEFAULT_PLATFORM_MODEL,
+  onPlatformModelChange,
   session,
   account,
   onSave,
@@ -183,8 +187,12 @@ export default function ProviderSettings({
 
           {billingMode === "platform" ? (
             <div className="space-y-4 rounded-lg border border-accent/30 bg-accent/8 p-4">
-              <div><p className="text-sm font-semibold text-text-primary">平台积分生图</p><p className="mt-1 text-sm leading-6 text-text-muted">每张图片消耗 1 个积分。批量生成会按图片数量预扣，失败或超时自动退回。</p></div>
-              <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台图片服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">平台图片服务-Image2.5</p></div></div>
+              <div><p className="text-sm font-semibold text-text-primary">平台积分生图</p><p className="mt-1 text-sm leading-6 text-text-muted">选择模型后按对应积分计费，失败或超时自动退回。</p></div>
+              <label htmlFor="platform-image-model" className="text-sm font-medium text-text-secondary">模型</label>
+              <select id="platform-image-model" value={platformModel} onChange={(event) => onPlatformModelChange?.(event.target.value)} className="min-h-11 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-sm text-text-primary focus:border-accent/65">
+                {IMAGE_MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value}{option.value.endsWith("flare") ? "（1张图1积分）" : "（1张图2积分）"}</option>)}
+              </select>
+              <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台图片服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">{platformModel}</p></div></div>
               {!session && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">请先登录。完成邮箱验证后会自动获得注册赠送积分。</p>}
               {session && !platformReady && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">平台积分服务尚未完成配置，请切换到自带 Key 模式。</p>}
             </div>
@@ -267,15 +275,16 @@ export default function ProviderSettings({
                 <label htmlFor="provider-model" className="text-sm font-medium text-text-secondary">
                   模型标识 <span className="text-error">*</span>
                 </label>
-                <input
+                <select
                   id="provider-model"
-                  type="text"
                   value={draft.model}
                   onChange={(event) => updateDraft({ model: event.target.value })}
-                  placeholder="服务商提供的模型 ID"
-                  spellCheck="false"
-                  className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary placeholder:text-text-muted focus:border-accent/65"
-                />
+                  className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary focus:border-accent/65"
+                >
+                  {!draft.model && <option value="" disabled>请选择模型</option>}
+                  {draft.model && !IMAGE_MODEL_OPTIONS.some((option) => option.value === draft.model) && <option value={draft.model}>{draft.model}</option>}
+                  {IMAGE_MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
               </div>
               <div>
                 <label htmlFor="provider-auth" className="text-sm font-medium text-text-secondary">

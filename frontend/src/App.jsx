@@ -25,6 +25,7 @@ import ProviderSettings from "./components/ProviderSettings";
 import Sidebar from "./components/Sidebar";
 import {
   buildProviderHeaders,
+  DEFAULT_PLATFORM_MODEL,
   clearProviderConfig,
   getProviderDisplayName,
   isProviderConfigComplete,
@@ -138,9 +139,9 @@ export default function App() {
   const [mode, setMode] = useState("create");
   const [prompt, setPrompt] = useState(DEFAULT_PRESET?.prompt || "");
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);
-  const [size, setSize] = useState("landscape_16_9");
+  const [size, setSize] = useState("");
+  const [platformModel, setPlatformModel] = useState(DEFAULT_PLATFORM_MODEL);
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
-  const [quality, setQuality] = useState("auto");
   const [count, setCount] = useState(1);
   const [referenceFiles, setReferenceFiles] = useState([]);
   const [referencePreviews, setReferencePreviews] = useState([]);
@@ -363,12 +364,11 @@ export default function App() {
       ];
     }
     return [
-      { label: "画幅", value: sizeInfo ? sizeInfo.label : "横版 16:9" },
+      { label: "画幅", value: sizeInfo ? sizeInfo.label : "由提示词决定" },
       { label: "预设", value: activePreset?.name || "自由创作" },
-      { label: "画质", value: quality === "high" ? "高清" : quality === "medium" ? "标准" : "自动" },
       { label: "批量", value: `${count} 张` },
     ];
-  }, [activePreset, count, images.length, mode, quality, sizeInfo]);
+  }, [activePreset, count, images.length, mode, sizeInfo]);
 
   const handleAddToCanvas = useCallback((filenames) => {
     const uniqueFilenames = [...new Set(filenames.filter(Boolean))];
@@ -444,16 +444,18 @@ export default function App() {
         ? {
             prompt: prompt.trim(),
             previous_image: previousImages[0].filename,
-            size,
+            ...(size ? { size } : {}),
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
-            quality,
+            quality: "auto",
+            ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
             parent_id: previousHistoryId,
           }
         : {
             prompt: prompt.trim(),
-            size,
+            ...(size ? { size } : {}),
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
-            quality,
+            quality: "auto",
+            ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
             count,
           };
       body.request_id = requestId;
@@ -503,9 +505,10 @@ export default function App() {
     prompt,
     providerConfigured,
     providerHeaders,
-    quality,
     referenceFiles,
     size,
+    platformModel,
+    billingMode,
     refreshAccount,
     requireGenerationAccess,
     updateCreditBalance,
@@ -526,9 +529,10 @@ export default function App() {
           body: JSON.stringify({
             prompt: modifyPrompt.trim(),
             previous_image: prevImage,
-            size,
+            ...(size ? { size } : {}),
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
-            quality,
+            quality: "auto",
+            ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
             parent_id: historyId,
             request_id: requestId,
           }),
@@ -563,7 +567,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [customSize.height, customSize.width, historyId, providerHeaders, quality, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
+    [billingMode, customSize.height, customSize.width, historyId, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -584,14 +588,13 @@ export default function App() {
   const handleLoadFromHistory = useCallback((entry) => {
     setPrompt(entry.prompt);
     setActivePreset(null);
-    setSize(entry.size || "landscape_16_9");
+    setSize(entry.size || "");
     if (entry.size === "custom") {
       setCustomSize({
         width: String(entry.custom_width || 1024),
         height: String(entry.custom_height || 1024),
       });
     }
-    if (entry.quality) setQuality(entry.quality);
     if (entry.count !== undefined) setCount(entry.count);
     setShowHistory(false);
     setNotice("历史提示词已载入");
@@ -687,6 +690,7 @@ export default function App() {
           accountLoading={accountLoading}
           onOpenAuth={() => setAuthOpen(true)}
           onOpenAccount={() => setAccountOpen(true)}
+          onOpenRecharge={() => setRechargeOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
         />
 
@@ -774,6 +778,7 @@ export default function App() {
                   providerName={providerName}
                   providerHeaders={providerHeaders}
                   billingMode={billingMode}
+                  platformModel={platformModel}
                   authenticated={Boolean(session)}
                   onAuthRequired={() => { setAuthOpen(true); setNotice("请先登录，验证邮箱后即可使用免费积分"); }}
                   onAccountRefresh={refreshAccount}
@@ -817,8 +822,6 @@ export default function App() {
                 onSizeChange={setSize}
                 customSize={customSize}
                 onCustomSizeChange={setCustomSize}
-                quality={quality}
-                onQualityChange={setQuality}
                 count={count}
                 onCountChange={setCount}
                 sizes={stylesData.sizes}
@@ -874,6 +877,8 @@ export default function App() {
         onClear={handleClearProvider}
         billingMode={billingMode}
         onBillingModeChange={setBillingMode}
+        platformModel={platformModel}
+        onPlatformModelChange={setPlatformModel}
         platformReady={platformReady}
         session={session}
         account={account}
@@ -881,9 +886,9 @@ export default function App() {
       />
 
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onNotice={setNotice} />
-      <AccountPanel open={accountOpen} account={account} loading={accountLoading} paymentEnabled={serverProvider.paymentEnabled} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
+      <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
-      <RechargePanel open={rechargeOpen} authHeaders={authHeaders} account={account} paymentEnabled={serverProvider.paymentEnabled} paymentChannels={serverProvider.paymentChannels} onClose={() => setRechargeOpen(false)} onAccountRefresh={() => refreshAccount()} />
+      <RechargePanel open={rechargeOpen} onClose={() => setRechargeOpen(false)} />
 
       {(notice || selectedCount > 0) && (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-default bg-bg-secondary px-4 py-3 text-sm text-text-secondary shadow-2xl">

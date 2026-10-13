@@ -1,6 +1,13 @@
 export const PROVIDER_STORAGE_KEY = "posterflow.provider.session.v1";
 export const MAX_REFERENCE_IMAGES = 8;
 
+export const IMAGE_MODEL_OPTIONS = [
+  { value: "gpt-image-2.5-flare", label: "gpt-image-2.5-flare" },
+  { value: "gpt-image-2.5-sunburst", label: "gpt-image-2.5-sunburst" },
+];
+
+export const DEFAULT_PLATFORM_MODEL = IMAGE_MODEL_OPTIONS[0].value;
+
 export const PROVIDER_PRESETS = {
   jojo: {
     id: "jojo",

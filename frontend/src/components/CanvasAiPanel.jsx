@@ -12,12 +12,6 @@ import {
   X,
 } from "lucide-react";
 
-const QUALITY_OPTIONS = [
-  { value: "auto", label: "自动" },
-  { value: "medium", label: "标准" },
-  { value: "high", label: "高清" },
-];
-
 export default function CanvasAiPanel({
   workflow,
   onWorkflowChange,
@@ -30,8 +24,6 @@ export default function CanvasAiPanel({
   prompt,
   onPromptChange,
   onInsertMention,
-  quality,
-  onQualityChange,
   onPreviewReferences,
   previewBusy,
   onGenerate,
@@ -247,27 +239,6 @@ export default function CanvasAiPanel({
           )}
         </div>
 
-
-        <fieldset className="mt-4">
-          <legend className="text-xs font-medium text-text-muted">画质</legend>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {QUALITY_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onQualityChange(option.value)}
-                aria-pressed={quality === option.value}
-                className={`min-h-11 rounded-md border px-2 text-sm transition ${
-                  quality === option.value
-                    ? "border-mint/40 bg-mint/10 text-mint"
-                    : "border-border-subtle bg-bg-primary text-text-secondary hover:border-border-default hover:bg-bg-elevated"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
 
         {error && (
           <div className="mt-4 rounded-md border border-error/30 bg-error/10 px-3 py-3" role="alert">

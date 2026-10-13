@@ -81,6 +81,9 @@ ALLOW_LEGACY_SERVER_PROVIDER = os.getenv("ALLOW_LEGACY_SERVER_PROVIDER", "0") ==
 PLATFORM_API_KEY = os.getenv("PLATFORM_IMAGE_API_KEY", "").strip()
 PLATFORM_ENDPOINT = os.getenv("PLATFORM_IMAGE_API_ENDPOINT", "").strip()
 PLATFORM_MODEL = os.getenv("PLATFORM_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
+PLATFORM_IMAGE_MODELS = {"gpt-image-2.5-flare": 1, "gpt-image-2.5-sunburst": 2}
+if PLATFORM_MODEL not in PLATFORM_IMAGE_MODELS:
+    PLATFORM_MODEL = "gpt-image-2.5-flare"
 PLATFORM_AUTH_TYPE = os.getenv("PLATFORM_IMAGE_AUTH_TYPE", "bearer").strip().lower()
 PLATFORM_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("PLATFORM_DAILY_IMAGE_LIMIT", "1000")))
 USER_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("USER_DAILY_IMAGE_LIMIT", "20")))
@@ -444,7 +447,7 @@ def validate_provider_endpoint(endpoint, resolve_dns=True):
     return parsed
 
 
-def resolve_provider_config(billing_mode="own_key", resolve_dns=True):
+def resolve_provider_config(billing_mode="own_key", resolve_dns=True, platform_model=None):
     """Resolve an image provider without ever mixing platform and user keys."""
     if billing_mode == "platform":
         if any(request.headers.get(header, "").strip() for header in (
@@ -459,7 +462,7 @@ def resolve_provider_config(billing_mode="own_key", resolve_dns=True):
             )
         api_key = PLATFORM_API_KEY
         endpoint = PLATFORM_ENDPOINT
-        model = PLATFORM_MODEL
+        model = platform_model or PLATFORM_MODEL
         auth_type = PLATFORM_AUTH_TYPE
         source = "platform"
     else:
@@ -631,7 +634,10 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                 )
             user = require_authenticated_user()
             gateway = SupabaseGateway()
-            provider = resolve_provider_config("platform")
+            requested_platform_model = str(data.get("platform_model") or PLATFORM_MODEL).strip()
+            if requested_platform_model not in PLATFORM_IMAGE_MODELS:
+                raise ProviderError("MODEL_NOT_ALLOWED", "平台模型不可用", 400, "请选择平台提供的模型。", ["重新选择模型", "再次生成"])
+            provider = resolve_provider_config("platform", platform_model=requested_platform_model)
             enforce_rate_limit("platform-generate", user.id, 8, 60)
             reservation = raise_for_rpc_result(
                 gateway.reserve_credits(
@@ -736,7 +742,6 @@ SIZE_OPTIONS = {
     "portrait_3_4": {"label": "竖版 3:4", "width": 1024, "height": 1360},
     "wide_21_9": {"label": "超宽 21:9", "width": 2016, "height": 864},
 }
-QUALITY_OPTIONS = {"auto", "medium", "high"}
 CUSTOM_SIZE_MIN = 256
 CUSTOM_SIZE_MAX = 4096
 CUSTOM_SIZE_MAX_PIXELS = 16_000_000
@@ -1065,15 +1070,18 @@ def decode_provider_image(image_data):
     )
 
 
-def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landscape_16_9", quality="high", count=1, custom_size=None, mask_b64=None):
-    size_cfg = custom_size or SIZE_OPTIONS.get(size, SIZE_OPTIONS["landscape_16_9"])
+def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", quality="auto", count=1, custom_size=None, mask_b64=None):
+    # Keep the provider request aligned with the product default even for legacy callers.
+    quality = "auto"
+    size_cfg = custom_size or SIZE_OPTIONS.get(size)
     payload = {
         "model": provider.model,
         "prompt": prompt,
         "n": count,
-        "size": f"{size_cfg['width']}x{size_cfg['height']}",
         "quality": quality,
     }
+    if size_cfg:
+        payload["size"] = f"{size_cfg['width']}x{size_cfg['height']}"
     references = ref_b64 if isinstance(ref_b64, list) else ([ref_b64] if ref_b64 else [])
 
     try:
@@ -1084,7 +1092,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
                     "model": provider.model,
                     "prompt": prompt,
                     "n": count,
-                    "size": payload["size"],
+                    **({"size": payload["size"]} if "size" in payload else {}),
                     "quality": quality,
                     # OpenAI-compatible image edit models use high input fidelity to
                     # preserve the reference composition. This is the closest
@@ -1117,7 +1125,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="landsca
                         "model": provider.model,
                         "prompt": prompt,
                         "n": str(count),
-                        "size": payload["size"],
+                        **({"size": payload["size"]} if "size" in payload else {}),
                         "response_format": "b64_json",
                         "input_fidelity": "high" if strength >= 0.75 else "low",
                     },
@@ -1229,16 +1237,17 @@ def parse_generation_request(data):
             "提示词最多 6000 个字符。",
             ["精简提示词", "保留核心画面要求", "重新生成"],
         )
-    size = data.get("size", "landscape_16_9")
-    quality = data.get("quality", "auto")
-    if (size not in SIZE_OPTIONS and size != "custom") or quality not in QUALITY_OPTIONS:
+    size = data.get("size", "")
+    if (size and size not in SIZE_OPTIONS and size != "custom"):
         raise ProviderError(
             "PARAMETER_INVALID",
             "生成参数无效",
             400,
-            "尺寸或画质不在允许范围内。",
-            ["重新选择尺寸", "重新选择画质", "再次生成"],
+            "尺寸不在允许范围内。",
+            ["需要时选择尺寸", "恢复默认参数", "再次生成"],
         )
+    # The product no longer exposes a quality selector. Ignore legacy client values.
+    quality = "auto"
     custom_size = None
     try:
         if size == "custom":
