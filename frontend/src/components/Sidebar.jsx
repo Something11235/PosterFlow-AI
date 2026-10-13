@@ -41,6 +41,7 @@ export default function Sidebar({
 
         <div className="flex items-center gap-2 lg:hidden">
           <button type="button" onClick={session ? onOpenAccount : onOpenAuth} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-border-subtle bg-bg-tertiary text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary" aria-label={session ? "账户中心" : "登录或注册"} title={accountLabel}><UserRound size={17} /></button>
+          {session && isAdmin && <button type="button" onClick={onOpenMetrics} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-accent/25 bg-accent/8 text-accent transition hover:bg-accent/12" aria-label="管理员控制台" title="管理员控制台"><BarChart3 size={17} /></button>}
           <a
             href={GITHUB_REPOSITORY_URL}
             target="_blank"
