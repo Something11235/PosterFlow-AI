@@ -3,7 +3,6 @@ import {
   Activity,
   Copy,
   Download,
-  History as HistoryIcon,
   Layers3,
   PanelsTopLeft,
   PanelRightOpen,
@@ -11,7 +10,6 @@ import {
   WandSparkles,
 } from "lucide-react";
 import Gallery from "./components/Gallery";
-import History from "./components/History";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
@@ -148,12 +146,10 @@ export default function App() {
 
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
-  const [historyId, setHistoryId] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState("");
 
-  const [showHistory, setShowHistory] = useState(false);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedImages, setSelectedImages] = useState(new Set());
@@ -378,15 +374,13 @@ export default function App() {
       filenames: uniqueFilenames,
     });
     setSelectedImages(new Set());
-    setShowHistory(false);
     setMode("canvas");
     setNotice(`正在送入画布：${uniqueFilenames.length} 张图片`);
   }, []);
 
-  const handleCanvasGenerated = useCallback(({ image, prompt: generatedPrompt, historyId: generatedHistoryId }) => {
+  const handleCanvasGenerated = useCallback(({ image, prompt: generatedPrompt }) => {
     setImages([image]);
     setCurrentPrompt(generatedPrompt);
-    setHistoryId(generatedHistoryId);
   }, []);
 
   const fileToBase64 = useCallback((file) => {
@@ -430,7 +424,6 @@ export default function App() {
       return;
     }
     const previousImages = images;
-    const previousHistoryId = historyId;
     const requestId = createRequestId();
     setError(null);
     setNotice("");
@@ -448,7 +441,6 @@ export default function App() {
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality: "auto",
             ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
-            parent_id: previousHistoryId,
           }
         : {
             prompt: prompt.trim(),
@@ -480,10 +472,9 @@ export default function App() {
       }
       setImages(data.images || []);
       setCurrentPrompt(data.prompt || prompt);
-      setHistoryId(data.history_id);
       updateCreditBalance(data.credit_balance);
       await refreshAccount();
-      setNotice(redrawFromPrevious ? "局部重绘完成，已写入历史记录" : "生成完成，已写入历史记录");
+      setNotice(redrawFromPrevious ? "局部重绘完成" : "生成完成");
     } catch {
       setError({
         message: "无法连接后端服务",
@@ -499,7 +490,6 @@ export default function App() {
     customSize.height,
     customSize.width,
     fileToBase64,
-    historyId,
     images,
     mode,
     prompt,
@@ -533,7 +523,6 @@ export default function App() {
             ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
             quality: "auto",
             ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
-            parent_id: historyId,
             request_id: requestId,
           }),
         });
@@ -552,7 +541,6 @@ export default function App() {
         }
         setImages(data.images || []);
         setCurrentPrompt(data.prompt || modifyPrompt);
-        setHistoryId(data.history_id);
         updateCreditBalance(data.credit_balance);
         await refreshAccount();
         setNotice("迭代版本已生成");
@@ -567,7 +555,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [billingMode, customSize.height, customSize.width, historyId, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
+    [billingMode, customSize.height, customSize.width, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -584,21 +572,6 @@ export default function App() {
     setError(null);
     setNotice(serverProvider.configured ? "已切换为服务器默认配置" : "个人服务配置已清除");
   }, [serverProvider.configured]);
-
-  const handleLoadFromHistory = useCallback((entry) => {
-    setPrompt(entry.prompt);
-    setActivePreset(null);
-    setSize(entry.size || "");
-    if (entry.size === "custom") {
-      setCustomSize({
-        width: String(entry.custom_width || 1024),
-        height: String(entry.custom_height || 1024),
-      });
-    }
-    if (entry.count !== undefined) setCount(entry.count);
-    setShowHistory(false);
-    setNotice("历史提示词已载入");
-  }, []);
 
   const handleCopyPrompt = useCallback(async () => {
     const text = currentPrompt || prompt;
@@ -663,10 +636,6 @@ export default function App() {
         e.preventDefault();
         handleGenerate();
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "h") {
-        e.preventDefault();
-        setShowHistory((p) => !p);
-      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -679,8 +648,6 @@ export default function App() {
           mode={mode}
           modes={MODE_META}
           onModeChange={setMode}
-          showHistory={showHistory}
-          onToggleHistory={() => setShowHistory((p) => !p)}
           providerConfigured={providerConfigured}
           providerName={providerName}
           onOpenProvider={() => setShowProviderSettings(true)}
@@ -728,14 +695,6 @@ export default function App() {
                     <p className="mt-0.5 text-xs font-medium text-text-secondary">{item.value}</p>
                   </div>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => setShowHistory((p) => !p)}
-                  className="flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-secondary px-3 text-sm text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary"
-                >
-                  <HistoryIcon size={16} />
-                  历史
-                </button>
                 <button
                   type="button"
                   onClick={() => setShowProviderSettings(true)}
@@ -856,7 +815,6 @@ export default function App() {
           </div>
         </main>
 
-        {showHistory && <History onClose={() => setShowHistory(false)} onLoadEntry={handleLoadFromHistory} authHeaders={authHeaders} authenticated={Boolean(session)} />}
       </div>
 
       {previewImage && (

@@ -1,5 +1,5 @@
 import React from "react";
-import { BarChart3, BookOpen, Clock3, CodeXml, CreditCard, ExternalLink, KeyRound, PanelRightOpen, Settings2, Sparkles, UserRound } from "lucide-react";
+import { BarChart3, BookOpen, CodeXml, CreditCard, ExternalLink, KeyRound, Settings2, Sparkles, UserRound } from "lucide-react";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
 const PROMPT_REFERENCE_LINKS = [
@@ -11,8 +11,6 @@ export default function Sidebar({
   mode,
   modes,
   onModeChange,
-  showHistory,
-  onToggleHistory,
   providerConfigured,
   providerName,
   onOpenProvider,
@@ -64,18 +62,6 @@ export default function Sidebar({
             title="图片服务配置"
           >
             <Settings2 size={17} />
-          </button>
-          <button
-            type="button"
-            onClick={onToggleHistory}
-            className={`flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm transition ${
-              showHistory
-                ? "border-accent/40 bg-accent/12 text-accent"
-                : "border-border-subtle bg-bg-tertiary text-text-secondary"
-            }`}
-          >
-            <Clock3 size={16} />
-            历史
           </button>
         </div>
       </div>
@@ -149,19 +135,6 @@ export default function Sidebar({
             {providerName}
           </p>
           <p className="mt-1 text-xs text-text-muted">{providerConfigured ? "已就绪，点击可更换" : "点击配置 Key 与中转站"}</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleHistory}
-          className={`flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 text-sm transition ${
-            showHistory
-              ? "border-accent/45 bg-accent/14 text-accent"
-              : "border-border-subtle bg-bg-tertiary text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
-          }`}
-        >
-          <PanelRightOpen size={16} />
-          历史与复用
         </button>
 
         <a

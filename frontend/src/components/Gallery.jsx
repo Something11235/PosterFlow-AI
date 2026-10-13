@@ -278,7 +278,7 @@ function LoadingState() {
           <div className="min-w-0">
             <p className="text-sm font-semibold text-text-primary">正在生成图片资产</p>
             <p className="mt-1 text-sm leading-6 text-text-muted">
-              图片服务正在处理提示词、画幅和批量任务。结果完成后会自动写入画廊与历史记录。
+              图片服务正在处理提示词、画幅和批量任务。结果完成后会显示在当前画廊中。
             </p>
           </div>
         </div>

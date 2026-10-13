@@ -26,6 +26,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
   const [busy, setBusy] = useState(false);
   const [adjusting, setAdjusting] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [clearingStorage, setClearingStorage] = useState(false);
   const [signupBonusCredits, setSignupBonusCredits] = useState("10");
   const [settingsReason, setSettingsReason] = useState("");
   const [search, setSearch] = useState("");
@@ -128,6 +129,27 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
     }
   };
 
+  const clearHistoryStorage = async () => {
+    if (!window.confirm("确认清空所有用户已保存的历史图片吗？此操作不可恢复，旧图片链接和画布引用也会失效；生成统计和积分流水不会删除。")) return;
+    setClearingStorage(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch("/api/admin/storage/clear-history", {
+        method: "POST",
+        headers: authHeaders,
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.detail || data.error || "历史图片清理失败");
+      setSuccess(`已清空历史图片，共删除 ${data.removed || 0} 个存储对象。生成统计和积分流水未受影响。`);
+    } catch (reasonValue) {
+      setError(reasonValue.message || "历史图片清理失败");
+    } finally {
+      setClearingStorage(false);
+    }
+  };
+
   const metricEntries = useMemo(() => Object.entries(snapshot.metrics).filter(([, value]) => typeof value !== "object"), [snapshot.metrics]);
   if (!open) return null;
 
@@ -144,6 +166,12 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="min-w-0"><h3 className="text-sm font-semibold text-text-primary">新用户注册赠送积分</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">只影响还没有领取注册奖励的用户；已经到账的积分不会自动变化。可设置为 0，范围是 0–10000 的整数。</p></div>
               <form onSubmit={saveSignupBonus} className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto"><label className="sr-only" htmlFor="signup-bonus-credits">注册赠送积分数量</label><input id="signup-bonus-credits" type="number" min="0" max="10000" step="1" value={signupBonusCredits} onChange={(event) => setSignupBonusCredits(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-32" placeholder="10" /><label className="sr-only" htmlFor="signup-bonus-reason">修改原因</label><input id="signup-bonus-reason" value={settingsReason} onChange={(event) => setSettingsReason(event.target.value)} disabled={savingSettings} className="min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary sm:w-52" placeholder="修改说明（可选）" /><button type="submit" disabled={savingSettings} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50">{savingSettings ? <Loader2 size={15} className="animate-spin-soft" /> : <CircleDollarSign size={15} />}{savingSettings ? "保存中…" : "保存设置"}</button></form>
+            </div>
+          </section>
+          <section className="mb-4 rounded-lg border border-error/25 bg-error/5 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div><h3 className="text-sm font-semibold text-text-primary">清理历史图片存储</h3><p className="mt-1 text-xs leading-5 text-text-muted">网站已停止保存新的图片历史。清理后会删除所有用户的生成图片和本地输出文件，旧图片链接将无法恢复；生成统计、积分流水和账户数据会保留。</p></div>
+              <button type="button" onClick={clearHistoryStorage} disabled={clearingStorage} className="inline-flex min-h-11 flex-none items-center justify-center gap-2 rounded-md border border-error/35 bg-error/10 px-4 text-sm font-medium text-error hover:bg-error/15 disabled:cursor-not-allowed disabled:opacity-50">{clearingStorage ? <Loader2 size={15} className="animate-spin-soft" /> : <RefreshCw size={15} />}{clearingStorage ? "清理中…" : "清空历史图片"}</button>
             </div>
           </section>
           <AnnouncementManager authHeaders={authHeaders} />

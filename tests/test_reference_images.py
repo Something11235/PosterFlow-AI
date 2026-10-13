@@ -181,7 +181,6 @@ class CanvasModifyRouteTests(unittest.TestCase):
         with (
             patch.object(server, "resolve_provider_config", return_value=self.provider),
             patch.object(server, "generate_images", return_value=generated) as generate_images,
-            patch.object(server, "save_history_entry") as save_history_entry,
         ):
             response = self.client.post(
                 "/api/modify",
@@ -200,7 +199,6 @@ class CanvasModifyRouteTests(unittest.TestCase):
         self.assertEqual(response.get_json()["images"], generated)
         self.assertEqual(generate_images.call_args.args[2], [encoded])
         self.assertEqual(generate_images.call_args.args[3], 0.72)
-        self.assertEqual(save_history_entry.call_args.args[0]["style"], "画布标注重绘")
 
     def test_modify_accepts_clean_and_annotated_canvas_references(self):
         encoded = base64.b64encode(VALID_PNG).decode("ascii")
@@ -209,7 +207,6 @@ class CanvasModifyRouteTests(unittest.TestCase):
         with (
             patch.object(server, "resolve_provider_config", return_value=self.provider),
             patch.object(server, "generate_images", return_value=generated) as generate_images,
-            patch.object(server, "save_history_entry"),
         ):
             response = self.client.post(
                 "/api/modify",

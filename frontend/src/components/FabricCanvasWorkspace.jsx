@@ -1382,11 +1382,10 @@ export default function FabricCanvasWorkspace({
   };
 
   const placeGeneratedImage = useCallback(
-    async ({ filename, target, targetWorkflow, historyId }) => {
+    async ({ filename, target, targetWorkflow }) => {
       if (!canvas) throw new Error("画布尚未就绪");
       const file = await fetchGeneratedFile(filename);
       const image = await createImageObject(file, {
-        posterflowHistoryId: historyId,
         generated: true,
       });
       const source = target.raw;
@@ -1551,9 +1550,8 @@ export default function FabricCanvasWorkspace({
         filename: result.filename,
         target,
         targetWorkflow: workflow,
-        historyId: data.history_id,
       });
-      onCanvasGenerated?.({ image: result, prompt: data.prompt || prompt, historyId: data.history_id });
+      onCanvasGenerated?.({ image: result, prompt: data.prompt || prompt });
       setStatus({ type: "saved", message: workflow === "frame" ? "图框内容已生成" : "重绘版本已放到原图右侧" });
       onNotice?.(workflow === "frame" ? "AI 图片框已替换为生成结果" : "重绘版本已生成并保留原图");
       await onAccountRefresh?.();

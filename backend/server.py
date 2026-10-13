@@ -3,6 +3,7 @@ import io
 import ipaddress
 import json
 import os
+import shutil
 
 
 def _load_local_env():
@@ -64,7 +65,7 @@ except ModuleNotFoundError:  # Allows `python backend/server.py` in local develo
 APP_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.abspath(os.getenv("DATA_DIR", APP_DIR))
 SAVE_FOLDER = os.path.join(DATA_DIR, "outputs")
-HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
+LEGACY_HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 FRONTEND_BUILD = os.path.join(APP_DIR, "..", "frontend", "dist")
 BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 BLOB_API_URL = os.getenv("VERCEL_BLOB_API_URL", "https://vercel.com/api/blob").rstrip("/")
@@ -110,7 +111,6 @@ ALLOW_INSECURE_PROVIDER_HTTP = os.getenv("ALLOW_INSECURE_PROVIDER_HTTP", "0") ==
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_IMAGES = 8
-HISTORY_RETENTION_DAYS = 30
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_REQUEST_BYTES", str(24 * 1024 * 1024)))
@@ -313,9 +313,12 @@ def _blob_put(pathname, content, content_type):
     return response.json()
 
 
-def _blob_list(prefix):
-    response = _blob_request("GET", params={"prefix": prefix, "limit": 1000})
-    return response.json().get("blobs", [])
+def _blob_list(prefix, cursor=None):
+    params = {"prefix": prefix, "limit": 1000}
+    if cursor:
+        params["cursor"] = cursor
+    response = _blob_request("GET", params=params)
+    return response.json()
 
 
 def _blob_delete(urls_or_pathnames):
@@ -351,10 +354,6 @@ def _blob_download(pathname, stream=False):
 
 def _image_blob_path(filename):
     return f"posterflow/{storage_scope_name()}/images/{filename}"
-
-
-def _history_blob_prefix():
-    return f"posterflow/{storage_scope_name()}/history/"
 
 
 def provider_error_response(error):
@@ -593,24 +592,6 @@ def platform_provider_configured():
     return bool(PLATFORM_API_KEY and PLATFORM_ENDPOINT and PLATFORM_MODEL)
 
 
-def history_entry_for_generation(prompt, style, size, custom_size, quality, strength, images, provider, parent_id=None):
-    return {
-        "id": uuid.uuid4().hex[:12],
-        "prompt": prompt,
-        "style": style,
-        "size": size,
-        **({"custom_width": custom_size["width"], "custom_height": custom_size["height"]} if custom_size else {}),
-        "quality": quality,
-        "strength": strength,
-        "count": len(images),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "images": [image["filename"] for image in images],
-        "parent_id": parent_id,
-        "provider": provider.host,
-        "model": provider.model,
-    }
-
-
 def execute_generation(data, *, requested_count, prompt, generate_callback):
     """Run one image request with isolated keys, idempotency and credit settlement."""
     billing_mode = parse_billing_mode(data)
@@ -658,7 +639,6 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                     filenames = [name for name in reservation.get("images", []) if isinstance(name, str)]
                     return {
                         "images": [{"filename": name, "index": index + 1} for index, name in enumerate(filenames)],
-                        "history_id": str(job_id or ""),
                         "credit_balance": reservation.get("balance"),
                         "idempotent": True,
                         "provider": provider,
@@ -698,7 +678,7 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
             gateway.record_own_key_generation(
                 user.id, request_id, provider.host, provider.model, prompt, requested_count, len(images), duration_ms, filenames
             )
-        return {"images": images, "history_id": None, "credit_balance": credit_balance, "idempotent": False, "provider": provider}
+        return {"images": images, "credit_balance": credit_balance, "idempotent": False, "provider": provider}
     except Exception as error:
         if billing_mode == "platform" and gateway and job_id:
             if created_filenames:
@@ -745,103 +725,6 @@ SIZE_OPTIONS = {
 CUSTOM_SIZE_MIN = 256
 CUSTOM_SIZE_MAX = 4096
 CUSTOM_SIZE_MAX_PIXELS = 16_000_000
-
-
-def load_history():
-    if BLOB_STORAGE_ENABLED:
-        try:
-            blobs = _blob_list(_history_blob_prefix())
-            if not blobs:
-                return []
-            latest = max(blobs, key=lambda item: item.get("uploadedAt", ""))
-            response = _blob_download(latest["pathname"])
-            return response.json()
-        except (ProviderError, requests.RequestException, ValueError, KeyError):
-            app.logger.exception("Failed to read Blob generation history")
-            return []
-    history_file = HISTORY_FILE if storage_scope_name() == "local-user" else os.path.join(DATA_DIR, "history", f"{storage_scope_name()}.json")
-    if not os.path.exists(history_file):
-        return []
-    try:
-        with open(history_file, "r", encoding="utf-8") as file:
-            return json.load(file)
-    except (OSError, json.JSONDecodeError):
-        app.logger.exception("Failed to read generation history")
-        return []
-
-
-def write_history(history):
-    records = history[:500]
-    if BLOB_STORAGE_ENABLED:
-        prefix = _history_blob_prefix()
-        pathname = f"{prefix}{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
-        payload = json.dumps(records, ensure_ascii=False, indent=2).encode("utf-8")
-        saved = _blob_put(pathname, payload, "application/json; charset=utf-8")
-        stale = [item.get("url") for item in _blob_list(prefix) if item.get("url") != saved.get("url")]
-        _blob_delete(stale)
-        return
-    history_file = HISTORY_FILE if storage_scope_name() == "local-user" else os.path.join(DATA_DIR, "history", f"{storage_scope_name()}.json")
-    os.makedirs(os.path.dirname(history_file), exist_ok=True)
-    with open(history_file, "w", encoding="utf-8") as file:
-        json.dump(records, file, ensure_ascii=False, indent=2)
-
-
-def parse_history_timestamp(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip()
-    if normalized.endswith(("Z", "z")):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def partition_expired_history(history, now=None):
-    current_time = now or datetime.now(timezone.utc)
-    if current_time.tzinfo is None:
-        current_time = current_time.replace(tzinfo=timezone.utc)
-    cutoff = current_time.astimezone(timezone.utc) - timedelta(days=HISTORY_RETENTION_DAYS)
-    retained = []
-    expired = []
-    for entry in history:
-        timestamp = parse_history_timestamp(entry.get("timestamp")) if isinstance(entry, dict) else None
-        if timestamp is not None and timestamp < cutoff:
-            expired.append(entry)
-        else:
-            retained.append(entry)
-    return retained, expired
-
-
-def cleanup_expired_history(history=None, persist=True, now=None):
-    original = load_history() if history is None else history
-    retained, expired = partition_expired_history(original, now=now)
-    if not expired:
-        return original
-
-    filenames = []
-    for entry in expired:
-        images = entry.get("images", [])
-        if isinstance(images, list):
-            filenames.extend(filename for filename in images if isinstance(filename, str) and filename)
-    try:
-        remove_stored_images(filenames)
-        if persist:
-            write_history(retained)
-    except (OSError, ProviderError, requests.RequestException):
-        app.logger.exception("Failed to clean expired generation history")
-        return original
-    return retained
-
-
-def save_history_entry(entry):
-    history = cleanup_expired_history(load_history(), persist=False)
-    history.insert(0, entry)
-    write_history(history)
 
 
 def image_to_base64(file_path):
@@ -1016,6 +899,50 @@ def remove_stored_images(filenames):
         path = os.path.join(image_folder, filename)
         if os.path.exists(path):
             os.remove(path)
+
+
+def clear_all_stored_images():
+    """Delete generated image/history objects after the admin confirms a full cleanup."""
+    if BLOB_STORAGE_ENABLED:
+        removed = 0
+        cursor = None
+        while True:
+            page = _blob_list("posterflow/", cursor)
+            blobs = page.get("blobs", [])
+            _blob_delete([item.get("url") or item.get("pathname") for item in blobs])
+            removed += len(blobs)
+            if not page.get("hasMore"):
+                return removed
+            next_cursor = page.get("cursor")
+            if not next_cursor or next_cursor == cursor:
+                raise ProviderError(
+                    "STORAGE_LIST_INCOMPLETE",
+                    "云端图片清理未完成",
+                    503,
+                    "Vercel Blob 返回了无法继续读取的分页游标，为避免误报已停止清理。",
+                    ["稍后重试", "检查 Vercel Blob 状态", "查看 Vercel Function 日志"],
+                )
+            cursor = next_cursor
+
+    removed = 0
+    if os.path.isdir(SAVE_FOLDER):
+        for entry in os.listdir(SAVE_FOLDER):
+            if entry == ".gitkeep":
+                continue
+            path = os.path.join(SAVE_FOLDER, entry)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+                removed += 1
+            elif os.path.isfile(path):
+                os.remove(path)
+                removed += 1
+    history_dir = os.path.join(DATA_DIR, "history")
+    if os.path.isdir(history_dir):
+        shutil.rmtree(history_dir)
+    if os.path.isfile(LEGACY_HISTORY_FILE):
+        os.remove(LEGACY_HISTORY_FILE)
+        removed += 1
+    return removed
 
 
 def decode_provider_image(image_data):
@@ -1395,6 +1322,16 @@ def admin_console():
         return provider_error_response(as_provider_error(error))
 
 
+@app.route("/api/admin/storage/clear-history", methods=["POST"])
+def clear_history_storage():
+    try:
+        require_admin_user()
+        removed = clear_all_stored_images()
+        return jsonify({"success": True, "removed": removed})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
 @app.route("/api/announcements", methods=["GET"])
 def public_announcements():
     try:
@@ -1707,11 +1644,8 @@ def generate():
 
     images = execution["images"]
     if execution["idempotent"]:
-        return jsonify({"success": True, "history_id": execution["history_id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
-    provider = execution["provider"]
-    history_entry = history_entry_for_generation(prompt, style_name, size, custom_size, quality, strength, images, provider)
-    save_history_entry(history_entry)
-    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
+        return jsonify({"success": True, "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
+    return jsonify({"success": True, "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
 
 
 @app.route("/api/modify", methods=["POST"])
@@ -1760,55 +1694,8 @@ def modify():
 
     images = execution["images"]
     if execution["idempotent"]:
-        return jsonify({"success": True, "history_id": execution["history_id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
-    provider = execution["provider"]
-    history_entry = history_entry_for_generation(
-        prompt, "画布标注重绘" if direct_references else "迭代修改", size, custom_size, quality, strength,
-        images, provider, data.get("parent_id"),
-    )
-    save_history_entry(history_entry)
-    return jsonify({"success": True, "history_id": history_entry["id"], "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
-
-
-@app.route("/api/history", methods=["GET"])
-def get_history():
-    try:
-        set_optional_storage_scope()
-    except SupabaseError as error:
-        return provider_error_response(as_provider_error(error))
-    page = max(0, request.args.get("page", 0, type=int))
-    page_size = max(1, min(request.args.get("page_size", 20, type=int), 100))
-    search = request.args.get("search", "").strip().lower()
-    history = cleanup_expired_history()
-    if search:
-        history = [entry for entry in history if search in entry.get("prompt", "").lower()]
-    total = len(history)
-    start = page * page_size
-    end = start + page_size
-    return jsonify(
-        {
-            "history": history[start:end],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "has_more": end < total,
-        }
-    )
-
-
-@app.route("/api/history/<history_id>", methods=["DELETE"])
-def delete_history(history_id):
-    try:
-        set_optional_storage_scope()
-    except SupabaseError as error:
-        return provider_error_response(as_provider_error(error))
-    history = load_history()
-    entry = next((item for item in history if item.get("id") == history_id), None)
-    if not entry:
-        return jsonify({"error": "记录不存在"}), 404
-    remove_stored_images(entry.get("images", []))
-    write_history([item for item in history if item.get("id") != history_id])
-    return jsonify({"success": True})
+        return jsonify({"success": True, "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"], "idempotent": True})
+    return jsonify({"success": True, "images": images, "prompt": prompt, "credit_balance": execution["credit_balance"]})
 
 
 @app.route("/api/images/<filename>", methods=["GET"])
@@ -1904,8 +1791,7 @@ def health():
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
             "platform_provider_configured": platform_provider_configured() and is_supabase_configured(),
             "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
-            "history_scope": "browser" if BLOB_STORAGE_ENABLED else "local-instance",
-            "history_retention_days": HISTORY_RETENTION_DAYS,
+            "history_enabled": False,
             "payment_enabled": bool(payment_channels),
             "payment_channels": payment_channels,
             "timestamp": datetime.now(timezone.utc).isoformat(),
