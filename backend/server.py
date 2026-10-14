@@ -71,6 +71,18 @@ BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 BLOB_API_URL = os.getenv("VERCEL_BLOB_API_URL", "https://vercel.com/api/blob").rstrip("/")
 BLOB_API_VERSION = "12"
 BLOB_STORAGE_ENABLED = bool(BLOB_READ_WRITE_TOKEN)
+IMAGE_STORAGE_BACKEND = os.getenv("IMAGE_STORAGE_BACKEND", "auto").strip().lower()
+if IMAGE_STORAGE_BACKEND not in {"auto", "supabase", "vercel-blob", "local"}:
+    IMAGE_STORAGE_BACKEND = "auto"
+SUPABASE_STORAGE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_STORAGE_SERVICE_KEY = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    or os.getenv("SUPABASE_SECRET_KEY", "").strip()
+)
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "posterflow-images").strip()
+SUPABASE_STORAGE_ENABLED = bool(
+    SUPABASE_STORAGE_URL and SUPABASE_STORAGE_SERVICE_KEY and SUPABASE_STORAGE_BUCKET
+)
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/images"
 OPENROUTER_MODEL = "openai/gpt-image-2.5-flare"
@@ -130,7 +142,9 @@ CORS(
     ],
     supports_credentials=True,
 )
-if not BLOB_STORAGE_ENABLED:
+if IMAGE_STORAGE_BACKEND == "local" or (
+    IMAGE_STORAGE_BACKEND == "auto" and not SUPABASE_STORAGE_ENABLED and not BLOB_STORAGE_ENABLED
+):
     os.makedirs(SAVE_FOLDER, exist_ok=True)
 
 
@@ -346,10 +360,209 @@ def _blob_download(pathname, stream=False):
             timeout=60,
             stream=stream,
         )
+        if response.status_code == 404:
+            raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404)
         response.raise_for_status()
         return response
     except requests.RequestException as exc:
-        raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404) from exc
+        raise ProviderError("STORAGE_UNAVAILABLE", "云端图片存储暂时不可用", 503) from exc
+
+
+def _storage_backend():
+    """Resolve the active image backend without exposing any server credential."""
+    if IMAGE_STORAGE_BACKEND == "local":
+        return "local"
+    if IMAGE_STORAGE_BACKEND == "vercel-blob":
+        if not BLOB_STORAGE_ENABLED:
+            raise ProviderError("STORAGE_CONFIG_INVALID", "Vercel Blob 配置无效", 503)
+        return "vercel-blob"
+    if IMAGE_STORAGE_BACKEND == "supabase":
+        if not SUPABASE_STORAGE_ENABLED:
+            raise ProviderError(
+                "STORAGE_CONFIG_INVALID",
+                "Supabase Storage 配置无效",
+                503,
+                "请在服务端配置 SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY 和 SUPABASE_STORAGE_BUCKET。",
+                ["创建私有 Storage bucket", "补齐 Vercel 环境变量", "重新部署服务"],
+            )
+        return "supabase"
+    if SUPABASE_STORAGE_ENABLED:
+        return "supabase"
+    if BLOB_STORAGE_ENABLED:
+        return "vercel-blob"
+    return "local"
+
+
+def storage_backend_name():
+    """Return a stable health-check label, including an explicit misconfiguration."""
+    if IMAGE_STORAGE_BACKEND == "supabase":
+        return "supabase-storage"
+    if IMAGE_STORAGE_BACKEND == "vercel-blob":
+        return "vercel-blob"
+    if IMAGE_STORAGE_BACKEND == "local":
+        return "local-filesystem"
+    if SUPABASE_STORAGE_ENABLED:
+        return "supabase-storage"
+    if BLOB_STORAGE_ENABLED:
+        return "vercel-blob"
+    return "local-filesystem"
+
+
+def _supabase_storage_headers(**extra):
+    if not SUPABASE_STORAGE_ENABLED:
+        raise ProviderError("STORAGE_CONFIG_INVALID", "Supabase Storage 配置无效", 503)
+    headers = {
+        "apikey": SUPABASE_STORAGE_SERVICE_KEY,
+        "Accept": "application/json",
+    }
+    if not SUPABASE_STORAGE_SERVICE_KEY.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {SUPABASE_STORAGE_SERVICE_KEY}"
+    return {**headers, **extra}
+
+
+def _supabase_storage_url(path=""):
+    return f"{SUPABASE_STORAGE_URL}/storage/v1{path}"
+
+
+def _supabase_storage_request(method, path, **kwargs):
+    allow_missing = kwargs.pop("_allow_missing", False)
+    try:
+        response = requests.request(
+            method,
+            _supabase_storage_url(path),
+            headers={**_supabase_storage_headers(), **kwargs.pop("headers", {})},
+            timeout=60,
+            **kwargs,
+        )
+    except requests.RequestException as exc:
+        raise ProviderError(
+            "STORAGE_UNAVAILABLE",
+            "云端图片存储暂时不可用",
+            503,
+            "Supabase Storage 没有完成本次读写操作。",
+            ["稍后重试", "检查 Supabase Storage 配置", "查看 Vercel Function 日志"],
+        ) from exc
+    if response.status_code == 404:
+        if allow_missing:
+            raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404)
+        raise ProviderError("STORAGE_UNAVAILABLE", "Supabase Storage 配置或对象路径无效", 503)
+    if not 200 <= response.status_code < 300:
+        raise ProviderError(
+            "STORAGE_UNAVAILABLE",
+            "云端图片存储暂时不可用",
+            503,
+            f"Supabase Storage 返回 HTTP {response.status_code}。",
+            ["检查 bucket 是否为私有且已创建", "检查服务端 Storage 密钥", "稍后重试"],
+        )
+    return response
+
+
+def _supabase_object_path(pathname):
+    return quote(SUPABASE_STORAGE_BUCKET, safe="") + "/" + quote(pathname, safe="/")
+
+
+def _supabase_put(pathname, content, content_type):
+    response = _supabase_storage_request(
+        "POST",
+        f"/object/{_supabase_object_path(pathname)}",
+        headers={"Content-Type": content_type, "x-upsert": "true"},
+        data=content,
+    )
+    try:
+        return response.json()
+    except ValueError:
+        return {"path": pathname}
+
+
+def _supabase_download(pathname, stream=False):
+    return _supabase_storage_request(
+        "GET",
+        f"/object/authenticated/{_supabase_object_path(pathname)}",
+        params={"cache": "0"},
+        headers={"Accept": "application/octet-stream"},
+        _allow_missing=True,
+        stream=stream,
+    )
+
+
+def _supabase_list(prefix, offset=0):
+    response = _supabase_storage_request(
+        "POST",
+        f"/object/list/{quote(SUPABASE_STORAGE_BUCKET, safe='')}",
+        headers={"Content-Type": "application/json"},
+        json={
+            "prefix": prefix,
+            "limit": 1000,
+            "offset": offset,
+            "sortBy": {"column": "name", "order": "asc"},
+        },
+    )
+    payload = response.json()
+    return payload if isinstance(payload, list) else []
+
+
+def _storage_join_path(prefix, name):
+    if name.startswith(prefix):
+        return name
+    return f"{prefix.rstrip('/')}/{name}" if prefix else name
+
+
+def _supabase_file_paths(prefix="posterflow/"):
+    """Walk v1 Storage list results, which expose one folder level at a time."""
+    pending = [prefix]
+    while pending:
+        current_prefix = pending.pop()
+        offset = 0
+        previous_page = None
+        while True:
+            objects = _supabase_list(current_prefix, offset)
+            for item in objects:
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                path = _storage_join_path(current_prefix, name)
+                if item.get("id") is None:
+                    pending.append(path.rstrip("/") + "/")
+                else:
+                    yield path
+            if len(objects) < 1000:
+                break
+            if objects == previous_page:
+                raise ProviderError(
+                    "STORAGE_LIST_INCOMPLETE",
+                    "Supabase Storage 图片清理未完成",
+                    503,
+                    "Supabase Storage 返回了重复分页，为避免误报已停止清理。",
+                    ["稍后重试", "检查 Supabase Storage 状态", "查看 Vercel Function 日志"],
+                )
+            previous_page = objects
+            offset += len(objects)
+
+
+def _supabase_delete(pathnames):
+    items = [item for item in pathnames if item]
+    for start in range(0, len(items), 1000):
+        _supabase_storage_request(
+            "DELETE",
+            f"/object/{quote(SUPABASE_STORAGE_BUCKET, safe='')}",
+            headers={"Content-Type": "application/json"},
+            json={"prefixes": items[start : start + 1000]},
+        )
+
+
+def _storage_download(pathname, stream=False):
+    backend = _storage_backend()
+    if backend == "supabase":
+        try:
+            return _supabase_download(pathname, stream=stream)
+        except ProviderError as error:
+            # During migration, only a confirmed Supabase 404 may use the old Blob copy.
+            if error.code == "STORAGE_FILE_MISSING" and BLOB_STORAGE_ENABLED:
+                return _blob_download(pathname, stream=stream)
+            raise
+    if backend == "vercel-blob":
+        return _blob_download(pathname, stream=stream)
+    raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404)
 
 
 def _image_blob_path(filename):
@@ -736,14 +949,15 @@ def image_to_base64(file_path):
 
 
 def stored_image_to_base64(filename):
-    if BLOB_STORAGE_ENABLED:
+    backend = _storage_backend()
+    if backend in {"supabase", "vercel-blob"}:
         try:
-            response = _blob_download(_image_blob_path(filename))
+            response = _storage_download(_image_blob_path(filename))
             if len(response.content) > MAX_REMOTE_IMAGE_BYTES:
                 return None
             return base64.b64encode(response.content).decode("utf-8")
-        except requests.RequestException:
-            app.logger.exception("Failed to read Blob reference image")
+        except ProviderError:
+            app.logger.exception("Failed to read remote reference image")
             return None
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
     path = os.path.join(image_folder, filename)
@@ -880,7 +1094,11 @@ def provider_edit_endpoint(provider):
 
 
 def store_generated_image(filename, image_bytes):
-    if BLOB_STORAGE_ENABLED:
+    backend = _storage_backend()
+    if backend == "supabase":
+        _supabase_put(_image_blob_path(filename), image_bytes, "image/png")
+        return
+    if backend == "vercel-blob":
         _blob_put(_image_blob_path(filename), image_bytes, "image/png")
         return
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
@@ -891,8 +1109,15 @@ def store_generated_image(filename, image_bytes):
 
 def remove_stored_images(filenames):
     safe_names = [os.path.basename(str(filename)) for filename in filenames]
-    if BLOB_STORAGE_ENABLED:
-        _blob_delete([_image_blob_path(filename) for filename in safe_names])
+    backend = _storage_backend()
+    if backend in {"supabase", "vercel-blob"}:
+        paths = [_image_blob_path(filename) for filename in safe_names]
+        if backend == "supabase":
+            _supabase_delete(paths)
+            if BLOB_STORAGE_ENABLED:
+                _blob_delete(paths)
+        else:
+            _blob_delete(paths)
         return
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
     for filename in safe_names:
@@ -903,8 +1128,36 @@ def remove_stored_images(filenames):
 
 def clear_all_stored_images():
     """Delete generated image/history objects after the admin confirms a full cleanup."""
-    if BLOB_STORAGE_ENABLED:
-        removed = 0
+    backend = _storage_backend()
+    removed = 0
+    if backend == "supabase":
+        paths = list(_supabase_file_paths())
+        if paths:
+            _supabase_delete(paths)
+            removed += len(paths)
+        # Remove the old copy too while the migration is in progress.
+        if BLOB_STORAGE_ENABLED:
+            cursor = None
+            while True:
+                page = _blob_list("posterflow/", cursor)
+                blobs = page.get("blobs", [])
+                _blob_delete([item.get("url") or item.get("pathname") for item in blobs])
+                removed += len(blobs)
+                if not page.get("hasMore"):
+                    break
+                next_cursor = page.get("cursor")
+                if not next_cursor or next_cursor == cursor:
+                    raise ProviderError(
+                        "STORAGE_LIST_INCOMPLETE",
+                        "云端图片清理未完成",
+                        503,
+                        "Vercel Blob 返回了无法继续读取的分页游标，为避免误报已停止清理。",
+                        ["稍后重试", "检查 Vercel Blob 状态", "查看 Vercel Function 日志"],
+                    )
+                cursor = next_cursor
+        return removed
+
+    if backend == "vercel-blob":
         cursor = None
         while True:
             page = _blob_list("posterflow/", cursor)
@@ -923,8 +1176,8 @@ def clear_all_stored_images():
                     ["稍后重试", "检查 Vercel Blob 状态", "查看 Vercel Function 日志"],
                 )
             cursor = next_cursor
+        return removed
 
-    removed = 0
     if os.path.isdir(SAVE_FOLDER):
         for entry in os.listdir(SAVE_FOLDER):
             if entry == ".gitkeep":
@@ -1705,16 +1958,17 @@ def serve_image(filename):
     except SupabaseError as error:
         return provider_error_response(as_provider_error(error))
     safe_name = os.path.basename(filename)
-    if BLOB_STORAGE_ENABLED:
-        try:
-            upstream = _blob_download(_image_blob_path(safe_name), stream=True)
-        except ProviderError as error:
-            return provider_error_response(error)
-        return Response(
-            stream_with_context(upstream.iter_content(64 * 1024)),
-            mimetype=upstream.headers.get("content-type", "image/png"),
-            headers={"Cache-Control": "private, max-age=300"},
-        )
+    try:
+        backend = _storage_backend()
+        if backend in {"supabase", "vercel-blob"}:
+            upstream = _storage_download(_image_blob_path(safe_name), stream=True)
+            return Response(
+                stream_with_context(upstream.iter_content(64 * 1024)),
+                mimetype=upstream.headers.get("content-type", "image/png"),
+                headers={"Cache-Control": "private, max-age=300"},
+            )
+    except ProviderError as error:
+        return provider_error_response(error)
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
     path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
@@ -1729,16 +1983,17 @@ def download_image(filename):
     except SupabaseError as error:
         return provider_error_response(as_provider_error(error))
     safe_name = os.path.basename(filename)
-    if BLOB_STORAGE_ENABLED:
-        try:
-            upstream = _blob_download(_image_blob_path(safe_name), stream=True)
-        except ProviderError as error:
-            return provider_error_response(error)
-        return Response(
-            stream_with_context(upstream.iter_content(64 * 1024)),
-            mimetype=upstream.headers.get("content-type", "image/png"),
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
-        )
+    try:
+        backend = _storage_backend()
+        if backend in {"supabase", "vercel-blob"}:
+            upstream = _storage_download(_image_blob_path(safe_name), stream=True)
+            return Response(
+                stream_with_context(upstream.iter_content(64 * 1024)),
+                mimetype=upstream.headers.get("content-type", "image/png"),
+                headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+            )
+    except ProviderError as error:
+        return provider_error_response(error)
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
     path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
@@ -1759,15 +2014,19 @@ def download_batch():
     if not isinstance(filenames, list) or not filenames:
         return jsonify({"error": "请选择要下载的图片"}), 400
     buffer = io.BytesIO()
+    try:
+        backend = _storage_backend()
+    except ProviderError as error:
+        return provider_error_response(error)
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for filename in filenames[:100]:
             safe_name = os.path.basename(str(filename))
-            if BLOB_STORAGE_ENABLED:
+            if backend in {"supabase", "vercel-blob"}:
                 try:
-                    response = _blob_download(_image_blob_path(safe_name))
+                    response = _storage_download(_image_blob_path(safe_name))
                     archive.writestr(safe_name, response.content)
                 except ProviderError:
-                    app.logger.exception("Failed to add Blob image to archive")
+                    app.logger.exception("Failed to add remote image to archive")
             else:
                 image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
                 path = os.path.join(image_folder, safe_name)
@@ -1790,7 +2049,7 @@ def health():
             "status": "ok",
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
             "platform_provider_configured": platform_provider_configured() and is_supabase_configured(),
-            "storage_backend": "vercel-blob" if BLOB_STORAGE_ENABLED else "local-filesystem",
+            "storage_backend": storage_backend_name(),
             "history_enabled": False,
             "payment_enabled": bool(payment_channels),
             "payment_channels": payment_channels,
