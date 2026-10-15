@@ -13,9 +13,9 @@ SUPABASE_STORAGE_BUCKET=posterflow-images
 ```
 
 3. 确认服务端已有 `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY`（新式 Secret Key 也可使用 `SUPABASE_SECRET_KEY`）。这些变量不得添加 `VITE_` 前缀。
-4. 保留 `BLOB_READ_WRITE_TOKEN` 作为旧图片读取回退，直到数据复制并验收完成。
+4. 如果还有旧 Vercel Blob 图片，先按下面的迁移脚本复制到 Supabase Storage；应用运行时不再从 Vercel Blob 回退读取。
 
-`IMAGE_STORAGE_BACKEND=auto` 会依次选择 Supabase Storage、Vercel Blob、本地文件系统。线上正式切换建议显式设置为 `supabase`，避免环境变量缺失时悄悄写入其他存储。
+`IMAGE_STORAGE_BACKEND=auto` 会优先选择 Supabase Storage，配置不完整时使用本地文件系统。线上建议显式设置为 `supabase`，配置错误时让健康检查直接暴露问题。
 
 ## 复制旧图片
 
@@ -31,8 +31,8 @@ python scripts/migrate_vercel_blob_to_supabase.py --dry-run
 python scripts/migrate_vercel_blob_to_supabase.py --execute
 ```
 
-只有在确认复制完成且不再需要回滚后，才考虑显式使用 `--execute --delete-source`。建议先不要删除源对象，并在 Vercel 部署后检查 `/api/health` 的 `storage_backend` 为 `supabase-storage`，再验证生成、预览、单张下载、批量下载、局部重绘和管理员清理。
+只有在确认复制完成且不再需要回滚后，才考虑显式使用 `--execute --delete-source`。部署后检查 `/api/health` 的 `storage_backend` 为 `supabase-storage`，再验证生成、预览、单张下载、批量下载、局部重绘和管理员清理。
 
 ## 切换完成后
 
-确认 Supabase 对象完整且线上功能正常后，可从 Vercel 删除 `BLOB_READ_WRITE_TOKEN`。这会关闭旧 Blob 回退；不要在验证前移除该变量。Bucket 中的对象不会通过公开 URL 暴露，API 鉴权和现有用户存储命名空间保持不变。
+确认 Supabase 对象完整且线上功能正常后，可从 Vercel 删除 `BLOB_READ_WRITE_TOKEN`。迁移完成后，仍留在旧 Blob 中而未复制的图片将无法通过应用访问；Bucket 中的对象不会通过公开 URL 暴露，API 鉴权和现有用户存储命名空间保持不变。

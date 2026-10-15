@@ -2,8 +2,9 @@ export const PROVIDER_STORAGE_KEY = "posterflow.provider.session.v1";
 export const MAX_REFERENCE_IMAGES = 8;
 
 export const IMAGE_MODEL_OPTIONS = [
-  { value: "gpt-image-2.5-flare", label: "gpt-image-2.5-flare" },
-  { value: "gpt-image-2.5-sunburst", label: "gpt-image-2.5-sunburst" },
+  { value: "gpt-image-2.5-flare", label: "gpt-image-2.5-flare", creditCost: 1 },
+  { value: "gpt-image-2.5-sunburst", label: "gpt-image-2.5-sunburst", creditCost: 2 },
+  { value: "gpt-image-2", label: "gpt-image-2", creditCost: 1 },
 ];
 
 export const DEFAULT_PLATFORM_MODEL = IMAGE_MODEL_OPTIONS[0].value;
@@ -44,9 +45,9 @@ export const PROVIDER_PRESETS = {
 };
 
 export const EMPTY_PROVIDER_CONFIG = {
-  preset: "jojo",
-  endpoint: PROVIDER_PRESETS.jojo.endpoint,
-  model: PROVIDER_PRESETS.jojo.model,
+  preset: "custom",
+  endpoint: "",
+  model: "",
   authType: "bearer",
   apiKey: "",
 };
@@ -100,9 +101,6 @@ export function buildProviderHeaders(config) {
 
 export function getProviderDisplayName(config, serverHost = "") {
   if (isProviderConfigComplete(config)) {
-    if (config.preset === "jojo") return "JOJO Code";
-    if (config.preset === "openrouter") return "OpenRouter";
-    if (config.preset === "micu") return "米醋 API";
     try {
       return new URL(config.endpoint).hostname;
     } catch {

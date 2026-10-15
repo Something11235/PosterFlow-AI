@@ -21,19 +21,20 @@ class StorageBackendTests(unittest.TestCase):
         supabase_put.assert_called_once_with("posterflow/user-1/images/test.png", b"png", "image/png")
         blob_put.assert_not_called()
 
-    def test_supabase_404_falls_back_to_legacy_blob(self):
+    def test_supabase_404_does_not_fall_back_to_legacy_blob(self):
         missing = server.ProviderError("STORAGE_FILE_MISSING", "missing", 404)
         with (
             patch.object(server, "IMAGE_STORAGE_BACKEND", "supabase"),
             patch.object(server, "SUPABASE_STORAGE_ENABLED", True),
             patch.object(server, "BLOB_STORAGE_ENABLED", True),
             patch.object(server, "_supabase_download", side_effect=missing),
-            patch.object(server, "_blob_download", return_value=self.response) as blob_download,
+            patch.object(server, "_blob_download") as blob_download,
         ):
-            result = server._storage_download("posterflow/user-1/images/test.png")
+            with self.assertRaises(server.ProviderError) as context:
+                server._storage_download("posterflow/user-1/images/test.png")
 
-        self.assertIs(result, self.response)
-        blob_download.assert_called_once_with("posterflow/user-1/images/test.png", stream=False)
+        self.assertEqual(context.exception.code, "STORAGE_FILE_MISSING")
+        blob_download.assert_not_called()
 
     def test_supabase_network_error_does_not_fall_back_to_blob(self):
         unavailable = server.ProviderError("STORAGE_UNAVAILABLE", "unavailable", 503)
@@ -50,7 +51,7 @@ class StorageBackendTests(unittest.TestCase):
         self.assertEqual(context.exception.code, "STORAGE_UNAVAILABLE")
         blob_download.assert_not_called()
 
-    def test_supabase_delete_also_removes_legacy_copy_during_migration(self):
+    def test_supabase_delete_only_removes_supabase_object(self):
         with (
             patch.object(server, "IMAGE_STORAGE_BACKEND", "supabase"),
             patch.object(server, "SUPABASE_STORAGE_ENABLED", True),
@@ -63,7 +64,7 @@ class StorageBackendTests(unittest.TestCase):
 
         paths = ["posterflow/user-1/images/test.png"]
         supabase_delete.assert_called_once_with(paths)
-        blob_delete.assert_called_once_with(paths)
+        blob_delete.assert_not_called()
 
     def test_local_backend_still_writes_to_filesystem(self):
         import tempfile

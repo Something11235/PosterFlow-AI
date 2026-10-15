@@ -60,6 +60,48 @@ class GenerationCreditSettlementTests(unittest.TestCase):
         self.gateway.settle_generation.assert_called_once_with("job-2", 1, unittest.mock.ANY, ["image.png"])
         self.assertEqual(result["images"], [{"filename": "image.png"}])
 
+    def test_gpt_image_2_is_an_allowed_platform_model(self):
+        provider = server.ProviderConfig(
+            api_key="test-key", endpoint="https://provider.example/v1/images/generations",
+            model="gpt-image-2", auth_type="bearer", source="platform"
+        )
+        self.gateway.reserve_credits.return_value = {"ok": True, "existing": False, "job_id": "job-3", "status": "running"}
+        self.gateway.settle_generation.return_value = {"ok": True, "balance": 8}
+        with (
+            patch.object(server, "platform_provider_configured", return_value=True),
+            patch.object(server, "require_authenticated_user", return_value=Mock(id="user-1")),
+            patch.object(server, "SupabaseGateway", return_value=self.gateway),
+            patch.object(server, "resolve_provider_config", return_value=provider),
+            patch.object(server, "enforce_rate_limit"),
+        ):
+            result = server.execute_generation(
+                {"billing_mode": "platform", "platform_model": "gpt-image-2", "request_id": "44444444-4444-4444-8444-444444444444"},
+                requested_count=1,
+                prompt="test",
+                generate_callback=lambda _provider: [{"filename": "image.png"}],
+            )
+
+        self.assertEqual(result["images"], [{"filename": "image.png"}])
+        self.gateway.reserve_credits.assert_called_once_with(
+            "user-1", "44444444-4444-4444-8444-444444444444", 1,
+            "provider.example", "gpt-image-2", "test",
+            server.USER_DAILY_IMAGE_LIMIT or None, server.PLATFORM_DAILY_IMAGE_LIMIT or None,
+        )
+
+    def test_custom_provider_auth_header_is_forwarded(self):
+        provider = server.ProviderConfig(
+            api_key="test-key",
+            endpoint="https://provider.example/v1/images/generations",
+            model="test-model",
+            auth_type="api-key",
+            source="browser",
+        )
+
+        self.assertEqual(
+            server.provider_headers(provider),
+            {"Content-Type": "application/json", "api-key": "test-key"},
+        )
+
     def test_empty_success_response_is_refunded_and_not_returned_as_success(self):
         with (
             patch.object(server, "platform_provider_configured", return_value=True),

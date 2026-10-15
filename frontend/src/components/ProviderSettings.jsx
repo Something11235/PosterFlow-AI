@@ -14,18 +14,28 @@ import {
   buildProviderHeaders,
   EMPTY_PROVIDER_CONFIG,
   isProviderConfigComplete,
-  PROVIDER_PRESETS,
   IMAGE_MODEL_OPTIONS,
   DEFAULT_PLATFORM_MODEL,
 } from "../lib/provider";
 import { CLIENT_HEADERS } from "../lib/client";
 
 const API_BASE = "/api";
+const CUSTOM_SELECT_VALUE = "__custom__";
+const AUTH_TYPE_OPTIONS = [
+  { value: "bearer", label: "Bearer Token" },
+  { value: "x-api-key", label: "x-api-key" },
+];
+
+function getSelectChoice(value, options) {
+  if (!value) return "";
+  return options.some((option) => option.value === value) ? value : CUSTOM_SELECT_VALUE;
+}
 
 function validateDraft(draft) {
   if (!draft.apiKey.trim()) return "请输入 API Key";
   if (!draft.endpoint.trim()) return "请输入图片生成接口地址";
   if (!draft.model.trim()) return "请输入模型标识";
+  if (!draft.authType.trim()) return "请输入鉴权方式";
   try {
     const endpoint = new URL(draft.endpoint.trim());
     if (endpoint.protocol !== "https:") return "公开部署仅支持 HTTPS 中转站";
@@ -56,6 +66,8 @@ export default function ProviderSettings({
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [modelChoice, setModelChoice] = useState("");
+  const [authChoice, setAuthChoice] = useState("bearer");
   const keyInputRef = useRef(null);
 
   useEffect(() => {
@@ -64,6 +76,8 @@ export default function ProviderSettings({
     setError("");
     setChecked(false);
     setShowKey(false);
+    setModelChoice(getSelectChoice(config.model, IMAGE_MODEL_OPTIONS));
+    setAuthChoice(getSelectChoice(config.authType || "bearer", AUTH_TYPE_OPTIONS));
     const timer = window.setTimeout(() => billingMode === "own_key" && keyInputRef.current?.focus(), 80);
     return () => window.clearTimeout(timer);
   }, [billingMode, config, open]);
@@ -85,14 +99,14 @@ export default function ProviderSettings({
     setChecked(false);
   };
 
-  const selectPreset = (presetId) => {
-    const preset = PROVIDER_PRESETS[presetId];
-    updateDraft({
-      preset: presetId,
-      endpoint: preset.endpoint,
-      model: preset.model,
-      authType: preset.authType,
-    });
+  const handleModelChoiceChange = (value) => {
+    setModelChoice(value);
+    updateDraft({ model: value === CUSTOM_SELECT_VALUE ? "" : value });
+  };
+
+  const handleAuthChoiceChange = (value) => {
+    setAuthChoice(value);
+    updateDraft({ authType: value === CUSTOM_SELECT_VALUE ? "" : value });
   };
 
   const checkConfiguration = async () => {
@@ -131,7 +145,7 @@ export default function ProviderSettings({
       preset: draft.preset,
       endpoint: draft.endpoint.trim(),
       model: draft.model.trim(),
-      authType: draft.authType,
+      authType: draft.authType.trim(),
       apiKey: draft.apiKey.trim(),
     });
   };
@@ -156,7 +170,7 @@ export default function ProviderSettings({
               <h2 id="provider-settings-title" className="text-base font-semibold text-text-primary">
                 图片服务配置
               </h2>
-              <p className="mt-1 text-sm leading-6 text-text-muted">选择预设服务，或连接其他 OpenAI 兼容图片中转站。</p>
+              <p className="mt-1 text-sm leading-6 text-text-muted">填写你使用的 OpenAI 兼容图片中转站参数。</p>
             </div>
           </div>
           <button
@@ -190,7 +204,7 @@ export default function ProviderSettings({
               <div><p className="text-sm font-semibold text-text-primary">平台积分生图</p><p className="mt-1 text-sm leading-6 text-text-muted">选择模型后按对应积分计费，失败或超时自动退回。</p></div>
               <label htmlFor="platform-image-model" className="text-sm font-medium text-text-secondary">模型</label>
               <select id="platform-image-model" value={platformModel} onChange={(event) => onPlatformModelChange?.(event.target.value)} className="min-h-11 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-sm text-text-primary focus:border-accent/65">
-                {IMAGE_MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value}{option.value.endsWith("flare") ? "（1张图1积分）" : "（1张图2积分）"}</option>)}
+                {IMAGE_MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value}（1张图{option.creditCost}积分）</option>)}
               </select>
               <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台图片服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">{platformModel}</p></div></div>
               {!session && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">请先登录。完成邮箱验证后会自动获得注册赠送积分。</p>}
@@ -198,34 +212,6 @@ export default function ProviderSettings({
             </div>
           ) : (
           <>
-
-          <fieldset>
-            <legend className="mb-2 text-sm font-medium text-text-secondary">服务类型</legend>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {Object.values(PROVIDER_PRESETS).map((preset) => {
-                const active = draft.preset === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => selectPreset(preset.id)}
-                    className={`min-h-[76px] rounded-lg border p-3 text-left transition ${
-                      active
-                        ? "border-accent/50 bg-accent/12"
-                        : "border-border-subtle bg-bg-tertiary/70 hover:border-border-default hover:bg-bg-elevated"
-                    }`}
-                    aria-pressed={active}
-                  >
-                    <span className={`block text-sm font-semibold ${active ? "text-accent" : "text-text-primary"}`}>
-                      {preset.label}
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 text-text-muted">{preset.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-
           <div className="mt-5 space-y-4">
             <div>
               <label htmlFor="provider-key" className="text-sm font-medium text-text-secondary">
@@ -277,14 +263,24 @@ export default function ProviderSettings({
                 </label>
                 <select
                   id="provider-model"
-                  value={draft.model}
-                  onChange={(event) => updateDraft({ model: event.target.value })}
+                  value={modelChoice}
+                  onChange={(event) => handleModelChoiceChange(event.target.value)}
                   className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary focus:border-accent/65"
                 >
-                  {!draft.model && <option value="" disabled>请选择模型</option>}
-                  {draft.model && !IMAGE_MODEL_OPTIONS.some((option) => option.value === draft.model) && <option value={draft.model}>{draft.model}</option>}
+                  <option value="" disabled>请选择模型</option>
                   {IMAGE_MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  <option value={CUSTOM_SELECT_VALUE}>自定义模型</option>
                 </select>
+                {modelChoice === CUSTOM_SELECT_VALUE && (
+                  <input
+                    id="provider-model-custom"
+                    type="text"
+                    value={draft.model}
+                    onChange={(event) => updateDraft({ model: event.target.value })}
+                    placeholder="填写中转站支持的模型标识"
+                    className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary placeholder:text-text-muted focus:border-accent/65"
+                  />
+                )}
               </div>
               <div>
                 <label htmlFor="provider-auth" className="text-sm font-medium text-text-secondary">
@@ -292,13 +288,23 @@ export default function ProviderSettings({
                 </label>
                 <select
                   id="provider-auth"
-                  value={draft.authType}
-                  onChange={(event) => updateDraft({ authType: event.target.value })}
+                  value={authChoice}
+                  onChange={(event) => handleAuthChoiceChange(event.target.value)}
                   className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary focus:border-accent/65"
                 >
-                  <option value="bearer">Bearer Token</option>
-                  <option value="x-api-key">x-api-key</option>
+                  {AUTH_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  <option value={CUSTOM_SELECT_VALUE}>自定义请求头</option>
                 </select>
+                {authChoice === CUSTOM_SELECT_VALUE && (
+                  <input
+                    id="provider-auth-custom"
+                    type="text"
+                    value={draft.authType}
+                    onChange={(event) => updateDraft({ authType: event.target.value })}
+                    placeholder="填写自定义请求头名称"
+                    className="mt-2 min-h-12 w-full rounded-lg border border-border-default bg-bg-primary px-3 text-base text-text-primary placeholder:text-text-muted focus:border-accent/65"
+                  />
+                )}
               </div>
             </div>
           </div>
