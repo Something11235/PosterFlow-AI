@@ -526,6 +526,40 @@ def _supabase_download(pathname, stream=False):
     )
 
 
+def _supabase_create_signed_url(pathname, expires_in=3600):
+    """Create a short-lived browser URL without proxying image bytes through Flask."""
+    response = _supabase_storage_request(
+        "POST",
+        f"/object/sign/{_supabase_object_path(pathname)}",
+        headers={"Content-Type": "application/json"},
+        json={"expiresIn": max(60, min(int(expires_in), 86400))},
+    )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            "STORAGE_SIGNING_FAILED",
+            "图片临时地址生成失败",
+            503,
+            "Supabase Storage 没有返回有效的签名地址。",
+            ["稍后重试", "检查 Supabase Storage 配置"],
+        ) from exc
+    raw_url = str(payload.get("signedURL") or payload.get("signed_url") or payload.get("signedUrl") or "").strip()
+    if not raw_url:
+        raise ProviderError(
+            "STORAGE_SIGNING_FAILED",
+            "图片临时地址生成失败",
+            503,
+            "Supabase Storage 没有返回可用的签名地址。",
+            ["稍后重试", "检查 Supabase Storage 配置"],
+        )
+    if raw_url.startswith("http"):
+        return raw_url
+    if raw_url.startswith("/storage/v1/"):
+        return f"{SUPABASE_STORAGE_URL}{raw_url}"
+    return _supabase_storage_url(raw_url)
+
+
 def _supabase_list(prefix, offset=0):
     response = _supabase_storage_request(
         "POST",
@@ -2156,6 +2190,27 @@ def serve_image(filename):
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
     return send_file(path, mimetype="image/png")
+
+
+@app.route("/api/images/<filename>/url", methods=["GET"])
+def image_url(filename):
+    """Authorize access, then let the browser read the private object directly."""
+    try:
+        set_optional_storage_scope()
+        safe_name = os.path.basename(filename)
+        if _storage_backend() == "supabase":
+            return jsonify(
+                {
+                    "success": True,
+                    "url": _supabase_create_signed_url(_image_blob_path(safe_name)),
+                    "expires_in": 3600,
+                }
+            )
+        # Keep local development and legacy local data usable without a storage request.
+        query = f"?client_id={quote(current_client_id())}" if current_storage_scope() == current_client_id() else ""
+        return jsonify({"success": True, "url": f"/api/images/{quote(safe_name)}{query}", "direct": False})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
 
 
 @app.route("/api/download/<filename>", methods=["GET"])

@@ -8,6 +8,46 @@ class StorageBackendTests(unittest.TestCase):
     def setUp(self):
         self.response = Mock(status_code=200, content=b"image-bytes", headers={"content-type": "image/png"})
 
+    def test_supabase_signed_url_is_normalized_to_public_storage_url(self):
+        self.response.json.return_value = {
+            "signedURL": "/storage/v1/object/sign/posterflow-images/posterflow/user-1/images/test.png?token=test-token"
+        }
+        with (
+            patch.object(server, "SUPABASE_STORAGE_URL", "https://project.supabase.co"),
+            patch.object(server, "SUPABASE_STORAGE_BUCKET", "posterflow-images"),
+            patch.object(server, "SUPABASE_STORAGE_ENABLED", True),
+            patch.object(server, "_supabase_storage_request", return_value=self.response) as storage_request,
+        ):
+            signed_url = server._supabase_create_signed_url("posterflow/user-1/images/test.png")
+
+        self.assertEqual(
+            signed_url,
+            "https://project.supabase.co/storage/v1/object/sign/posterflow-images/posterflow/user-1/images/test.png?token=test-token",
+        )
+        storage_request.assert_called_once_with(
+            "POST",
+            "/object/sign/posterflow-images/posterflow/user-1/images/test.png",
+            headers={"Content-Type": "application/json"},
+            json={"expiresIn": 3600},
+        )
+
+    def test_image_url_route_returns_signed_url_without_proxying_image_bytes(self):
+        with (
+            patch.object(server, "set_optional_storage_scope"),
+            patch.object(server, "_storage_backend", return_value="supabase"),
+            patch.object(server, "_image_blob_path", return_value="posterflow/user-1/images/test.png"),
+            patch.object(server, "_supabase_create_signed_url", return_value="https://project.supabase.co/signed/test"),
+            patch.object(server, "_storage_download") as storage_download,
+        ):
+            response = server.app.test_client().get(
+                "/api/images/test.png/url",
+                headers={"X-Client-Id": "client-12345678"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["url"], "https://project.supabase.co/signed/test")
+        storage_download.assert_not_called()
+
     def test_supabase_upload_is_used_when_selected(self):
         with (
             patch.object(server, "IMAGE_STORAGE_BACKEND", "supabase"),

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { apiAssetUrl } from "../lib/client";
+import { apiAssetUrl, fetchImageUrl } from "../lib/client";
 
 export default function Gallery({
   images,
@@ -39,8 +39,23 @@ export default function Gallery({
 }) {
   const [modifyTarget, setModifyTarget] = useState(null);
   const [modifyText, setModifyText] = useState("");
+  const [assetUrls, setAssetUrls] = useState({});
 
   const hasImages = images.length > 0;
+
+  useEffect(() => {
+    let alive = true;
+    const currentFilenames = new Set(images.map((image) => image.filename));
+    setAssetUrls((previous) => Object.fromEntries(Object.entries(previous).filter(([filename]) => currentFilenames.has(filename))));
+    Promise.all(
+      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated })]),
+    ).then((entries) => {
+      if (alive) setAssetUrls((previous) => ({ ...previous, ...Object.fromEntries(entries) }));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [authenticated, images]);
 
   return (
     <div className="surface flex h-full min-h-0 flex-col rounded-lg">
@@ -129,7 +144,7 @@ export default function Gallery({
                 >
                   <div className="relative aspect-[16/10] overflow-hidden bg-bg-primary">
                     <img
-                      src={apiAssetUrl("images", img.filename, { authenticated })}
+                      src={assetUrls[img.filename] || undefined}
                       alt={`AI生成图片 ${index + 1}`}
                       className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
                       loading="lazy"
@@ -159,7 +174,7 @@ export default function Gallery({
                         <Expand size={16} />
                       </button>
                       <a
-                        href={apiAssetUrl("download", img.filename, { authenticated })}
+                        href={assetUrls[img.filename] || apiAssetUrl("download", img.filename, { authenticated })}
                         download
                         className="flex min-h-10 min-w-10 items-center justify-center rounded-md bg-bg-secondary/90 text-text-secondary transition hover:text-text-primary"
                         title="下载"

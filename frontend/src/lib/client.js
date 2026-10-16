@@ -24,3 +24,21 @@ export function apiAssetUrl(kind, filename, { authenticated = false } = {}) {
   const safeFilename = encodeURIComponent(filename);
   return authenticated ? `/api/${kind}/${safeFilename}` : `/api/${kind}/${safeFilename}?client_id=${encodeURIComponent(CLIENT_ID)}`;
 }
+
+export async function fetchImageUrl(filename, { authenticated = false } = {}) {
+  const safeFilename = encodeURIComponent(filename);
+  const query = authenticated ? "" : `?client_id=${encodeURIComponent(CLIENT_ID)}`;
+  const fallback = apiAssetUrl("images", filename, { authenticated });
+  try {
+    const response = await fetch(`/api/images/${safeFilename}/url${query}`, {
+      headers: CLIENT_HEADERS,
+      credentials: "include",
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.url) throw new Error(payload?.error || "图片临时地址生成失败");
+    return payload.url;
+  } catch {
+    // Keep local development and a temporarily unavailable signing endpoint usable.
+    return fallback;
+  }
+}
