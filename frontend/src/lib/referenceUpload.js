@@ -65,13 +65,13 @@ export async function uploadReferenceBlobs(entries, { headers = {}, onProgress }
         throw responseError(urlPayload, "参考图上传地址获取失败");
       }
 
+      const form = new FormData();
+      form.append("cacheControl", "3600");
+      form.append("", entry.blob, entry.filename);
       const uploadResponse = await fetch(urlPayload.signed_url, {
-        method: "POST",
-        headers: {
-          "Content-Type": entry.contentType,
-          "Cache-Control": "max-age=3600",
-        },
-        body: entry.blob,
+        method: "PUT",
+        headers: { "x-upsert": "false" },
+        body: form,
       });
       if (!uploadResponse.ok) {
         const uploadPayload = await readJson(uploadResponse);
