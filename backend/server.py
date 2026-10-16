@@ -34,7 +34,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import requests
 from flask import Flask, Response, g, jsonify, request, send_file, send_from_directory, stream_with_context
@@ -127,6 +127,13 @@ ALLOW_INSECURE_PROVIDER_HTTP = os.getenv("ALLOW_INSECURE_PROVIDER_HTTP", "0") ==
 MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_IMAGES = 8
+REFERENCE_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
+REFERENCE_UPLOAD_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_REQUEST_BYTES", str(24 * 1024 * 1024)))
@@ -475,6 +482,37 @@ def _supabase_put(pathname, content, content_type):
         return {"path": pathname}
 
 
+def _supabase_create_signed_upload(pathname):
+    response = _supabase_storage_request(
+        "POST",
+        f"/object/upload/sign/{_supabase_object_path(pathname)}",
+        headers={"Content-Type": "application/json", "x-upsert": "false"},
+        json={},
+    )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProviderError(
+            "REFERENCE_UPLOAD_UNAVAILABLE",
+            "参考图上传服务暂时不可用",
+            503,
+            "Supabase Storage 没有返回有效的临时上传地址。",
+            ["稍后重试", "检查 Supabase Storage 配置"],
+        ) from exc
+    raw_url = str(payload.get("url") or "").strip()
+    upload_url = raw_url if raw_url.startswith("http") else _supabase_storage_url(raw_url)
+    token = parse_qs(urlsplit(upload_url).query).get("token", [""])[0]
+    if not upload_url or not token:
+        raise ProviderError(
+            "REFERENCE_UPLOAD_UNAVAILABLE",
+            "参考图上传服务暂时不可用",
+            503,
+            "Supabase Storage 没有返回可用的临时上传地址。",
+            ["稍后重试", "检查 Supabase Storage 配置"],
+        )
+    return {"bucket": SUPABASE_STORAGE_BUCKET, "path": pathname, "signed_url": upload_url, "token": token}
+
+
 def _supabase_download(pathname, stream=False):
     return _supabase_storage_request(
         "GET",
@@ -560,6 +598,113 @@ def _storage_download(pathname, stream=False):
 
 def _image_blob_path(filename):
     return f"posterflow/{storage_scope_name()}/images/{filename}"
+
+
+def _reference_storage_prefix():
+    return f"posterflow/{storage_scope_name()}/references/"
+
+
+def validate_reference_storage_paths(values):
+    if values in (None, ""):
+        return []
+    if not isinstance(values, list) or not 1 <= len(values) <= MAX_REFERENCE_IMAGES:
+        raise ProviderError(
+            "REFERENCE_STORAGE_INVALID",
+            "参考图数量无效",
+            400,
+            "参考图列表必须包含 1 至 8 个临时文件。",
+            ["重新选择参考图", "减少参考图数量", "再次生成"],
+        )
+    prefix = _reference_storage_prefix()
+    paths = []
+    for value in values:
+        path = str(value or "").strip().lstrip("/")
+        suffix = path[len(prefix) :] if path.startswith(prefix) else ""
+        if (
+            not suffix
+            or "/" in suffix
+            or "\\" in suffix
+            or ".." in suffix
+            or not re.fullmatch(r"[0-9a-f]{32}\.(?:png|jpg|webp|gif)", suffix, flags=re.IGNORECASE)
+        ):
+            raise ProviderError(
+                "REFERENCE_STORAGE_INVALID",
+                "参考图临时文件无效",
+                400,
+                "参考图临时文件已失效，请重新选择图片。",
+                ["重新选择参考图", "再次生成"],
+            )
+        paths.append(path)
+    return paths
+
+
+def validate_reference_storage_path(value):
+    if value in (None, ""):
+        return None
+    return validate_reference_storage_paths([value])[0]
+
+
+def _reference_image_mime(image_bytes):
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(image_bytes) >= 12 and image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def validate_reference_image_bytes(image_bytes):
+    if not isinstance(image_bytes, (bytes, bytearray)):
+        raise ProviderError(
+            "REFERENCE_IMAGE_INVALID",
+            "参考图格式无效",
+            400,
+            "参考图内容无法读取。",
+            ["重新选择参考图", "再次生成"],
+        )
+    if len(image_bytes) > MAX_REFERENCE_IMAGE_BYTES:
+        raise ProviderError(
+            "REFERENCE_IMAGE_TOO_LARGE",
+            "参考图超过大小限制",
+            413,
+            "参考图解码后不能超过 16 MB。",
+            ["压缩参考图", "降低图片大小", "再次生成"],
+        )
+    if not _reference_image_mime(bytes(image_bytes)):
+        raise ProviderError(
+            "REFERENCE_IMAGE_UNSUPPORTED",
+            "不支持此参考图格式",
+            400,
+            "参考图仅支持 PNG、JPG、WebP 或 GIF。",
+            ["转换图片格式", "重新导入图片", "再次生成"],
+        )
+    return bytes(image_bytes)
+
+
+def stored_reference_to_base64(pathname):
+    if _storage_backend() != "supabase":
+        raise ProviderError(
+            "REFERENCE_STORAGE_UNAVAILABLE",
+            "参考图上传服务未配置",
+            503,
+            "线上参考图需要启用 Supabase Storage。",
+            ["检查 Supabase Storage 配置", "稍后重试"],
+        )
+    response = _storage_download(pathname)
+    content = validate_reference_image_bytes(response.content)
+    return base64.b64encode(content).decode("ascii")
+
+
+def cleanup_reference_storage_paths(paths):
+    if not paths or _storage_backend() != "supabase":
+        return
+    try:
+        _supabase_delete(paths)
+    except ProviderError:
+        app.logger.exception("Failed to clean up temporary reference images")
 
 
 def provider_error_response(error):
@@ -1006,30 +1151,7 @@ def validate_reference_image_b64(value):
             ["重新导入图片", "降低图片大小", "再次生成"],
         ) from exc
 
-    if len(image_bytes) > MAX_REFERENCE_IMAGE_BYTES:
-        raise ProviderError(
-            "REFERENCE_IMAGE_TOO_LARGE",
-            "参考图超过大小限制",
-            413,
-            "参考图解码后不能超过 16 MB。",
-            ["压缩参考图", "降低画布导出分辨率", "再次生成"],
-        )
-
-    supported = (
-        image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-        or image_bytes.startswith(b"\xff\xd8\xff")
-        or image_bytes.startswith((b"GIF87a", b"GIF89a"))
-        or (len(image_bytes) >= 12 and image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP")
-    )
-    if not supported:
-        raise ProviderError(
-            "REFERENCE_IMAGE_UNSUPPORTED",
-            "不支持此参考图格式",
-            400,
-            "参考图仅支持 PNG、JPG、WebP 或 GIF。",
-            ["转换图片格式", "重新导入图片", "再次生成"],
-        )
-    return base64.b64encode(image_bytes).decode("ascii")
+    return base64.b64encode(validate_reference_image_bytes(image_bytes)).decode("ascii")
 
 
 def validate_reference_images_b64(values):
@@ -1808,9 +1930,82 @@ def validate_provider():
     )
 
 
+@app.route("/api/reference-upload-url", methods=["POST"])
+def reference_upload_url():
+    data = request.get_json(silent=True) or {}
+    try:
+        billing_mode = parse_billing_mode(data)
+        if billing_mode == "platform":
+            require_authenticated_user()
+        else:
+            set_optional_storage_scope()
+        if _storage_backend() != "supabase":
+            raise ProviderError(
+                "REFERENCE_STORAGE_UNAVAILABLE",
+                "参考图上传服务未配置",
+                503,
+                "线上参考图需要启用 Supabase Storage。",
+                ["检查 Supabase Storage 配置", "稍后重试"],
+            )
+        content_type = str(data.get("content_type") or "").strip().lower()
+        extension = REFERENCE_UPLOAD_EXTENSIONS.get(content_type)
+        if not extension:
+            raise ProviderError(
+                "REFERENCE_UPLOAD_INVALID",
+                "参考图格式不支持",
+                400,
+                "参考图仅支持 PNG、JPG、WebP 或 GIF。",
+                ["选择 PNG、JPG、WebP 或 GIF", "重新上传"],
+            )
+        try:
+            announced_size = int(data.get("size") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ProviderError("REFERENCE_UPLOAD_INVALID", "参考图大小无效", 400, "请重新选择图片。") from exc
+        if announced_size < 0 or announced_size > REFERENCE_UPLOAD_MAX_BYTES:
+            raise ProviderError(
+                "REFERENCE_IMAGE_TOO_LARGE",
+                "参考图超过大小限制",
+                413,
+                "参考图不能超过 16 MB。",
+                ["压缩参考图", "选择较小图片", "重新上传"],
+            )
+        pathname = f"{_reference_storage_prefix()}{uuid.uuid4().hex}.{extension}"
+        signed = _supabase_create_signed_upload(pathname)
+        return jsonify({"success": True, **signed, "max_bytes": REFERENCE_UPLOAD_MAX_BYTES})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/reference-cleanup", methods=["POST"])
+def reference_cleanup():
+    data = request.get_json(silent=True) or {}
+    try:
+        billing_mode = parse_billing_mode(data)
+        if billing_mode == "platform":
+            require_authenticated_user()
+        else:
+            set_optional_storage_scope()
+        raw_paths = data.get("paths", data.get("reference_storage_paths"))
+        paths = [] if raw_paths in (None, "") else validate_reference_storage_paths(raw_paths)
+        if paths:
+            if _storage_backend() != "supabase":
+                raise ProviderError(
+                    "REFERENCE_STORAGE_UNAVAILABLE",
+                    "参考图上传服务未配置",
+                    503,
+                    "线上参考图需要启用 Supabase Storage。",
+                    ["检查 Supabase Storage 配置", "稍后重试"],
+                )
+            _supabase_delete(paths)
+        return jsonify({"success": True, "deleted": len(paths)})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     data = request.get_json(silent=True) or {}
+    reference_storage_paths = []
     try:
         if parse_billing_mode(data) == "platform":
             require_authenticated_user()
@@ -1820,10 +2015,14 @@ def generate():
         style_name = data.get("style_name", "")
         if style_name in STYLE_TEMPLATES and STYLE_TEMPLATES[style_name] not in prompt:
             prompt = f"{prompt}。{STYLE_TEMPLATES[style_name]}"
-        reference_b64 = validate_reference_images_b64(data.get("reference_images_b64"))
-        if not reference_b64:
-            single_reference = validate_reference_image_b64(data.get("reference_b64"))
-            reference_b64 = [single_reference] if single_reference else []
+        reference_storage_paths = validate_reference_storage_paths(data.get("reference_storage_paths"))
+        if reference_storage_paths:
+            reference_b64 = [stored_reference_to_base64(path) for path in reference_storage_paths]
+        else:
+            reference_b64 = validate_reference_images_b64(data.get("reference_images_b64"))
+            if not reference_b64:
+                single_reference = validate_reference_image_b64(data.get("reference_b64"))
+                reference_b64 = [single_reference] if single_reference else []
         reference_b64 = reference_b64 or None
         execution = execute_generation(
             data,
@@ -1847,6 +2046,8 @@ def generate():
                 ["确认输出目录权限", "检查后端日志", "重新发起生成"],
             )
         )
+    finally:
+        cleanup_reference_storage_paths(reference_storage_paths)
 
     images = execution["images"]
     if execution["idempotent"]:
@@ -1857,16 +2058,24 @@ def generate():
 @app.route("/api/modify", methods=["POST"])
 def modify():
     data = request.get_json(silent=True) or {}
+    temporary_storage_paths = []
     try:
         if parse_billing_mode(data) == "platform":
             require_authenticated_user()
         else:
             set_optional_storage_scope()
         prompt, size, custom_size, quality, _count, strength = parse_generation_request(data)
-        direct_references = validate_reference_images_b64(data.get("reference_images_b64"))
-        if not direct_references:
-            single_reference = validate_reference_image_b64(data.get("reference_b64"))
-            direct_references = [single_reference] if single_reference else []
+        reference_storage_paths = validate_reference_storage_paths(data.get("reference_storage_paths"))
+        mask_storage_path = validate_reference_storage_path(data.get("mask_storage_path"))
+        temporary_storage_paths = reference_storage_paths + ([mask_storage_path] if mask_storage_path else [])
+        if reference_storage_paths:
+            direct_references = [stored_reference_to_base64(path) for path in reference_storage_paths]
+        else:
+            direct_references = validate_reference_images_b64(data.get("reference_images_b64"))
+            if not direct_references:
+                single_reference = validate_reference_image_b64(data.get("reference_b64"))
+                direct_references = [single_reference] if single_reference else []
+        mask_b64 = stored_reference_to_base64(mask_storage_path) if mask_storage_path else validate_reference_image_b64(data.get("mask_b64"))
         previous_image = os.path.basename(str(data.get("previous_image", ""))) if not direct_references else ""
         ref_b64 = direct_references or (stored_image_to_base64(previous_image) if previous_image else None)
         if not ref_b64:
@@ -1881,7 +2090,9 @@ def modify():
             data,
             requested_count=1,
             prompt=prompt,
-            generate_callback=lambda provider: generate_images(provider, prompt, ref_b64, strength, size, quality, 1, custom_size),
+            generate_callback=lambda provider: generate_images(
+                provider, prompt, ref_b64, strength, size, quality, 1, custom_size, mask_b64=mask_b64
+            ),
         )
     except (ProviderError, SupabaseError) as error:
         error = as_provider_error(error)
@@ -1897,6 +2108,8 @@ def modify():
                 ["确认原图仍存在", "检查后端日志", "重新发起迭代"],
             )
         )
+    finally:
+        cleanup_reference_storage_paths(temporary_storage_paths)
 
     images = execution["images"]
     if execution["idempotent"]:

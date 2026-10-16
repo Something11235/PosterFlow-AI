@@ -33,6 +33,7 @@ import {
 } from "./lib/provider";
 import { CLIENT_HEADERS } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
+import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
 const CanvasWorkspace = lazy(() => import("./components/FabricCanvasWorkspace"));
@@ -313,6 +314,10 @@ export default function App() {
     }),
     [authHeaders, billingMode, providerConfig],
   );
+  const referenceUploadHeaders = useMemo(
+    () => ({ ...authHeaders, "X-Billing-Mode": billingMode }),
+    [authHeaders, billingMode],
+  );
 
   const updateCreditBalance = useCallback((balance) => {
     if (balance === undefined || balance === null) return;
@@ -383,15 +388,6 @@ export default function App() {
     setCurrentPrompt(generatedPrompt);
   }, []);
 
-  const fileToBase64 = useCallback((file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(",")[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }, []);
-
   const handleReferenceChange = useCallback((files) => {
     const nextFiles = Array.isArray(files) ? files.slice(0, MAX_REFERENCE_IMAGES) : files ? [files] : [];
     setReferenceFiles(nextFiles);
@@ -430,6 +426,7 @@ export default function App() {
     setIsGenerating(true);
     setImages([]);
     setSelectedImages(new Set());
+    let referenceStoragePaths = [];
 
     try {
       const redrawFromPrevious = mode === "iterative" && previousImages.length > 0;
@@ -453,7 +450,9 @@ export default function App() {
       body.request_id = requestId;
 
       if (referenceFiles.length && !redrawFromPrevious) {
-        body.reference_images_b64 = await Promise.all(referenceFiles.map(fileToBase64));
+        setNotice("正在上传参考图");
+        referenceStoragePaths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders });
+        body.reference_storage_paths = referenceStoragePaths;
       }
 
       const res = await fetch(`${API_BASE}/${redrawFromPrevious ? "modify" : "generate"}`, {
@@ -475,26 +474,29 @@ export default function App() {
       updateCreditBalance(data.credit_balance);
       await refreshAccount();
       setNotice(redrawFromPrevious ? "局部重绘完成" : "生成完成");
-    } catch {
+    } catch (reason) {
       setError({
-        message: "无法连接后端服务",
-        code: "BACKEND_OFFLINE",
-        detail: "浏览器没有收到后端 API 响应，请确认 Flask 服务正在运行。",
-        recovery: ["启动 python backend/server.py", "检查 5000 端口", "重新发起生成"],
+        message: reason?.code?.startsWith("REFERENCE_") ? "参考图上传失败" : "无法连接后端服务",
+        code: reason?.code || "BACKEND_OFFLINE",
+        detail: reason?.detail || reason?.message || "浏览器没有收到后端 API 响应，请稍后重试。",
+        recovery: reason?.code?.startsWith("REFERENCE_")
+          ? ["重新选择参考图", "检查图片大小和格式", "再次生成"]
+          : ["检查网络连接", "稍后重试", "重新发起生成"],
       });
     } finally {
+      await cleanupReferencePaths(referenceStoragePaths, referenceUploadHeaders);
       setIsGenerating(false);
     }
   }, [
     count,
     customSize.height,
     customSize.width,
-    fileToBase64,
     images,
     mode,
     prompt,
     providerConfigured,
     providerHeaders,
+    referenceUploadHeaders,
     referenceFiles,
     size,
     platformModel,
@@ -736,6 +738,7 @@ export default function App() {
                   providerConfigured={providerConfigured}
                   providerName={providerName}
                   providerHeaders={providerHeaders}
+                  referenceUploadHeaders={referenceUploadHeaders}
                   billingMode={billingMode}
                   platformModel={platformModel}
                   authenticated={Boolean(session)}

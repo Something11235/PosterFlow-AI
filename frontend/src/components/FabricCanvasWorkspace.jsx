@@ -14,6 +14,7 @@ import {
   Triangle,
 } from "fabric";
 import { MAX_REFERENCE_IMAGES } from "../lib/provider";
+import { cleanupReferencePaths, uploadReferenceBlobs } from "../lib/referenceUpload";
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -49,7 +50,6 @@ const IMPORT_DISPLAY_MAX_HEIGHT = 1000;
 const REFERENCE_EXPORT_MAX_EDGE = 1600;
 const CLEAN_REFERENCE_MAX_BYTES = 1.35 * 1024 * 1024;
 const ANNOTATED_REFERENCE_MAX_BYTES = 1.05 * 1024 * 1024;
-const CANVAS_AI_REQUEST_MAX_BYTES = 4 * 1024 * 1024;
 const ANNOTATION_COLOR = "#ef4444";
 const ANNOTATION_COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ffffff"];
 const ANNOTATION_TYPES = new Set(["annotation-arrow", "annotation-text", "annotation-shape", "annotation-brush"]);
@@ -422,15 +422,6 @@ function normalizedImageSize(width, height) {
   return { width: targetWidth, height: Math.min(2048, Math.max(256, Math.round((targetWidth / ratio) / 8) * 8)) };
 }
 
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function compressReferenceBlob(blob, maxBytes) {
   if (blob.size <= maxBytes) return blob;
   const bitmap = await createImageBitmap(blob);
@@ -711,6 +702,7 @@ export default function FabricCanvasWorkspace({
   providerConfigured,
   providerName,
   providerHeaders,
+  referenceUploadHeaders,
   billingMode = "own_key",
   platformModel,
   authenticated = false,
@@ -1459,6 +1451,7 @@ export default function FabricCanvasWorkspace({
     setAiBusy(true);
     setAiError(null);
     setStatus({ type: "loading", message: workflow === "frame" ? "正在生成图框内容" : "正在生成重绘版本" });
+    let temporaryReferencePaths = [];
     try {
       let endpoint = "/api/generate";
       let body;
@@ -1487,11 +1480,31 @@ export default function FabricCanvasWorkspace({
         const annotationReference = currentSelection.annotationCount && cleanReferences.length < MAX_REFERENCE_IMAGES
           ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE, ANNOTATED_REFERENCE_MAX_BYTES)
           : null;
-        const referenceImages = await Promise.all(cleanReferences.map(blobToBase64));
         const maskBlob = currentSelection.annotationCount
           ? await exportEditMask(canvas, target, currentSelection.objects.filter((object) => object !== target && ANNOTATION_TYPES.has(object.posterflowType)))
           : null;
-        if (annotationReference) referenceImages.push(await blobToBase64(annotationReference));
+        const referenceEntries = cleanReferences.map((blob, index) => ({
+          blob,
+          name: `canvas-reference-${index + 1}.png`,
+        }));
+        if (annotationReference) referenceEntries.push({ blob: annotationReference, name: "canvas-annotation.png" });
+        setStatus({ type: "loading", message: "正在上传画布参考图" });
+        temporaryReferencePaths = await uploadReferenceBlobs(referenceEntries, {
+          headers: referenceUploadHeaders,
+          onProgress: (current, total) => setStatus({
+            type: "loading",
+            message: `正在上传画布参考图（${current}/${total}）`,
+          }),
+        });
+        let maskStoragePath = null;
+        if (maskBlob) {
+          const maskPaths = await uploadReferenceBlobs(
+            [{ blob: maskBlob, name: "canvas-mask.png" }],
+            { headers: referenceUploadHeaders },
+          );
+          maskStoragePath = maskPaths[0] || null;
+          if (maskStoragePath) temporaryReferencePaths.push(maskStoragePath);
+        }
         const annotationList = currentSelection.annotationTexts
           .map((textValue, index) => String(index + 1) + ". " + textValue)
           .join("\n");
@@ -1510,8 +1523,8 @@ export default function FabricCanvasWorkspace({
         ].join("\n");
         body = {
           prompt: editPrompt,
-          reference_images_b64: referenceImages,
-          ...(maskBlob ? { mask_b64: await blobToBase64(maskBlob) } : {}),
+          reference_storage_paths: temporaryReferencePaths.slice(0, MAX_REFERENCE_IMAGES),
+          ...(maskStoragePath ? { mask_storage_path: maskStoragePath } : {}),
           size: "custom",
           custom_width: size.width,
           custom_height: size.height,
@@ -1523,15 +1536,6 @@ export default function FabricCanvasWorkspace({
       const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       body.request_id = requestId;
       const requestBody = JSON.stringify(body);
-      const requestBytes = new Blob([requestBody]).size;
-      if (requestBytes > CANVAS_AI_REQUEST_MAX_BYTES) {
-        setAiError({
-          message: "重绘参考图超过在线传输限制",
-          detail: "本次请求编码后为 " + formatBytes(requestBytes) + "，请重新检查参考图后再生成。",
-        });
-        setStatus({ type: "error", message: "重绘请求体积过大" });
-        return;
-      }
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -1557,10 +1561,14 @@ export default function FabricCanvasWorkspace({
       await onAccountRefresh?.();
     } catch (error) {
       console.error("Fabric canvas AI generation failed", error);
-      setAiError({ message: "画布 AI 生成失败", detail: error.message || "浏览器未能完成服务请求或结果插入。" });
-      setStatus({ type: "error", message: "画布 AI 生成失败" });
+      setAiError({
+        message: error?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败",
+        detail: error.detail || error.message || "浏览器未能完成服务请求或结果插入。",
+      });
+      setStatus({ type: "error", message: error?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败" });
       if (billingMode === "platform") await onAccountRefresh?.();
     } finally {
+      await cleanupReferencePaths(temporaryReferencePaths, referenceUploadHeaders);
       setAiBusy(false);
     }
   };

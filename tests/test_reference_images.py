@@ -51,6 +51,23 @@ class ReferenceImageValidationTests(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "REFERENCE_IMAGES_INVALID")
 
+    def test_reference_storage_paths_are_scoped_to_current_client(self):
+        with patch.object(server, "storage_scope_name", return_value="client-12345678"):
+            valid = "posterflow/client-12345678/references/0123456789abcdef0123456789abcdef.png"
+            self.assertEqual(server.validate_reference_storage_paths([valid]), [valid])
+            with self.assertRaises(server.ProviderError) as context:
+                server.validate_reference_storage_paths([
+                    "posterflow/other-client/references/0123456789abcdef0123456789abcdef.png"
+                ])
+        self.assertEqual(context.exception.code, "REFERENCE_STORAGE_INVALID")
+
+    def test_reference_storage_path_rejects_nested_or_invalid_names(self):
+        with patch.object(server, "storage_scope_name", return_value="client-12345678"):
+            with self.assertRaises(server.ProviderError):
+                server.validate_reference_storage_path(
+                    "posterflow/client-12345678/references/../secret.png"
+                )
+
 
 class ProviderEndpointTests(unittest.TestCase):
     def test_openrouter_defaults_use_generations_and_qualified_model(self):
@@ -221,6 +238,61 @@ class CanvasModifyRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(generate_images.call_args.args[2], [encoded, encoded])
+
+    def test_generate_reads_storage_references_and_cleans_them(self):
+        encoded = base64.b64encode(VALID_PNG).decode("ascii")
+        path = "posterflow/client-12345678/references/0123456789abcdef0123456789abcdef.png"
+        generated = [{"filename": "storage-result.png", "index": 1}]
+
+        with (
+            patch.object(server, "_storage_backend", return_value="supabase"),
+            patch.object(server, "resolve_provider_config", return_value=self.provider),
+            patch.object(server, "stored_reference_to_base64", return_value=encoded) as read_reference,
+            patch.object(server, "cleanup_reference_storage_paths") as cleanup,
+            patch.object(server, "generate_images", return_value=generated) as generate_images,
+        ):
+            response = self.client.post(
+                "/api/generate",
+                headers={"X-Client-Id": "client-12345678", "X-Billing-Mode": "own_key"},
+                json={
+                    "prompt": "使用临时参考图生成",
+                    "reference_storage_paths": [path],
+                    "request_id": "12345678-1234-5678-1234-567812345678",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(generate_images.call_args.args[2], [encoded])
+        read_reference.assert_called_once_with(path)
+        cleanup.assert_called_once_with([path])
+
+    def test_modify_passes_storage_mask_to_image_provider_and_cleans_both(self):
+        encoded = base64.b64encode(VALID_PNG).decode("ascii")
+        reference_path = "posterflow/client-12345678/references/0123456789abcdef0123456789abcdef.png"
+        mask_path = "posterflow/client-12345678/references/abcdefabcdefabcdefabcdefabcdefab.png"
+        generated = [{"filename": "storage-edit.png", "index": 1}]
+
+        with (
+            patch.object(server, "_storage_backend", return_value="supabase"),
+            patch.object(server, "resolve_provider_config", return_value=self.provider),
+            patch.object(server, "stored_reference_to_base64", return_value=encoded),
+            patch.object(server, "cleanup_reference_storage_paths") as cleanup,
+            patch.object(server, "generate_images", return_value=generated) as generate_images,
+        ):
+            response = self.client.post(
+                "/api/modify",
+                headers={"X-Client-Id": "client-12345678", "X-Billing-Mode": "own_key"},
+                json={
+                    "prompt": "按蒙版修改",
+                    "reference_storage_paths": [reference_path],
+                    "mask_storage_path": mask_path,
+                    "request_id": "12345678-1234-5678-1234-567812345679",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(generate_images.call_args.kwargs["mask_b64"], encoded)
+        cleanup.assert_called_once_with([reference_path, mask_path])
 
 
 if __name__ == "__main__":
