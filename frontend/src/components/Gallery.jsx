@@ -36,6 +36,7 @@ export default function Gallery({
   presetName,
   presetCategory,
   authenticated = false,
+  authHeaders,
 }) {
   const [modifyTarget, setModifyTarget] = useState(null);
   const [modifyText, setModifyText] = useState("");
@@ -48,14 +49,14 @@ export default function Gallery({
     const currentFilenames = new Set(images.map((image) => image.filename));
     setAssetUrls((previous) => Object.fromEntries(Object.entries(previous).filter(([filename]) => currentFilenames.has(filename))));
     Promise.all(
-      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated })]),
+      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders })]),
     ).then((entries) => {
       if (alive) setAssetUrls((previous) => ({ ...previous, ...Object.fromEntries(entries) }));
     });
     return () => {
       alive = false;
     };
-  }, [authenticated, images]);
+  }, [authHeaders, authenticated, images]);
 
   return (
     <div className="surface flex h-full min-h-0 flex-col rounded-lg">

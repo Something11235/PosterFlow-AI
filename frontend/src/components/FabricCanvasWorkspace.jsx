@@ -38,7 +38,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { fetchImageUrl } from "../lib/client";
+import { apiAssetUrl, fetchImageUrl, recoverGeneration } from "../lib/client";
 import CanvasAiPanel from "./CanvasAiPanel";
 
 const CANVAS_DB_NAME = "posterflow-ai-fabric-canvas";
@@ -701,6 +701,7 @@ export default function FabricCanvasWorkspace({
   onNotice,
   providerConfigured,
   providerName,
+  authHeaders,
   providerHeaders,
   referenceUploadHeaders,
   billingMode = "own_key",
@@ -1267,12 +1268,21 @@ export default function FabricCanvasWorkspace({
   );
 
   const fetchGeneratedFile = useCallback(async (filename) => {
-    const imageUrl = await fetchImageUrl(filename, { authenticated });
-    const response = await fetch(imageUrl, { credentials: "include" });
-    if (!response.ok) throw new Error("图片请求失败：" + response.status);
-    const blob = await response.blob();
-    return new File([blob], imageFilename(filename, blob.type), { type: blob.type || "image/png" });
-  }, [authenticated]);
+    const signedUrl = await fetchImageUrl(filename, { authenticated, headers: authHeaders });
+    const fallbackUrl = apiAssetUrl("images", filename, { authenticated });
+    let lastError = null;
+    for (const imageUrl of [...new Set([signedUrl, fallbackUrl])]) {
+      try {
+        const response = await fetch(imageUrl, { credentials: "include" });
+        if (!response.ok) throw new Error("图片请求失败：" + response.status);
+        const blob = await response.blob();
+        return new File([blob], imageFilename(filename, blob.type), { type: blob.type || "image/png" });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("图片请求失败");
+  }, [authHeaders, authenticated]);
 
   const addGeneratedImages = useCallback(
     async (filenames) => {
@@ -1453,6 +1463,8 @@ export default function FabricCanvasWorkspace({
     setAiError(null);
     setStatus({ type: "loading", message: workflow === "frame" ? "正在生成图框内容" : "正在生成重绘版本" });
     let temporaryReferencePaths = [];
+    let requestId = "";
+    let generationRequestStarted = false;
     try {
       let endpoint = "/api/generate";
       let body;
@@ -1534,9 +1546,10 @@ export default function FabricCanvasWorkspace({
         };
       }
 
-      const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       body.request_id = requestId;
       const requestBody = JSON.stringify(body);
+      generationRequestStarted = true;
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -1561,12 +1574,33 @@ export default function FabricCanvasWorkspace({
       onNotice?.(workflow === "frame" ? "AI 图片框已替换为生成结果" : "重绘版本已生成并保留原图");
       await onAccountRefresh?.();
     } catch (error) {
-      console.error("Fabric canvas AI generation failed", error);
+      let finalError = error;
+      if (generationRequestStarted && billingMode === "platform") {
+        const recovered = await recoverGeneration(requestId, { headers: authHeaders });
+        const recoveredImage = recovered?.images?.[0];
+        if (recoveredImage?.filename) {
+          try {
+            await placeGeneratedImage({
+              filename: recoveredImage.filename,
+              target,
+              targetWorkflow: workflow,
+            });
+            onCanvasGenerated?.({ image: recoveredImage, prompt: recovered.prompt || prompt });
+            setStatus({ type: "saved", message: workflow === "frame" ? "图框内容已恢复" : "重绘版本已恢复并放到原图右侧" });
+            onNotice?.("生成已完成，结果已恢复到画布");
+            await onAccountRefresh?.();
+            return;
+          } catch (recoveryError) {
+            finalError = recoveryError;
+          }
+        }
+      }
+      console.error("Fabric canvas AI generation failed", finalError);
       setAiError({
-        message: error?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败",
-        detail: error.detail || error.message || "浏览器未能完成服务请求或结果插入。",
+        message: finalError?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败",
+        detail: finalError.detail || finalError.message || "浏览器未能完成服务请求或结果插入。",
       });
-      setStatus({ type: "error", message: error?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败" });
+      setStatus({ type: "error", message: finalError?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败" });
       if (billingMode === "platform") await onAccountRefresh?.();
     } finally {
       await cleanupReferencePaths(temporaryReferencePaths, referenceUploadHeaders);

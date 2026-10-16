@@ -31,7 +31,7 @@ import {
   MAX_REFERENCE_IMAGES,
   saveProviderConfig,
 } from "./lib/provider";
-import { CLIENT_HEADERS } from "./lib/client";
+import { CLIENT_HEADERS, recoverGeneration } from "./lib/client";
 import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
 import { supabase, supabaseConfigured } from "./lib/supabase";
@@ -427,6 +427,7 @@ export default function App() {
     setImages([]);
     setSelectedImages(new Set());
     let referenceStoragePaths = [];
+    let generationRequestStarted = false;
 
     try {
       const redrawFromPrevious = mode === "iterative" && previousImages.length > 0;
@@ -455,6 +456,7 @@ export default function App() {
         body.reference_storage_paths = referenceStoragePaths;
       }
 
+      generationRequestStarted = true;
       const res = await fetch(`${API_BASE}/${redrawFromPrevious ? "modify" : "generate"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -476,6 +478,16 @@ export default function App() {
       setNotice(redrawFromPrevious ? "局部重绘完成" : "生成完成");
     } catch (reason) {
       const referenceUploadFailed = reason?.code?.startsWith("REFERENCE_");
+      if (generationRequestStarted && billingMode === "platform") {
+        const recovered = await recoverGeneration(requestId, { headers: authHeaders });
+        if (recovered?.images?.length) {
+          setImages(recovered.images);
+          setCurrentPrompt(recovered.prompt || prompt);
+          await refreshAccount();
+          setNotice(redrawFromPrevious ? "局部重绘已恢复" : "生成结果已恢复");
+          return;
+        }
+      }
       if (!referenceUploadFailed) await refreshAccount();
       setError({
         message: referenceUploadFailed ? "参考图上传失败" : "生成请求超时或后端连接中断",
@@ -493,6 +505,7 @@ export default function App() {
     count,
     customSize.height,
     customSize.width,
+    authHeaders,
     images,
     mode,
     prompt,
@@ -515,8 +528,10 @@ export default function App() {
       const requestId = createRequestId();
       setError(null);
       setIsGenerating(true);
+      let generationRequestStarted = false;
 
       try {
+        generationRequestStarted = true;
         const res = await fetch(`${API_BASE}/modify`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -549,6 +564,16 @@ export default function App() {
         await refreshAccount();
         setNotice("迭代版本已生成");
       } catch (reason) {
+        if (generationRequestStarted && billingMode === "platform") {
+          const recovered = await recoverGeneration(requestId, { headers: authHeaders });
+          if (recovered?.images?.length) {
+            setImages(recovered.images);
+            setCurrentPrompt(recovered.prompt || modifyPrompt);
+            await refreshAccount();
+            setNotice("迭代结果已恢复");
+            return;
+          }
+        }
         await refreshAccount();
         setError({
           message: "迭代请求超时或后端连接中断",
@@ -560,7 +585,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [billingMode, customSize.height, customSize.width, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
+    [authHeaders, billingMode, customSize.height, customSize.width, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -740,6 +765,7 @@ export default function App() {
                   onNotice={setNotice}
                   providerConfigured={providerConfigured}
                   providerName={providerName}
+                  authHeaders={authHeaders}
                   providerHeaders={providerHeaders}
                   referenceUploadHeaders={referenceUploadHeaders}
                   billingMode={billingMode}
@@ -780,6 +806,7 @@ export default function App() {
                 presetName={activePreset?.name}
                 presetCategory={activePreset?.category}
                 authenticated={Boolean(session)}
+                authHeaders={authHeaders}
                 hasPreviousImage={images.length > 0}
               />
               <ParameterPanel
@@ -829,6 +856,7 @@ export default function App() {
           onClose={() => setPreviewImage(null)}
           onModify={mode === "iterative" ? handleModify : null}
           authenticated={Boolean(session)}
+          authHeaders={authHeaders}
         />
       )}
 

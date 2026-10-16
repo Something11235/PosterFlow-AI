@@ -202,6 +202,19 @@ class SupabaseGateway:
     def refund_generation(self, job_id: str, reason: str) -> dict[str, Any]:
         return self.rpc("refund_generation", {"p_job_id": job_id, "p_reason": reason[:120]})
 
+    def generation_by_request_id(self, user_id: str, request_id: str) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "/rest/v1/generation_jobs",
+            params={
+                "user_id": f"eq.{user_id}",
+                "request_id": f"eq.{request_id}",
+                "select": "status,image_keys,prompt,generated_count,charged_credits,error_code",
+                "limit": "1",
+            },
+        )
+        return rows[0] if rows else None
+
     def recover_stale_generation_jobs(self, user_id: str, stale_after_minutes: int = 10) -> dict[str, Any]:
         """Refund platform jobs left running after a serverless timeout."""
         try:

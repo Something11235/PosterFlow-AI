@@ -2,20 +2,20 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
 import { apiAssetUrl, fetchImageUrl } from "../lib/client";
 
-export default function ImageModal({ filename, onClose, onModify, authenticated = false }) {
+export default function ImageModal({ filename, onClose, onModify, authenticated = false, authHeaders }) {
   const [modifyText, setModifyText] = useState("");
   const [assetUrl, setAssetUrl] = useState("");
 
   useEffect(() => {
     let alive = true;
     setAssetUrl("");
-    fetchImageUrl(filename, { authenticated }).then((url) => {
+    fetchImageUrl(filename, { authenticated, headers: authHeaders }).then((url) => {
       if (alive) setAssetUrl(url);
     });
     return () => {
       alive = false;
     };
-  }, [authenticated, filename]);
+  }, [authHeaders, authenticated, filename]);
 
   const handleKeyDown = useCallback(
     (e) => {

@@ -1399,10 +1399,6 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
                     "n": count,
                     **({"size": payload["size"]} if "size" in payload else {}),
                     "quality": quality,
-                    # OpenAI-compatible image edit models use high input fidelity to
-                    # preserve the reference composition. This is the closest
-                    # provider-neutral equivalent to the UI's reference strength.
-                    "input_fidelity": "high",
                     "input_references": [
                         {"type": "image_url", "image_url": {"url": reference_image_data_url(encoded)}}
                         for encoded in normalized_references
@@ -1432,7 +1428,6 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
                         "n": str(count),
                         **({"size": payload["size"]} if "size" in payload else {}),
                         "response_format": "b64_json",
-                        "input_fidelity": "high" if strength >= 0.75 else "low",
                     },
                     files=files,
                     timeout=request_timeout_seconds,
@@ -1491,7 +1486,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
             str(provider_error),
             [
                 "检查 API Key、余额与模型权限",
-                "参考图编辑需确认模型支持 input_references 和 input_fidelity",
+                "参考图编辑需确认模型支持 input_references 或标准图片编辑接口",
                 "核对接口地址和模型标识",
             ],
         )
@@ -2048,6 +2043,40 @@ def reference_cleanup():
                 )
             _supabase_delete(paths)
         return jsonify({"success": True, "deleted": len(paths)})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/generations/<request_id>", methods=["GET"])
+def generation_status(request_id):
+    """Recover a completed generation when the original long request lost its response."""
+    try:
+        user = require_authenticated_user()
+        normalized_request_id = str(uuid.UUID(str(request_id)))
+        job = SupabaseGateway().generation_by_request_id(user.id, normalized_request_id)
+        if not job:
+            return jsonify({"error": "生成任务不存在", "code": "GENERATION_NOT_FOUND"}), 404
+
+        raw_keys = job.get("image_keys") or []
+        filenames = [os.path.basename(str(value)) for value in raw_keys if str(value).strip()]
+        images = (
+            [{"filename": filename, "index": index + 1} for index, filename in enumerate(filenames)]
+            if job.get("status") == "succeeded"
+            else []
+        )
+        return jsonify(
+            {
+                "success": True,
+                "status": job.get("status"),
+                "images": images,
+                "prompt": job.get("prompt") or "",
+                "error_code": job.get("error_code"),
+            }
+        )
+    except ValueError:
+        return provider_error_response(
+            ProviderError("REQUEST_ID_INVALID", "请求标识无效", 400, "请重新发起本次生成请求。")
+        )
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

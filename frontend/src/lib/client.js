@@ -25,13 +25,13 @@ export function apiAssetUrl(kind, filename, { authenticated = false } = {}) {
   return authenticated ? `/api/${kind}/${safeFilename}` : `/api/${kind}/${safeFilename}?client_id=${encodeURIComponent(CLIENT_ID)}`;
 }
 
-export async function fetchImageUrl(filename, { authenticated = false } = {}) {
+export async function fetchImageUrl(filename, { authenticated = false, headers = {} } = {}) {
   const safeFilename = encodeURIComponent(filename);
   const query = authenticated ? "" : `?client_id=${encodeURIComponent(CLIENT_ID)}`;
   const fallback = apiAssetUrl("images", filename, { authenticated });
   try {
     const response = await fetch(`/api/images/${safeFilename}/url${query}`, {
-      headers: CLIENT_HEADERS,
+      headers: { ...CLIENT_HEADERS, ...headers },
       credentials: "include",
     });
     const payload = await response.json();
@@ -41,4 +41,25 @@ export async function fetchImageUrl(filename, { authenticated = false } = {}) {
     // Keep local development and a temporarily unavailable signing endpoint usable.
     return fallback;
   }
+}
+
+export async function recoverGeneration(requestId, { attempts = 10, intervalMs = 2000, headers = {} } = {}) {
+  if (!requestId) return null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(`/api/generations/${encodeURIComponent(requestId)}`, {
+        headers: { ...CLIENT_HEADERS, ...headers },
+        credentials: "include",
+      });
+      if (response.status === 404) return null;
+      const payload = await response.json();
+      if (!response.ok) return null;
+      if (payload?.status === "succeeded" && payload.images?.length) return payload;
+      if (["failed", "refunded"].includes(payload?.status)) return null;
+    } catch {
+      // A transient status request failure should not hide the original error.
+    }
+    if (attempt < attempts - 1) await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+  }
+  return null;
 }

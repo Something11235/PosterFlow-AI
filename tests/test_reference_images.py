@@ -135,6 +135,7 @@ class ProviderEditRequestTests(unittest.TestCase):
         self.assertNotIn("files", request)
         self.assertEqual(len(request["json"]["input_references"]), 2)
         self.assertTrue(request["json"]["input_references"][0]["image_url"]["url"].startswith("data:image/png;base64,"))
+        self.assertNotIn("input_fidelity", request["json"])
 
     def test_reference_image_uses_multipart_edits_endpoint(self):
         with (
@@ -155,6 +156,7 @@ class ProviderEditRequestTests(unittest.TestCase):
         self.assertNotIn("Content-Type", request["headers"])
         self.assertEqual(request["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(request["data"]["response_format"], "b64_json")
+        self.assertNotIn("input_fidelity", request["data"])
         self.assertEqual(request["files"][0][0], "image")
         self.assertEqual(request["files"][0][1][1], VALID_PNG)
 
