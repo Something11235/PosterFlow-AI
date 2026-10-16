@@ -475,13 +475,15 @@ export default function App() {
       await refreshAccount();
       setNotice(redrawFromPrevious ? "局部重绘完成" : "生成完成");
     } catch (reason) {
+      const referenceUploadFailed = reason?.code?.startsWith("REFERENCE_");
+      if (!referenceUploadFailed) await refreshAccount();
       setError({
-        message: reason?.code?.startsWith("REFERENCE_") ? "参考图上传失败" : "无法连接后端服务",
+        message: referenceUploadFailed ? "参考图上传失败" : "生成请求超时或后端连接中断",
         code: reason?.code || "BACKEND_OFFLINE",
-        detail: reason?.detail || reason?.message || "浏览器没有收到后端 API 响应，请稍后重试。",
-        recovery: reason?.code?.startsWith("REFERENCE_")
+        detail: reason?.detail || reason?.message || "本次请求可能被服务商或平台超时终止；未完成的任务会在超时后自动退回预留积分。",
+        recovery: referenceUploadFailed
           ? ["重新选择参考图", "检查图片大小和格式", "再次生成"]
-          : ["检查网络连接", "稍后重试", "重新发起生成"],
+          : ["等待几分钟后刷新账户", "不要连续重复点击", "稍后重新发起生成"],
       });
     } finally {
       await cleanupReferencePaths(referenceStoragePaths, referenceUploadHeaders);
@@ -546,12 +548,13 @@ export default function App() {
         updateCreditBalance(data.credit_balance);
         await refreshAccount();
         setNotice("迭代版本已生成");
-      } catch {
+      } catch (reason) {
+        await refreshAccount();
         setError({
-          message: "无法连接后端服务",
-          code: "BACKEND_OFFLINE",
-          detail: "浏览器没有收到后端 API 响应，请确认 Flask 服务正在运行。",
-          recovery: ["启动 python backend/server.py", "检查 5000 端口", "重新发起迭代"],
+          message: "迭代请求超时或后端连接中断",
+          code: reason?.code || "BACKEND_OFFLINE",
+          detail: reason?.detail || reason?.message || "本次请求可能被服务商或平台超时终止；未完成的任务会在超时后自动退回预留积分。",
+          recovery: ["等待几分钟后刷新账户", "不要连续重复点击", "稍后重新发起迭代"],
         });
       } finally {
         setIsGenerating(false);

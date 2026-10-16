@@ -202,6 +202,22 @@ class SupabaseGateway:
     def refund_generation(self, job_id: str, reason: str) -> dict[str, Any]:
         return self.rpc("refund_generation", {"p_job_id": job_id, "p_reason": reason[:120]})
 
+    def recover_stale_generation_jobs(self, user_id: str, stale_after_minutes: int = 10) -> dict[str, Any]:
+        """Refund platform jobs left running after a serverless timeout."""
+        try:
+            return self.rpc(
+                "recover_stale_generation_jobs",
+                {
+                    "p_user_id": user_id,
+                    "p_stale_after_minutes": stale_after_minutes,
+                },
+            )
+        except SupabaseError as error:
+            # Keep older deployments usable until the append-only migration is applied.
+            if error.code not in {"PGRST202", "42883"}:
+                raise
+            return {"ok": True, "recovered": 0, "migration_pending": True}
+
     def record_own_key_generation(
         self,
         user_id: str,
@@ -232,6 +248,7 @@ class SupabaseGateway:
         )
 
     def account_snapshot(self, user_id: str) -> dict[str, Any]:
+        self.recover_stale_generation_jobs(user_id)
         try:
             return self.rpc("get_account_snapshot", {"p_user_id": user_id})
         except SupabaseError as error:

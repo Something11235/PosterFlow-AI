@@ -70,6 +70,17 @@ class ReferenceImageValidationTests(unittest.TestCase):
 
 
 class ProviderEndpointTests(unittest.TestCase):
+    def test_provider_request_timeout_scales_with_batch_size(self):
+        self.assertEqual(server.provider_request_timeout_seconds(1), 240)
+        self.assertEqual(server.provider_request_timeout_seconds(2), 253)
+        self.assertEqual(server.provider_request_timeout_seconds(3), 266)
+        self.assertEqual(server.provider_request_timeout_seconds(4), 279)
+
+    def test_provider_request_timeout_is_bounded_and_handles_invalid_counts(self):
+        self.assertEqual(server.provider_request_timeout_seconds(100), 280)
+        self.assertEqual(server.provider_request_timeout_seconds(0), 240)
+        self.assertEqual(server.provider_request_timeout_seconds("invalid"), 240)
+
     def test_openrouter_defaults_use_generations_and_qualified_model(self):
         self.assertEqual(server.OPENROUTER_ENDPOINT, "https://openrouter.ai/api/v1/images")
         self.assertEqual(server.OPENROUTER_MODEL, "openai/gpt-image-2.5-flare")

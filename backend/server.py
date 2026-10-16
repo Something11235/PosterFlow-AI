@@ -128,6 +128,8 @@ MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_IMAGES = 8
 REFERENCE_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
+PROVIDER_REQUEST_TIMEOUT_BASE_SECONDS = 240
+PROVIDER_REQUEST_TIMEOUT_MAX_SECONDS = 280
 REFERENCE_UPLOAD_EXTENSIONS = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -975,6 +977,7 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                 )
             user = require_authenticated_user()
             gateway = SupabaseGateway()
+            gateway.recover_stale_generation_jobs(user.id)
             requested_platform_model = str(data.get("platform_model") or PLATFORM_MODEL).strip()
             if requested_platform_model not in PLATFORM_IMAGE_MODELS:
                 raise ProviderError("MODEL_NOT_ALLOWED", "平台模型不可用", 400, "请选择平台提供的模型。", ["重新选择模型", "再次生成"])
@@ -1325,9 +1328,22 @@ def decode_provider_image(image_data):
     )
 
 
+def provider_request_timeout_seconds(count):
+    """Give batched requests extra time while staying below Vercel's 300s limit."""
+    try:
+        normalized_count = max(1, int(count))
+    except (TypeError, ValueError):
+        normalized_count = 1
+    return min(
+        PROVIDER_REQUEST_TIMEOUT_MAX_SECONDS,
+        PROVIDER_REQUEST_TIMEOUT_BASE_SECONDS + max(normalized_count - 1, 0) * 13,
+    )
+
+
 def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", quality="auto", count=1, custom_size=None, mask_b64=None):
     # Keep the provider request aligned with the product default even for legacy callers.
     quality = "auto"
+    request_timeout_seconds = provider_request_timeout_seconds(count)
     size_cfg = custom_size or SIZE_OPTIONS.get(size)
     payload = {
         "model": provider.model,
@@ -1363,7 +1379,7 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
                     provider.endpoint,
                     headers=provider_headers(provider),
                     json=openrouter_payload,
-                    timeout=300,
+                    timeout=request_timeout_seconds,
                 )
             else:
                 file_field = "image" if len(normalized_references) == 1 else "image[]"
@@ -1385,21 +1401,21 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
                         "input_fidelity": "high" if strength >= 0.75 else "low",
                     },
                     files=files,
-                    timeout=300,
+                    timeout=request_timeout_seconds,
                 )
         else:
             response = requests.post(
                 provider.endpoint,
                 headers=provider_headers(provider),
                 json=payload,
-                timeout=300,
+                timeout=request_timeout_seconds,
             )
     except requests.exceptions.Timeout as exc:
         raise ProviderError(
             "PROVIDER_TIMEOUT",
             "图片生成服务响应超时",
             504,
-            f"{provider.host} 在 300 秒内没有返回生成结果。",
+            f"{provider.host} 在 {request_timeout_seconds} 秒内没有返回生成结果。",
             ["稍后重试", "降低批量数量", "检查中转站网络状态"],
         ) from exc
     except requests.exceptions.ConnectionError as exc:
