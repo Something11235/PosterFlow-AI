@@ -37,7 +37,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote, urlsplit
 
 import requests
-from flask import Flask, Response, g, jsonify, request, send_file, send_from_directory, stream_with_context
+from flask import Flask, g, jsonify, redirect, request, send_file, send_from_directory
 from flask_cors import CORS
 
 try:
@@ -2206,12 +2206,7 @@ def serve_image(filename):
     try:
         backend = _storage_backend()
         if backend == "supabase":
-            upstream = _storage_download(_image_blob_path(safe_name), stream=True)
-            return Response(
-                stream_with_context(upstream.iter_content(64 * 1024)),
-                mimetype=upstream.headers.get("content-type", "image/png"),
-                headers={"Cache-Control": "private, max-age=300"},
-            )
+            return redirect_to_stored_image(safe_name)
     except ProviderError as error:
         return provider_error_response(error)
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
@@ -2221,6 +2216,17 @@ def serve_image(filename):
     return send_file(path, mimetype="image/png")
 
 
+def redirect_to_stored_image(filename, *, download=False):
+    """Keep even legacy/fallback callers off the Function's image byte path."""
+    url = _supabase_create_signed_url(_image_blob_path(filename))
+    if download:
+        url += ("&" if "?" in url else "?") + "download=" + quote(filename, safe="")
+    response = redirect(url, code=302)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @app.route("/api/images/<filename>/url", methods=["GET"])
 def image_url(filename):
     """Authorize access, then let the browser read the private object directly."""
@@ -2228,13 +2234,15 @@ def image_url(filename):
         set_optional_storage_scope()
         safe_name = os.path.basename(filename)
         if _storage_backend() == "supabase":
-            return jsonify(
+            response = jsonify(
                 {
                     "success": True,
                     "url": _supabase_create_signed_url(_image_blob_path(safe_name)),
                     "expires_in": 3600,
                 }
             )
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
         # Keep local development and legacy local data usable without a storage request.
         query = f"?client_id={quote(current_client_id())}" if current_storage_scope() == current_client_id() else ""
         return jsonify({"success": True, "url": f"/api/images/{quote(safe_name)}{query}", "direct": False})
@@ -2252,12 +2260,7 @@ def download_image(filename):
     try:
         backend = _storage_backend()
         if backend == "supabase":
-            upstream = _storage_download(_image_blob_path(safe_name), stream=True)
-            return Response(
-                stream_with_context(upstream.iter_content(64 * 1024)),
-                mimetype=upstream.headers.get("content-type", "image/png"),
-                headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
-            )
+            return redirect_to_stored_image(safe_name, download=True)
     except ProviderError as error:
         return provider_error_response(error)
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
@@ -2284,20 +2287,25 @@ def download_batch():
         backend = _storage_backend()
     except ProviderError as error:
         return provider_error_response(error)
+    if backend == "supabase":
+        # Current clients zip direct Storage downloads in the browser. Old tabs
+        # must refresh, rather than silently proxying another large archive.
+        return provider_error_response(
+            ProviderError(
+                "DIRECT_DOWNLOAD_REQUIRED",
+                "请刷新页面后重新导出",
+                409,
+                "批量导出已改为浏览器直接读取云端图片并打包，不再经过网站后端。",
+                ["刷新页面", "重新选择图片", "再次导出"],
+            )
+        )
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for filename in filenames[:100]:
             safe_name = os.path.basename(str(filename))
-            if backend == "supabase":
-                try:
-                    response = _storage_download(_image_blob_path(safe_name))
-                    archive.writestr(safe_name, response.content)
-                except ProviderError:
-                    app.logger.exception("Failed to add remote image to archive")
-            else:
-                image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
-                path = os.path.join(image_folder, safe_name)
-                if os.path.exists(path):
-                    archive.write(path, safe_name)
+            image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+            path = os.path.join(image_folder, safe_name)
+            if os.path.exists(path):
+                archive.write(path, safe_name)
     buffer.seek(0)
     return send_file(
         buffer,

@@ -38,7 +38,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { apiAssetUrl, fetchImageUrl, recoverGeneration } from "../lib/client";
+import { fetchImageBlob, recoverGeneration } from "../lib/client";
 import CanvasAiPanel from "./CanvasAiPanel";
 
 const CANVAS_DB_NAME = "posterflow-ai-fabric-canvas";
@@ -1268,20 +1268,8 @@ export default function FabricCanvasWorkspace({
   );
 
   const fetchGeneratedFile = useCallback(async (filename) => {
-    const signedUrl = await fetchImageUrl(filename, { authenticated, headers: authHeaders });
-    const fallbackUrl = apiAssetUrl("images", filename, { authenticated });
-    let lastError = null;
-    for (const imageUrl of [...new Set([signedUrl, fallbackUrl])]) {
-      try {
-        const response = await fetch(imageUrl, { credentials: "include" });
-        if (!response.ok) throw new Error("图片请求失败：" + response.status);
-        const blob = await response.blob();
-        return new File([blob], imageFilename(filename, blob.type), { type: blob.type || "image/png" });
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError || new Error("图片请求失败");
+    const blob = await fetchImageBlob(filename, { authenticated, headers: authHeaders });
+    return new File([blob], imageFilename(filename, blob.type), { type: blob.type || "image/png" });
   }, [authHeaders, authenticated]);
 
   const addGeneratedImages = useCallback(

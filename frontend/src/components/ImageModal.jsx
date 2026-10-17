@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
-import { apiAssetUrl, fetchImageUrl } from "../lib/client";
+import { apiAssetUrl, fetchImageUrl, imageDownloadUrl } from "../lib/client";
 
 export default function ImageModal({ filename, onClose, onModify, authenticated = false, authHeaders }) {
   const [modifyText, setModifyText] = useState("");
@@ -51,6 +51,7 @@ export default function ImageModal({ filename, onClose, onModify, authenticated 
           <img
             src={assetUrl || undefined}
             alt="生成图片原图预览"
+            referrerPolicy="no-referrer"
             className="max-h-full max-w-full rounded-md object-contain shadow-2xl"
           />
         </div>
@@ -62,8 +63,9 @@ export default function ImageModal({ filename, onClose, onModify, authenticated 
           </p>
 
           <a
-            href={assetUrl || apiAssetUrl("download", filename, { authenticated })}
+            href={assetUrl ? imageDownloadUrl(assetUrl, filename) : apiAssetUrl("download", filename, { authenticated })}
             download
+            referrerPolicy="no-referrer"
             className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
           >
             <Download size={17} />

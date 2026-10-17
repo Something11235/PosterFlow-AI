@@ -46,7 +46,88 @@ class StorageBackendTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["url"], "https://project.supabase.co/signed/test")
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         storage_download.assert_not_called()
+
+    def test_remote_image_and_download_redirect_without_transferring_bytes(self):
+        for route in ("images", "download"):
+            with (
+                self.subTest(route=route),
+                patch.object(server, "authenticate_access_token", return_value=Mock(id="owner")),
+                patch.object(server, "_storage_backend", return_value="supabase"),
+                patch.object(server, "_supabase_create_signed_url", return_value="https://project.supabase.co/image?token=test") as sign,
+                patch.object(server, "_storage_download") as download,
+            ):
+                response = server.app.test_client().get(
+                    f"/api/{route}/test.png", headers={"Authorization": "Bearer test-user"}
+                )
+
+                self.assertEqual(response.status_code, 302)
+                sign.assert_called_once_with("posterflow/user-owner/images/test.png")
+                self.assertTrue(response.location.startswith("https://project.supabase.co/image?token=test"))
+                if route == "download":
+                    self.assertIn("&download=test.png", response.location)
+                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+                self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+                download.assert_not_called()
+
+    def test_invalid_identity_cannot_get_image_or_download_redirect(self):
+        for route in ("images/test.png", "download/test.png", "images/test.png/url"):
+            with (
+                self.subTest(route=route),
+                patch.object(server, "authenticate_access_token", side_effect=server.SupabaseError("AUTH_INVALID", "invalid", 401)),
+                patch.object(server, "_supabase_create_signed_url") as sign,
+                patch.object(server, "_storage_download") as download,
+            ):
+                response = server.app.test_client().get(
+                    f"/api/{route}", headers={"Authorization": "Bearer invalid"}
+                )
+                self.assertEqual(response.status_code, 401)
+                sign.assert_not_called()
+                download.assert_not_called()
+
+    def test_signing_failure_never_falls_back_to_proxy(self):
+        for route in ("images", "download"):
+            with (
+                self.subTest(route=route),
+                patch.object(server, "set_optional_storage_scope"),
+                patch.object(server, "_storage_backend", return_value="supabase"),
+                patch.object(server, "_supabase_create_signed_url", side_effect=server.ProviderError("STORAGE_UNAVAILABLE", "unavailable", 503)),
+                patch.object(server, "_storage_download") as download,
+            ):
+                response = server.app.test_client().get(f"/api/{route}/test.png")
+                self.assertEqual(response.status_code, 503)
+                download.assert_not_called()
+
+    def test_legacy_remote_batch_download_requires_client_refresh(self):
+        with (
+            patch.object(server, "set_optional_storage_scope"),
+            patch.object(server, "_storage_backend", return_value="supabase"),
+            patch.object(server, "_storage_download") as download,
+        ):
+            response = server.app.test_client().post("/api/download-batch", json={"filenames": ["test.png"]})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["code"], "DIRECT_DOWNLOAD_REQUIRED")
+        download.assert_not_called()
+
+    def test_local_batch_download_still_returns_zip(self):
+        import io
+        import tempfile
+        import zipfile
+
+        with tempfile.TemporaryDirectory(prefix="posterflow-export-") as folder:
+            with open(server.os.path.join(folder, "test.png"), "wb") as output:
+                output.write(b"test-image")
+            with (
+                patch.object(server, "set_optional_storage_scope"),
+                patch.object(server, "_storage_backend", return_value="local"),
+                patch.object(server, "storage_scope_name", return_value="local-user"),
+                patch.object(server, "SAVE_FOLDER", folder),
+            ):
+                response = server.app.test_client().post("/api/download-batch", json={"filenames": ["test.png"]})
+            self.assertEqual(response.status_code, 200)
+            with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+                self.assertEqual(archive.read("test.png"), b"test-image")
 
     def test_supabase_upload_is_used_when_selected(self):
         with (

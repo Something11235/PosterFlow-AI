@@ -31,7 +31,8 @@ import {
   MAX_REFERENCE_IMAGES,
   saveProviderConfig,
 } from "./lib/provider";
-import { CLIENT_HEADERS, recoverGeneration } from "./lib/client";
+import { CLIENT_HEADERS, clearImageUrlCache, recoverGeneration } from "./lib/client";
+import { createImageArchive } from "./lib/batchDownload";
 import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
 import { supabase, supabaseConfigured } from "./lib/supabase";
@@ -148,6 +149,7 @@ export default function App() {
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState("");
 
@@ -197,6 +199,8 @@ export default function App() {
     () => ({ ...CLIENT_HEADERS, ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) }),
     [session],
   );
+
+  useEffect(() => { clearImageUrlCache(); }, [session?.user?.id]);
 
   const refreshAccount = useCallback(async (activeSession) => {
     const targetSession = activeSession || sessionRef.current;
@@ -620,30 +624,35 @@ export default function App() {
   }, []);
 
   const handleDownloadBatch = useCallback(async () => {
-    if (selectedImages.size === 0) return;
+    if (selectedImages.size === 0 || isExporting) return;
+    setIsExporting(true);
     try {
-      const res = await fetch(`${API_BASE}/download-batch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ filenames: [...selectedImages] }),
+      setNotice("正在读取图片并在浏览器打包");
+      const blob = await createImageArchive([...selectedImages], {
+        authenticated: Boolean(session),
+        headers: authHeaders,
+        onProgress: (done, total) => setNotice(`正在打包 ${done} / ${total} 张图片`),
       });
-      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "ai-poster-export.zip";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
       setNotice("已开始下载 ZIP");
-    } catch {
+    } catch (reason) {
       setError({
         message: "下载失败，请重试",
         code: "DOWNLOAD_FAILED",
-        detail: "浏览器没有完成批量导出请求，可能是网络中断或后端文件不可用。",
-        recovery: ["确认图片仍在输出目录", "重新选择图片", "再次导出"],
+        detail: reason?.message || "浏览器没有完成图片读取或打包，请稍后重试。",
+        recovery: ["确认图片仍可预览", "减少每次导出的图片数量", "再次导出"],
       });
+    } finally {
+      setIsExporting(false);
     }
-  }, [authHeaders, selectedImages]);
+  }, [authHeaders, isExporting, selectedImages, session]);
 
   const handleSignOut = useCallback(async () => {
     await supabase?.auth.signOut();
@@ -836,6 +845,7 @@ export default function App() {
                 onSelectAll={() => setSelectedImages(new Set(images.map((img) => img.filename)))}
                 onClearSelection={() => setSelectedImages(new Set())}
                 onDownloadBatch={handleDownloadBatch}
+                isExporting={isExporting}
                 onAddToCanvas={handleAddToCanvas}
                 onCopyPrompt={handleCopyPrompt}
                 onRetry={handleGenerate}
@@ -843,6 +853,7 @@ export default function App() {
                 presetName={activePreset?.name}
                 presetCategory={activePreset?.category}
                 authenticated={Boolean(session)}
+                authHeaders={authHeaders}
               />
             </section>
           </div>

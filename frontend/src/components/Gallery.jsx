@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { apiAssetUrl, fetchImageUrl } from "../lib/client";
+import { apiAssetUrl, fetchImageUrl, imageDownloadUrl } from "../lib/client";
 
 export default function Gallery({
   images,
@@ -29,6 +29,7 @@ export default function Gallery({
   onSelectAll,
   onClearSelection,
   onDownloadBatch,
+  isExporting = false,
   onAddToCanvas,
   onCopyPrompt,
   onRetry,
@@ -100,15 +101,15 @@ export default function Gallery({
               <button
                 type="button"
                 onClick={onDownloadBatch}
-                disabled={selectedCount === 0}
+                disabled={selectedCount === 0 || isExporting}
                 className={`inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition ${
-                  selectedCount === 0
+                  selectedCount === 0 || isExporting
                     ? "cursor-not-allowed bg-bg-elevated text-text-muted"
                     : "bg-accent text-white hover:bg-accent-hover"
                 }`}
               >
-                <Download size={14} />
-                批量导出
+                {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {isExporting ? "正在打包" : "批量导出"}
               </button>
               <button
                 type="button"
@@ -149,6 +150,7 @@ export default function Gallery({
                       alt={`AI生成图片 ${index + 1}`}
                       className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
                       loading="lazy"
+                      referrerPolicy="no-referrer"
                     />
                     <div className="absolute inset-x-0 top-0 flex items-center justify-between p-3">
                       <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md bg-bg-primary/78 px-2.5 text-xs text-text-secondary backdrop-blur">
@@ -175,8 +177,9 @@ export default function Gallery({
                         <Expand size={16} />
                       </button>
                       <a
-                        href={assetUrls[img.filename] || apiAssetUrl("download", img.filename, { authenticated })}
+                        href={assetUrls[img.filename] ? imageDownloadUrl(assetUrls[img.filename], img.filename) : apiAssetUrl("download", img.filename, { authenticated })}
                         download
+                        referrerPolicy="no-referrer"
                         className="flex min-h-10 min-w-10 items-center justify-center rounded-md bg-bg-secondary/90 text-text-secondary transition hover:text-text-primary"
                         title="下载"
                       >
