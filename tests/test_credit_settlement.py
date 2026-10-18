@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -56,7 +57,7 @@ class GenerationCreditSettlementTests(unittest.TestCase):
         ):
             result = server.execute_generation({"billing_mode": "platform", "platform_model": "gpt-image-2.5-sunburst", "request_id": "33333333-3333-4333-8333-333333333333"}, requested_count=1, prompt="test", generate_callback=lambda _provider: [{"filename": "image.png"}])
         resolve_provider.assert_called_once_with("platform", platform_model="gpt-image-2.5-sunburst")
-        self.gateway.reserve_credits.assert_called_once_with("user-1", "33333333-3333-4333-8333-333333333333", 1, "provider.example", "gpt-image-2.5-sunburst", "test", server.USER_DAILY_IMAGE_LIMIT or None, server.PLATFORM_DAILY_IMAGE_LIMIT or None)
+        self.gateway.reserve_credits.assert_called_once_with("user-1", "33333333-3333-4333-8333-333333333333", 1, "provider.example", "gpt-image-2.5-sunburst", "test", None, None)
         self.gateway.settle_generation.assert_called_once_with("job-2", 1, unittest.mock.ANY, ["image.png"])
         self.assertEqual(result["images"], [{"filename": "image.png"}])
 
@@ -85,8 +86,52 @@ class GenerationCreditSettlementTests(unittest.TestCase):
         self.gateway.reserve_credits.assert_called_once_with(
             "user-1", "44444444-4444-4444-8444-444444444444", 1,
             "provider.example", "gpt-image-2", "test",
-            server.USER_DAILY_IMAGE_LIMIT or None, server.PLATFORM_DAILY_IMAGE_LIMIT or None,
+            None, None,
         )
+
+    def test_daily_caps_are_disabled_even_with_legacy_environment_settings(self):
+        self.gateway.settle_generation.return_value = {"ok": True, "balance": 8}
+        with (
+            patch.dict(os.environ, {"USER_DAILY_IMAGE_LIMIT": "20", "PLATFORM_DAILY_IMAGE_LIMIT": "1000"}),
+            patch.object(server, "platform_provider_configured", return_value=True),
+            patch.object(server, "require_authenticated_user", return_value=Mock(id="user-1")),
+            patch.object(server, "SupabaseGateway", return_value=self.gateway),
+            patch.object(server, "resolve_provider_config", return_value=self.provider),
+            patch.object(server, "enforce_rate_limit") as rate_limit,
+        ):
+            server.execute_generation(
+                {"billing_mode": "platform", "request_id": "55555555-5555-4555-8555-555555555555"},
+                requested_count=1, prompt="test",
+                generate_callback=lambda _provider: [{"filename": "image.png"}],
+            )
+
+        self.gateway.reserve_credits.assert_called_once_with(
+            "user-1", "55555555-5555-4555-8555-555555555555", 1,
+            "provider.example", "test-model", "test", None, None,
+        )
+        rate_limit.assert_called_once_with("platform-generate", "user-1", 8, 60)
+        self.gateway.settle_generation.assert_called_once_with("job-1", 1, unittest.mock.ANY, ["image.png"])
+
+    def test_insufficient_credits_still_prevent_generation(self):
+        self.gateway.reserve_credits.return_value = {"ok": False, "code": "CREDITS_INSUFFICIENT"}
+        generate = Mock()
+        with (
+            patch.object(server, "platform_provider_configured", return_value=True),
+            patch.object(server, "require_authenticated_user", return_value=Mock(id="user-1")),
+            patch.object(server, "SupabaseGateway", return_value=self.gateway),
+            patch.object(server, "resolve_provider_config", return_value=self.provider),
+            patch.object(server, "enforce_rate_limit"),
+        ):
+            with self.assertRaises(server.ProviderError) as context:
+                server.execute_generation(
+                    {"billing_mode": "platform", "request_id": "66666666-6666-4666-8666-666666666666"},
+                    requested_count=1, prompt="test", generate_callback=generate,
+                )
+
+        self.assertEqual(context.exception.code, "CREDITS_INSUFFICIENT")
+        generate.assert_not_called()
+        self.gateway.settle_generation.assert_not_called()
+        self.gateway.refund_generation.assert_not_called()
 
     def test_custom_provider_auth_header_is_forwarded(self):
         provider = server.ProviderConfig(

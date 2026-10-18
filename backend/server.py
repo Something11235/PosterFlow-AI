@@ -104,8 +104,6 @@ PLATFORM_IMAGE_MODELS = {
 if PLATFORM_MODEL not in PLATFORM_IMAGE_MODELS:
     PLATFORM_MODEL = "gpt-image-2.5-flare"
 PLATFORM_AUTH_TYPE = os.getenv("PLATFORM_IMAGE_AUTH_TYPE", "bearer").strip().lower()
-PLATFORM_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("PLATFORM_DAILY_IMAGE_LIMIT", "1000")))
-USER_DAILY_IMAGE_LIMIT = max(0, int(os.getenv("USER_DAILY_IMAGE_LIMIT", "20")))
 ADMIN_USER_IDS = {item.strip() for item in os.getenv("ADMIN_USER_IDS", "").split(",") if item.strip()}
 PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "disabled").strip().lower()
 AUTH_COOKIE_NAME = "posterflow_session"
@@ -1027,8 +1025,10 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                     provider.host,
                     provider.model,
                     prompt,
-                    USER_DAILY_IMAGE_LIMIT or None,
-                    PLATFORM_DAILY_IMAGE_LIMIT or None,
+                    # No per-user or platform-wide daily cap. Legacy daily-limit
+                    # environment variables must not re-enable these limits.
+                    None,
+                    None,
                 )
             )
             job_id = reservation.get("job_id")
