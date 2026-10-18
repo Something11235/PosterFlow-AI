@@ -11,6 +11,7 @@ __pycache__/
 venv/
 .npm-cache/
 .vercel_python_packages/
+supabase/.temp/
 
 # Node / frontend build
 frontend/node_modules/
