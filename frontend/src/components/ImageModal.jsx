@@ -1,19 +1,26 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
-import { apiAssetUrl, fetchImageUrl, imageDownloadUrl } from "../lib/client";
+import { fetchImageBlob } from "../lib/client";
 
-export default function ImageModal({ filename, onClose, onModify, authenticated = false, authHeaders }) {
+export default function ImageModal({ filename, onClose, onModify, onDownloadImage, authenticated = false, authHeaders }) {
   const [modifyText, setModifyText] = useState("");
   const [assetUrl, setAssetUrl] = useState("");
+  const [assetError, setAssetError] = useState("");
 
   useEffect(() => {
     let alive = true;
+    let objectUrl = "";
     setAssetUrl("");
-    fetchImageUrl(filename, { authenticated, headers: authHeaders }).then((url) => {
-      if (alive) setAssetUrl(url);
-    });
+    setAssetError("");
+    fetchImageBlob(filename, { authenticated, headers: authHeaders }).then((blob) => {
+      if (alive) {
+        objectUrl = URL.createObjectURL(blob);
+        setAssetUrl(objectUrl);
+      }
+    }).catch((reason) => { if (alive) setAssetError(reason?.message || "图片暂时无法读取"); });
     return () => {
       alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [authHeaders, authenticated, filename]);
 
@@ -48,6 +55,7 @@ export default function ImageModal({ filename, onClose, onModify, authenticated 
 
       <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-h-0 items-center justify-center rounded-lg border border-white/10 bg-bg-primary/72 p-3">
+          {assetError && <p role="alert" className="text-sm text-text-muted">{assetError}</p>}
           <img
             src={assetUrl || undefined}
             alt="生成图片原图预览"
@@ -62,15 +70,14 @@ export default function ImageModal({ filename, onClose, onModify, authenticated 
             可下载当前原图，也可在迭代模式下输入修改方向继续生成新版。
           </p>
 
-          <a
-            href={assetUrl ? imageDownloadUrl(assetUrl, filename) : apiAssetUrl("download", filename, { authenticated })}
-            download
-            referrerPolicy="no-referrer"
+          <button
+            type="button"
+            onClick={() => onDownloadImage(filename)}
             className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
           >
             <Download size={17} />
             下载原图
-          </a>
+          </button>
 
           {onModify && (
             <div className="mt-5 border-t border-border-subtle pt-5">

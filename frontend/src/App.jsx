@@ -31,7 +31,7 @@ import {
   MAX_REFERENCE_IMAGES,
   saveProviderConfig,
 } from "./lib/provider";
-import { CLIENT_HEADERS, clearImageUrlCache, recoverGeneration } from "./lib/client";
+import { CLIENT_HEADERS, clearImageUrlCache, downloadImage, recoverGeneration } from "./lib/client";
 import { createImageArchive } from "./lib/batchDownload";
 import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
@@ -623,6 +623,14 @@ export default function App() {
     });
   }, []);
 
+  const handleDownloadImage = useCallback(async (filename) => {
+    try {
+      await downloadImage(filename, { authenticated: Boolean(session), headers: authHeaders });
+    } catch (reason) {
+      setNotice("下载失败：" + (reason?.message || "请稍后重试"));
+    }
+  }, [authHeaders, session]);
+
   const handleDownloadBatch = useCallback(async () => {
     if (selectedImages.size === 0 || isExporting) return;
     setIsExporting(true);
@@ -845,6 +853,7 @@ export default function App() {
                 onSelectAll={() => setSelectedImages(new Set(images.map((img) => img.filename)))}
                 onClearSelection={() => setSelectedImages(new Set())}
                 onDownloadBatch={handleDownloadBatch}
+                onDownloadImage={handleDownloadImage}
                 isExporting={isExporting}
                 onAddToCanvas={handleAddToCanvas}
                 onCopyPrompt={handleCopyPrompt}
@@ -863,6 +872,7 @@ export default function App() {
 
       {previewImage && (
         <ImageModal
+          onDownloadImage={handleDownloadImage}
           filename={previewImage}
           onClose={() => setPreviewImage(null)}
           onModify={mode === "iterative" ? handleModify : null}

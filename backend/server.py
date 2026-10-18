@@ -41,6 +41,7 @@ from flask import Flask, g, jsonify, redirect, request, send_file, send_from_dir
 from flask_cors import CORS
 
 try:
+    from backend.image_preview import create_image_preview, preview_filename
     from backend.supabase_service import (
         AuthenticatedUser,
         SupabaseError,
@@ -51,6 +52,7 @@ try:
     )
     from backend.payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
+    from image_preview import create_image_preview, preview_filename
     from supabase_service import (
         AuthenticatedUser,
         SupabaseError,
@@ -1258,18 +1260,31 @@ def store_generated_image(filename, image_bytes):
     backend = _storage_backend()
     if backend == "supabase":
         _supabase_put(_image_blob_path(filename), image_bytes, "image/png")
-        return
-    image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
-    os.makedirs(image_folder, exist_ok=True)
-    with open(os.path.join(image_folder, filename), "wb") as file:
-        file.write(image_bytes)
+    else:
+        image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+        os.makedirs(image_folder, exist_ok=True)
+        with open(os.path.join(image_folder, filename), "wb") as file:
+            file.write(image_bytes)
+    try:
+        # Build from bytes already received from the provider: no Storage read.
+        preview = create_image_preview(image_bytes)
+        if backend == "supabase":
+            _supabase_put(_image_blob_path(preview_filename(filename)), preview, "image/png")
+        else:
+            with open(os.path.join(image_folder, preview_filename(filename)), "wb") as file:
+                file.write(preview)
+    except Exception:
+        # An optional thumbnail must never turn a successful generation into a
+        # failure/refund or force re-generation of a charged image.
+        app.logger.warning("Optional gallery preview unavailable")
 
 
 def remove_stored_images(filenames):
-    safe_names = [os.path.basename(str(filename)) for filename in filenames]
+    originals = [os.path.basename(str(filename)) for filename in filenames]
+    safe_names = list(dict.fromkeys(name for original in originals for name in (original, preview_filename(original))))
     backend = _storage_backend()
     if backend == "supabase":
-        paths = [_image_blob_path(filename) for filename in safe_names]
+        paths = list(dict.fromkeys(_image_blob_path(filename) for filename in safe_names))
         _supabase_delete(paths)
         return
     image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
@@ -2233,11 +2248,26 @@ def image_url(filename):
     try:
         set_optional_storage_scope()
         safe_name = os.path.basename(filename)
+        variant = request.args.get("variant", "original")
+        if variant not in {"original", "thumbnail"}:
+            raise ProviderError("IMAGE_VARIANT_INVALID", "图片类型无效", 400)
         if _storage_backend() == "supabase":
+            actual_variant = variant
+            try:
+                signed_url = _supabase_create_signed_url(_image_blob_path(
+                    preview_filename(safe_name) if variant == "thumbnail" else safe_name
+                ))
+            except ProviderError:
+                if variant != "thumbnail":
+                    raise
+                # Older images have no sidecar; don't download them to backfill.
+                actual_variant = "original"
+                signed_url = _supabase_create_signed_url(_image_blob_path(safe_name))
             response = jsonify(
                 {
                     "success": True,
-                    "url": _supabase_create_signed_url(_image_blob_path(safe_name)),
+                    "url": signed_url,
+                    "variant": actual_variant,
                     "expires_in": 3600,
                 }
             )
@@ -2245,6 +2275,9 @@ def image_url(filename):
             return response
         # Keep local development and legacy local data usable without a storage request.
         query = f"?client_id={quote(current_client_id())}" if current_storage_scope() == current_client_id() else ""
+        image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
+        if variant == "thumbnail" and os.path.isfile(os.path.join(image_folder, preview_filename(safe_name))):
+            safe_name = preview_filename(safe_name)
         return jsonify({"success": True, "url": f"/api/images/{quote(safe_name)}{query}", "direct": False})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))

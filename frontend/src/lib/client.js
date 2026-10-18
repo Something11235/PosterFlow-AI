@@ -28,22 +28,42 @@ export function apiAssetUrl(kind, filename, { authenticated = false } = {}) {
 const imageUrls = new Map();
 const pendingImageUrls = new Map();
 const MAX_IMAGE_URLS = 256;
+const imageBlobs = new Map();
+const pendingImageBlobs = new Map();
+export const MAX_IMAGE_CACHE_BYTES = 48 * 1024 * 1024;
+const IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+let imageCacheBytes = 0;
+let cacheEpoch = 0;
 
-export function clearImageUrlCache() {
-  imageUrls.clear();
-  pendingImageUrls.clear();
+function imageCacheIdentity(filename, { authenticated = false, headers = {}, variant = "original" } = {}) {
+  const authorization = new Headers(headers).get("Authorization") || "";
+  return {
+    cacheable: !authenticated || Boolean(authorization),
+    key: JSON.stringify([CLIENT_ID, authenticated, authorization, filename, variant]),
+  };
 }
 
-export async function fetchImageUrl(filename, { authenticated = false, headers = {}, forceRefresh = false } = {}) {
+export function clearImageUrlCache() {
+  cacheEpoch += 1;
+  imageUrls.clear();
+  pendingImageUrls.clear();
+  imageBlobs.clear();
+  pendingImageBlobs.clear();
+  imageCacheBytes = 0;
+}
+
+export async function fetchImageUrl(filename, { authenticated = false, headers = {}, forceRefresh = false, variant = "original" } = {}) {
   // Memory only; never persist URLs or credentials, and never share across users.
-  const authorization = new Headers(headers).get("Authorization") || "";
-  const cacheable = !authenticated || Boolean(authorization);
-  const cacheKey = JSON.stringify([CLIENT_ID, authenticated, authorization, filename]);
+  const { key: cacheKey, cacheable } = imageCacheIdentity(filename, { authenticated, headers, variant });
+  const epoch = cacheEpoch;
   const cached = imageUrls.get(cacheKey);
   if (cacheable && !forceRefresh && cached?.expiresAt > Date.now()) return cached.url;
   if (cacheable && !forceRefresh && pendingImageUrls.has(cacheKey)) return pendingImageUrls.get(cacheKey);
   const safeFilename = encodeURIComponent(filename);
-  const query = authenticated ? "" : `?client_id=${encodeURIComponent(CLIENT_ID)}`;
+  const params = new URLSearchParams();
+  if (!authenticated) params.set("client_id", CLIENT_ID);
+  if (variant !== "original") params.set("variant", variant);
+  const query = params.size ? `?${params}` : "";
   const fallback = apiAssetUrl("images", filename, { authenticated });
   const pending = (async () => {
     try {
@@ -54,7 +74,7 @@ export async function fetchImageUrl(filename, { authenticated = false, headers =
       const payload = await response.json();
       if (!response.ok || !payload?.url) throw new Error(payload?.error || "图片临时地址生成失败");
       const ttl = Math.max(0, (Number(payload.expires_in) || 0) - 60) * 1000;
-      if (cacheable && ttl > 0 && payload.direct !== false) {
+      if (cacheable && epoch === cacheEpoch && ttl > 0 && payload.direct !== false) {
         if (imageUrls.size >= MAX_IMAGE_URLS) imageUrls.delete(imageUrls.keys().next().value);
         imageUrls.set(cacheKey, { url: payload.url, expiresAt: Date.now() + ttl });
       }
@@ -79,16 +99,63 @@ export function imageDownloadUrl(url, filename) {
 }
 
 export async function fetchImageBlob(filename, options = {}) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const url = await fetchImageUrl(filename, { ...options, forceRefresh: attempt > 0 });
-    const sameOrigin = new URL(url, window.location.origin).origin === window.location.origin;
-    const response = await fetch(url, sameOrigin
-      ? { headers: { ...CLIENT_HEADERS, ...options.headers }, credentials: "include" }
-      : { credentials: "omit", referrerPolicy: "no-referrer" });
-    if (attempt === 0 && [401, 403].includes(response.status)) continue;
-    if (!response.ok) throw new Error("图片请求失败：" + response.status);
-    return response.blob();
+  const { key, cacheable } = imageCacheIdentity(filename, options);
+  const epoch = cacheEpoch;
+  const cached = imageBlobs.get(key);
+  if (cacheable && cached?.expiresAt > Date.now()) {
+    imageBlobs.delete(key);
+    imageBlobs.set(key, cached);
+    return cached.blob;
   }
+  if (cacheable && pendingImageBlobs.has(key)) return pendingImageBlobs.get(key);
+  const pending = (async () => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const url = await fetchImageUrl(filename, { ...options, forceRefresh: attempt > 0 });
+      const sameOrigin = new URL(url, window.location.origin).origin === window.location.origin;
+      const response = await fetch(url, sameOrigin
+        ? { headers: { ...CLIENT_HEADERS, ...options.headers }, credentials: "include" }
+        : { credentials: "omit", referrerPolicy: "no-referrer" });
+      if (attempt === 0 && [401, 403].includes(response.status)) continue;
+      if (!response.ok) throw new Error("图片请求失败：" + response.status);
+      const contentType = response.headers?.get("Content-Type") || "";
+      if (/^(application\/json|text\/html)/i.test(contentType)) throw new Error("图片服务没有返回有效图片");
+      const blob = await response.blob();
+      if (cacheable && epoch === cacheEpoch && blob.size <= MAX_IMAGE_CACHE_BYTES) {
+        for (const [entryKey, entry] of imageBlobs) {
+          if (entryKey === key || entry.expiresAt <= Date.now()) {
+            imageBlobs.delete(entryKey);
+            imageCacheBytes -= entry.blob.size;
+          }
+        }
+        while (imageBlobs.size && (imageCacheBytes + blob.size > MAX_IMAGE_CACHE_BYTES || imageBlobs.size >= 32)) {
+          const firstKey = imageBlobs.keys().next().value;
+          imageCacheBytes -= imageBlobs.get(firstKey).blob.size;
+          imageBlobs.delete(firstKey);
+        }
+        imageBlobs.set(key, { blob, expiresAt: Date.now() + IMAGE_CACHE_TTL_MS });
+        imageCacheBytes += blob.size;
+      }
+      return blob;
+    }
+  })();
+  if (cacheable) pendingImageBlobs.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (pendingImageBlobs.get(key) === pending) pendingImageBlobs.delete(key);
+  }
+}
+
+export async function downloadImage(filename, options = {}) {
+  const blob = await fetchImageBlob(filename, options);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 export async function recoverGeneration(requestId, { attempts = 10, intervalMs = 2000, headers = {} } = {}) {

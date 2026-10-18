@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { apiAssetUrl, fetchImageUrl, imageDownloadUrl } from "../lib/client";
+import { fetchImageUrl } from "../lib/client";
 
 export default function Gallery({
   images,
@@ -29,6 +29,7 @@ export default function Gallery({
   onSelectAll,
   onClearSelection,
   onDownloadBatch,
+  onDownloadImage,
   isExporting = false,
   onAddToCanvas,
   onCopyPrompt,
@@ -50,7 +51,7 @@ export default function Gallery({
     const currentFilenames = new Set(images.map((image) => image.filename));
     setAssetUrls((previous) => Object.fromEntries(Object.entries(previous).filter(([filename]) => currentFilenames.has(filename))));
     Promise.all(
-      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders })]),
+      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders, variant: "thumbnail" })]),
     ).then((entries) => {
       if (alive) setAssetUrls((previous) => ({ ...previous, ...Object.fromEntries(entries) }));
     });
@@ -150,7 +151,16 @@ export default function Gallery({
                       alt={`AI生成图片 ${index + 1}`}
                       className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
                       loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
+                      onError={(event) => {
+                        const target = event.currentTarget;
+                        if (target.dataset.originalFallback) return;
+                        target.dataset.originalFallback = "true";
+                        const failedSource = target.src;
+                        fetchImageUrl(img.filename, { authenticated, headers: authHeaders })
+                          .then((url) => { if (target.isConnected && target.src === failedSource) target.src = url; });
+                      }}
                     />
                     <div className="absolute inset-x-0 top-0 flex items-center justify-between p-3">
                       <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md bg-bg-primary/78 px-2.5 text-xs text-text-secondary backdrop-blur">
@@ -176,15 +186,14 @@ export default function Gallery({
                       >
                         <Expand size={16} />
                       </button>
-                      <a
-                        href={assetUrls[img.filename] ? imageDownloadUrl(assetUrls[img.filename], img.filename) : apiAssetUrl("download", img.filename, { authenticated })}
-                        download
-                        referrerPolicy="no-referrer"
+                      <button
+                        type="button"
+                        onClick={() => onDownloadImage(img.filename)}
                         className="flex min-h-10 min-w-10 items-center justify-center rounded-md bg-bg-secondary/90 text-text-secondary transition hover:text-text-primary"
                         title="下载"
                       >
                         <Download size={16} />
-                      </a>
+                      </button>
                       {onModify && (
                         <button
                           type="button"

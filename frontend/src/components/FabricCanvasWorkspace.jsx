@@ -1500,7 +1500,7 @@ export default function FabricCanvasWorkspace({
         let maskStoragePath = null;
         if (maskBlob) {
           const maskPaths = await uploadReferenceBlobs(
-            [{ blob: maskBlob, name: "canvas-mask.png" }],
+            [{ blob: maskBlob, name: "canvas-mask.png", preservePixels: true }],
             { headers: referenceUploadHeaders },
           );
           maskStoragePath = maskPaths[0] || null;

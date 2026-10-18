@@ -129,3 +129,84 @@ test("oversized exports stop instead of consuming unbounded browser memory", asy
   await assert.rejects(createImageArchive(["test.png"], options), /64 MB/);
   await assert.rejects(createImageArchive([], options), /1 至 100/);
 });
+
+test("thumbnail signing is isolated from full-size signing and downloads", async () => {
+  const requests = [];
+  mock.method(globalThis, "fetch", async (url) => {
+    requests.push(url);
+    return signed(url.includes("variant=thumbnail") ? directUrl + "-thumb" : directUrl);
+  });
+  assert.equal(await fetchImageUrl("test.png", { ...options, variant: "thumbnail" }), directUrl + "-thumb");
+  assert.equal(await fetchImageUrl("test.png", options), directUrl);
+  assert.equal(requests.length, 2);
+});
+
+test("full-size bytes are reused across preview, canvas and ZIP with concurrent deduplication", async () => {
+  let reads = 0;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    return new Response("original-pixels");
+  });
+  const [first, second] = await Promise.all([fetchImageBlob("test.png", options), fetchImageBlob("test.png", options)]);
+  assert.equal(first, second);
+  assert.equal(await fetchImageBlob("test.png", options), first);
+  const zip = await createImageArchive(["test.png"], options);
+  const contents = unzipSync(new Uint8Array(await zip.arrayBuffer()));
+  assert.equal(new TextDecoder().decode(contents["test.png"]), "original-pixels");
+  assert.equal(reads, 1);
+});
+
+test("binary cache is identity-isolated, short-lived and cleared on sign-out", async () => {
+  let now = 0;
+  let reads = 0;
+  mock.method(Date, "now", () => now);
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    return new Response("image");
+  });
+  await fetchImageBlob("test.png", options);
+  await fetchImageBlob("test.png", { ...options, headers: { Authorization: "Bearer user-b" } });
+  now = 11 * 60 * 1000;
+  await fetchImageBlob("test.png", options);
+  clearImageUrlCache();
+  await fetchImageBlob("test.png", options);
+  assert.equal(reads, 4);
+});
+
+test("binary cache evicts old entries instead of growing beyond the memory budget", async () => {
+  let reads = 0;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    return { ok: true, status: 200, blob: async () => ({ size: 30 * 1024 * 1024 }) };
+  });
+  await fetchImageBlob("one.png", options);
+  await fetchImageBlob("two.png", options);
+  await fetchImageBlob("one.png", options);
+  assert.equal(reads, 3);
+});
+
+test("in-flight reads cannot repopulate a cleared login cache", async () => {
+  let release;
+  let reads = 0;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    if (reads === 1) await new Promise((resolve) => { release = resolve; });
+    return new Response("image");
+  });
+  const first = fetchImageBlob("test.png", options);
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  clearImageUrlCache();
+  release();
+  await first;
+  await fetchImageBlob("test.png", options);
+  assert.equal(reads, 2);
+});
+
+test("HTML/JSON error payloads cannot be cached or downloaded as images", async () => {
+  mock.method(globalThis, "fetch", async (url) => url.includes("/url") ? signed() : Response.json({ error: "bad image" }));
+  await assert.rejects(fetchImageBlob("test.png", options), /有效图片/);
+});

@@ -1,4 +1,5 @@
-import { CLIENT_HEADERS } from "./client";
+import { CLIENT_HEADERS } from "./client.js";
+import { optimizeReferenceBlob } from "./referenceCompression.js";
 
 const API_BASE = "/api";
 const MAX_REFERENCE_BYTES = 16 * 1024 * 1024;
@@ -29,7 +30,7 @@ function normalizeEntry(entry, index) {
   if (blob.size > MAX_REFERENCE_BYTES) throw new Error("参考图不能超过 16 MB");
   const extension = contentType === "image/jpeg" ? "jpg" : contentType.split("/")[1];
   const filename = entry?.name || (blob instanceof File && blob.name) || `reference-${index + 1}.${extension}`;
-  return { blob, contentType, filename };
+  return { blob, contentType, filename, preservePixels: Boolean(entry?.preservePixels) };
 }
 
 export async function cleanupReferencePaths(paths, headers = {}) {
@@ -52,7 +53,12 @@ export async function uploadReferenceBlobs(entries, { headers = {}, onProgress }
   const uploadedPaths = [];
   try {
     for (let index = 0; index < normalizedEntries.length; index += 1) {
-      const entry = normalizedEntries[index];
+      const original = normalizedEntries[index];
+      const optimized = await optimizeReferenceBlob(original.blob, { preservePixels: original.preservePixels });
+      const entry = optimized === original.blob ? original : {
+        ...original, blob: optimized, contentType: optimized.type,
+        filename: original.filename.replace(/\.[^.]*$/, "") + ".webp",
+      };
       onProgress?.(index, normalizedEntries.length);
       const urlResponse = await fetch(`${API_BASE}/reference-upload-url`, {
         method: "POST",
