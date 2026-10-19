@@ -663,7 +663,7 @@ export default function App() {
   }, [authHeaders, isExporting, selectedImages, session]);
 
   const handleSignOut = useCallback(async () => {
-    await supabase?.auth.signOut();
+    await supabase?.auth.signOut({ scope: "local" });
     await fetch(API_BASE + "/auth/session", { method: "DELETE", headers: CLIENT_HEADERS, credentials: "include" });
     sessionRef.current = null; accountRequestRef.current += 1;
     setSession(null); setAccount(null); setAccountLoading(false); setAccountOpen(false); setNotice("已退出登录");
@@ -673,7 +673,7 @@ export default function App() {
     const response = await fetch(API_BASE + "/account", { method: "DELETE", headers: authHeaders, credentials: "include" });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.detail || data.error || "删除账号失败");
-    await supabase?.auth.signOut(); sessionRef.current = null; accountRequestRef.current += 1;
+    await supabase?.auth.signOut({ scope: "local" }); sessionRef.current = null; accountRequestRef.current += 1;
     setSession(null); setAccount(null); setAccountLoading(false); setAccountOpen(false); setNotice("账号已删除");
   }, [authHeaders]);
 
