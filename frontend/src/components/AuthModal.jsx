@@ -57,10 +57,10 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
         onClose();
       } else if (mode === "forgot") {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: window.location.origin,
+          redirectTo: `${window.location.origin}/api/auth/reset-password`,
         });
         if (authError) throw authError;
-        onNotice?.("重置密码邮件已发送，请检查收件箱");
+        onNotice?.("如果该邮箱已注册，你将收到重置密码邮件。请检查收件箱和垃圾邮件。");
         onClose();
       } else {
         const { error: authError } = await supabase.auth.updateUser({ password });

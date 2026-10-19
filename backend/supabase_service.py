@@ -173,6 +173,33 @@ class SupabaseGateway:
     def ensure_signup_bonus(self, user_id: str) -> dict[str, Any]:
         return self.rpc("ensure_signup_bonus", {"p_user_id": user_id})
 
+    def verify_password_recovery(self, token_hash: str) -> str:
+        result = self._request(
+            "POST", "/auth/v1/verify", body={"token_hash": token_hash, "type": "recovery"}
+        )
+        user = result.get("user") if isinstance(result, dict) else None
+        token = result.get("access_token") if isinstance(result, dict) else None
+        if not isinstance(user, dict) or not user.get("id") or not isinstance(token, str) or not token:
+            raise SupabaseError("SUPABASE_BAD_RESPONSE", "暂时无法确认重置链接", 503)
+        # The recovery session stays in an HttpOnly cookie, never in JSON or localStorage.
+        return token
+
+    def validate_recovery_access_token(self, access_token: str) -> None:
+        # Compatibility with previously sent implicit-flow email links. Auth, not
+        # decoded/unverified browser claims, must validate this user's session.
+        user = self._request("GET", "/auth/v1/user", headers={"Authorization": f"Bearer {access_token}"})
+        if not isinstance(user, dict) or not user.get("id"):
+            raise SupabaseError("bad_jwt", "重置链接已失效", 401)
+
+    def update_recovered_password(self, access_token: str, password: str) -> None:
+        # Use the recovery user's authorization, never an admin password update.
+        user = self._request(
+            "PUT", "/auth/v1/user", body={"password": password},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if not isinstance(user, dict) or not user.get("id"):
+            raise SupabaseError("SUPABASE_BAD_RESPONSE", "暂时无法确认密码修改结果", 503)
+
     def reserve_credits(
         self,
         user_id: str,

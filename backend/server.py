@@ -42,6 +42,7 @@ from flask import Flask, g, jsonify, make_response, redirect, render_template, r
 from flask_cors import CORS
 
 try:
+    from backend.password_recovery import password_recovery
     from backend.image_preview import create_image_preview, preview_filename
     from backend.supabase_service import (
         AuthenticatedUser,
@@ -53,6 +54,7 @@ try:
     )
     from backend.payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
+    from password_recovery import password_recovery
     from image_preview import create_image_preview, preview_filename
     from supabase_service import (
         AuthenticatedUser,
@@ -139,6 +141,7 @@ REFERENCE_UPLOAD_EXTENSIONS = {
 }
 
 app = Flask(__name__, static_folder=None)
+app.register_blueprint(password_recovery)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_REQUEST_BYTES", str(24 * 1024 * 1024)))
 CORS(
     app,
