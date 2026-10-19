@@ -3,7 +3,7 @@ export const MAX_REFERENCE_IMAGES = 8;
 
 export const IMAGE_MODEL_OPTIONS = [
   { value: "gpt-image-2.5-flare", label: "gpt-image-2.5-flare", creditCost: 1 },
-  { value: "gpt-image-2.5-sunburst", label: "gpt-image-2.5-sunburst", creditCost: 2 },
+  { value: "gpt-image-2.5-sunburst", label: "gpt-image-2.5-sunburst", creditCost: 1 },
   { value: "gpt-image-2", label: "gpt-image-2", creditCost: 1 },
 ];
 

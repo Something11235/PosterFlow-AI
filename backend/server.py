@@ -99,7 +99,7 @@ PLATFORM_ENDPOINT = os.getenv("PLATFORM_IMAGE_API_ENDPOINT", "").strip()
 PLATFORM_MODEL = os.getenv("PLATFORM_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
 PLATFORM_IMAGE_MODELS = {
     "gpt-image-2.5-flare": 1,
-    "gpt-image-2.5-sunburst": 2,
+    "gpt-image-2.5-sunburst": 1,
     "gpt-image-2": 1,
 }
 if PLATFORM_MODEL not in PLATFORM_IMAGE_MODELS:
