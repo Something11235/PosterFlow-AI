@@ -49,7 +49,7 @@ PosterFlow AI 是一个 AI 图片工作台，把日常生图、参考图修改�
 
 切换到“平台免费积分”即可查看余额并使用平台图片服务。每张图片消耗 1 个积分，批量生成会按图片数量扣除；失败或超时会自动退回。
 
-平台图片服务使用 **Image2.5** 模型。平台充值功能目前默认关闭，是否开放以网站实际显示为准。
+平台图片服务使用 **Image2.5** 模型。参考官方gpt-image-2平均¥1.4348/张。用户每生成一张图我们烧掉的成本为0.5元左右，所以站主最多只收0.5的成本价用来进行网站服务器的日常维护，当然，积分只是为了照顾到不会使用API或者嫌麻烦的uu，完全支持使用自己的API，也希望大家多多支持宣传，让世界上最强最新的生图模型每个中国人也触手可得。
 
 ### 使用自己的 API Key
 
@@ -109,34 +109,6 @@ cd ..
 ```
 
 本地配置请复制 `.env.example` 为 `.env`，再按需填写服务端变量。`.env` 只放在本机或部署平台，不要提交到 GitHub。
-
-## 开发检查
-
-```powershell
-# 后端测试
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-
-# 前端检查
-cd frontend
-npm run lint
-npm run build
-```
-
-## 部署
-
-项目使用 Vercel 部署前端和 Python API，也支持 Docker 自行部署。部署前请在平台环境变量中配置 Supabase、图片服务和对象存储等服务端变量；带有 `VITE_` 前缀的变量才会进入浏览器端。
-
-不要把服务端密钥放进 `VITE_*` 变量，也不要把真实密钥提交到仓库。
-
-## 项目结构
-
-```text
-backend/           Flask API 和服务端逻辑
-frontend/          React 前端
-supabase/          数据库迁移
-legacy/            早期脚本
-docs/              界面规范和项目文档
-.github/workflows/  自动检查
 ```
 
 ## 反馈问题
