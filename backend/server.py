@@ -4,6 +4,7 @@ import ipaddress
 import json
 import os
 import shutil
+import secrets
 
 
 def _load_local_env():
@@ -37,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote, urlsplit
 
 import requests
-from flask import Flask, g, jsonify, redirect, request, send_file, send_from_directory
+from flask import Flask, g, jsonify, make_response, redirect, render_template, request, send_file, send_from_directory
 from flask_cors import CORS
 
 try:
@@ -741,6 +742,49 @@ def cleanup_reference_storage_paths(paths):
         _supabase_delete(paths)
     except ProviderError:
         app.logger.exception("Failed to clean up temporary reference images")
+
+
+@app.route("/api/auth/confirm", methods=["GET", "POST"])
+def confirm_signup_email():
+    nonce = secrets.token_urlsafe(24)
+    if request.method in {"GET", "HEAD"}:
+        # Merely opening or prefetching this page must not consume the link.
+        response = make_response(render_template("email_confirmation.html", nonce=nonce))
+    else:
+        data = request.get_json(silent=True)
+        token_hash = data.get("token_hash") if isinstance(data, dict) else None
+        action = data.get("type") if isinstance(data, dict) else None
+        if action != "email" or not isinstance(token_hash, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", token_hash):
+            response = make_response(jsonify(
+                verified=False, title="验证链接不完整",
+                message="请从验证邮件中重新打开完整链接。", retryable=False,
+            ), 400)
+        else:
+            try:
+                SupabaseGateway().confirm_signup_email(token_hash)
+                response = make_response(jsonify(
+                    verified=True, title="邮箱验证成功",
+                    message="验证已完成，可以关闭此页面。",
+                    retryable=False,
+                ))
+            except SupabaseError as error:
+                invalid = error.code in {"otp_expired", "token_expired", "validation_failed", "bad_code_verifier"}
+                response = make_response(jsonify(
+                    verified=False,
+                    title="验证链接已失效" if invalid else "暂时无法完成验证",
+                    message=("链接可能已使用或已过期。如果之前已验证成功，可直接返回网站登录。"
+                             if invalid else "验证服务暂时没有响应，请稍后点击重试。"),
+                    retryable=not invalid,
+                ), 400 if invalid else 503)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+    )
+    return response
 
 
 def provider_error_response(error):

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>邮箱验证 · PosterFlow AI</title>
+  <style nonce="{{ nonce }}">
+    :root { color-scheme: dark; font-family: "Segoe UI Variable", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif; background: #090d14; color: #f8fafc; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 28px 20px; }
+    main { width: 100%; max-width: 480px; }
+    .brand { margin: 0 0 26px; color: #cbd5e1; font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+    .card { padding: 40px 32px 32px; border: 1px solid #334155; border-radius: 20px; background: #0f1623; }
+    .icon { width: 64px; height: 64px; margin-bottom: 28px; border-radius: 50%; display: grid; place-items: center; background: #173b76; color: #8bb5ff; }
+    .icon svg { width: 30px; height: 30px; }
+    #check, #cross { display: none; }
+    #ring { animation: spin 1s linear infinite; }
+    [data-state="success"] .icon { background: #0b3b35; color: #52e0b8; }
+    [data-state="success"] #check, [data-state="error"] #cross { display: block; }
+    [data-state="success"] #ring, [data-state="error"] #ring { display: none; }
+    [data-state="error"] .icon { background: #3a2029; color: #ff9696; }
+    .label { margin: 0 0 10px; color: #a7b4c8; font-size: 13px; }
+    h1 { margin: 0; font-size: clamp(26px, 6vw, 32px); line-height: 1.35; letter-spacing: -.025em; }
+    .message { min-height: 56px; margin: 16px 0 0; color: #cbd5e1; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+    button { width: 100%; min-height: 48px; margin-top: 24px; padding: 12px 18px; border-radius: 10px; font: inherit; font-size: 16px; text-align: center; cursor: pointer; border: 1px solid #475569; background: transparent; color: #f8fafc; }
+    button:hover { background: #1b2738; }
+    :focus-visible { outline: 3px solid #d6a84f; outline-offset: 4px; }
+    [hidden] { display: none !important; }
+    .footnote { margin: 20px 0 0; color: #a7b4c8; font-size: 13px; line-height: 1.7; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #ring { animation: none; } }
+    @media (max-width: 400px) { .card { padding: 32px 24px 24px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">PosterFlow AI</p>
+    <section class="card" id="result" data-state="loading" aria-labelledby="title" aria-busy="true">
+      <div class="icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <g id="ring"><path d="M12 3a9 9 0 1 1-9 9" /></g>
+          <path id="check" d="m5 12 4 4L19 6" />
+          <path id="cross" d="m7 7 10 10M17 7 7 17" />
+        </svg>
+      </div>
+      <div role="status" aria-live="polite" aria-atomic="true">
+        <p class="label">邮箱验证</p>
+        <h1 id="title">正在验证邮箱</h1>
+        <p class="message" id="message">请稍等，正在确认验证结果。</p>
+      </div>
+      <button id="retry" type="button" hidden>重新验证</button>
+      <noscript><p class="footnote">请使用支持 JavaScript 的浏览器打开邮件中的验证链接，才能完成验证。</p></noscript>
+    </section>
+    <p class="footnote">验证结果会保留在本页。</p>
+  </main>
+  <script nonce="{{ nonce }}">
+    // Keep the one-time proof out of HTTP URLs, referrers and browser history.
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const tokenHash = params.get("token_hash") || "";
+    const action = params.get("type") || "";
+    history.replaceState(null, "", window.location.pathname);
+    // A second email link may reuse this tab and only change the fragment.
+    window.addEventListener("hashchange", () => {
+      if (window.location.hash) window.location.reload();
+    });
+    const result = document.getElementById("result");
+    const title = document.getElementById("title");
+    const message = document.getElementById("message");
+    const retry = document.getElementById("retry");
+    let busy = false;
+
+    function show(state, heading, description, retryable = false) {
+      result.dataset.state = state;
+      result.setAttribute("aria-busy", String(state === "loading"));
+      title.textContent = heading;
+      message.textContent = description;
+      document.title = heading + " · PosterFlow AI";
+      retry.hidden = !retryable;
+    }
+
+    async function confirmEmail() {
+      if (busy) return;
+      if (action !== "email" || !/^[A-Za-z0-9_-]{32,256}$/.test(tokenHash)) {
+        show("error", "验证链接不完整", "请从验证邮件中重新打开完整链接。");
+        return;
+      }
+      busy = true;
+      show("loading", "正在验证邮箱", "请稍等，正在确认验证结果。");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch("/api/auth/confirm", {
+          method: "POST", credentials: "omit", cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token_hash: tokenHash, type: action }),
+          signal: controller.signal,
+        });
+        const data = await response.json();
+        if (response.ok && data.verified === true) {
+          show("success", "邮箱验证成功", "验证已完成，可以关闭此页面。");
+        } else {
+          show("error", data.title || "暂时无法完成验证", data.message || "请稍后重试。", data.retryable === true);
+        }
+      } catch {
+        show("error", "暂时无法确认验证结果", "网络连接中断。请点击重新验证；如果之前已验证成功，也可以直接返回网站登录。", true);
+      } finally {
+        clearTimeout(timer);
+        busy = false;
+      }
+    }
+    retry.addEventListener("click", confirmEmail);
+    confirmEmail();
+  </script>
+</body>
+</html>

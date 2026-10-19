@@ -59,6 +59,17 @@ function buildVerifyUrl(data: NonNullable<HookPayload["email_data"]>, tokenHash:
   const action = data.email_action_type?.trim() || "signup";
   if (!siteUrl || !tokenHash) throw new Error("Missing site_url or token_hash");
 
+  // Enable only after the website confirmation endpoint has been deployed.
+  const confirmationPage = Deno.env.get("EMAIL_CONFIRM_URL")?.trim();
+  if (action === "signup" && confirmationPage) {
+    const url = new URL(confirmationPage);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+      throw new Error("EMAIL_CONFIRM_URL must be a clean HTTPS URL");
+    }
+    url.hash = new URLSearchParams({ token_hash: tokenHash, type: "email" }).toString();
+    return url.toString();
+  }
+
   const url = new URL("/auth/v1/verify", siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`);
   url.searchParams.set("token", tokenHash);
   url.searchParams.set("type", action);

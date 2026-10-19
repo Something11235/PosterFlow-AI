@@ -52,7 +52,7 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
           options: { data: { username: username.trim() || email.trim().split("@")[0] } },
         });
         if (authError) throw authError;
-        if (!data.session) onNotice?.("注册成功；如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接；点了就行无需其他操作。");
+        if (!data.session) onNotice?.("注册成功，请打开验证邮件，完成邮箱验证后再登录。");
         else onNotice?.("注册成功");
         onClose();
       } else if (mode === "forgot") {
@@ -94,7 +94,7 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
         <form onSubmit={submit} className="space-y-4 px-5 py-5">
           {mode === "signIn" && (
             <div className="rounded-lg border border-gold/30 bg-gold/10 px-3 py-3 text-sm leading-6 text-gold" role="note">
-              如果刚刚注册，请先去邮箱查收验证邮件并点击确认链接；点了就行无需其他操作。
+              如果刚刚注册，请打开验证邮件，完成邮箱验证后再登录。
             </div>
           )}
           {mode === "signUp" && (

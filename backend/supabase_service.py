@@ -160,6 +160,16 @@ class SupabaseGateway:
     def rpc(self, name: str, payload: dict[str, Any]) -> Any:
         return self._request("POST", f"/rest/v1/rpc/{name}", body=payload)
 
+    def confirm_signup_email(self, token_hash: str) -> None:
+        # Verify the emailed proof with Auth; never use an admin user update to
+        # mark an address confirmed. Discard any session returned by Auth.
+        result = self._request(
+            "POST", "/auth/v1/verify", body={"token_hash": token_hash, "type": "email"}
+        )
+        user = result.get("user") if isinstance(result, dict) else None
+        if not isinstance(user, dict) or not user.get("email_confirmed_at"):
+            raise SupabaseError("SUPABASE_BAD_RESPONSE", "暂时无法确认邮箱验证结果", 503)
+
     def ensure_signup_bonus(self, user_id: str) -> dict[str, Any]:
         return self.rpc("ensure_signup_bonus", {"p_user_id": user_id})
 

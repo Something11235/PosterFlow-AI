@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN">
+<body style="font-family:Arial,sans-serif;line-height:1.8;color:#1f2937">
+  <h2>验证你的 PosterFlow AI 邮箱</h2>
+  <p>请点击下面的按钮。验证完成后，页面会明确显示结果。</p>
+  <p><a href="{{ .SiteURL }}/api/auth/confirm#token_hash={{ .TokenHash }}&amp;type=email" style="display:inline-block;padding:12px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px">验证邮箱</a></p>
+  <p>如果按钮无法打开，请复制下面的完整链接到浏览器：</p>
+  <p style="word-break:break-all">{{ .SiteURL }}/api/auth/confirm#token_hash={{ .TokenHash }}&amp;type=email</p>
+  <p>如果这不是你的操作，可以忽略此邮件。</p>
+</body>
+</html>
