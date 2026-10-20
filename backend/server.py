@@ -1728,7 +1728,7 @@ def admin_metrics():
         profile = gateway.account_snapshot(user.id).get("profile") or {}
         if user.id not in ADMIN_USER_IDS and profile.get("role") != "admin":
             raise ProviderError("ADMIN_REQUIRED", "没有查看平台数据的权限", 403, "该页面仅对管理员开放。")
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(timezone(timedelta(hours=8))).date()
         from_value = request.args.get("from", "")
         to_value = request.args.get("to", "")
         try:
@@ -1756,7 +1756,7 @@ def require_admin_user():
 def admin_console():
     try:
         _user, gateway = require_admin_user()
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(timezone(timedelta(hours=8))).date()
         from_value = request.args.get("from", "")
         to_value = request.args.get("to", "")
         try:
@@ -1768,6 +1768,60 @@ def admin_console():
             raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
         snapshot = gateway.admin_console_snapshot(from_date, to_date, request.args.get("search", ""), 100)
         return jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), **snapshot})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.route("/api/admin/bookkeeping", methods=["GET", "POST"])
+def admin_bookkeeping():
+    try:
+        user, gateway = require_admin_user()
+        today = datetime.now(timezone(timedelta(hours=8))).date()
+        if request.method == "GET":
+            try:
+                from_date = datetime.strptime(request.args.get("from", today.isoformat()), "%Y-%m-%d").date()
+                to_date = datetime.strptime(request.args.get("to", from_date.isoformat()), "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise ProviderError("METRICS_DATE_INVALID", "统计日期格式无效", 400) from exc
+            if from_date > to_date or to_date > today or (to_date - from_date).days > 89:
+                raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400)
+            return jsonify({"success": True, "bookkeeping": gateway.admin_bookkeeping(from_date, to_date)})
+        if not request.is_json:
+            raise ProviderError("BOOKKEEPING_INVALID", "请使用 JSON 提交记账记录", 400)
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc != request.host:
+            raise ProviderError("ORIGIN_INVALID", "请求来源无效", 403)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ProviderError("BOOKKEEPING_INVALID", "记账数据格式无效", 400)
+        scope = data.get("scope")
+        if scope not in ("overview", "daily"):
+            raise ProviderError("BOOKKEEPING_INVALID", "记账类型无效", 400)
+        stat_date = None
+        if scope == "daily":
+            try:
+                raw_date = data.get("stat_date")
+                stat_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                if stat_date.isoformat() != raw_date or stat_date > today:
+                    raise ValueError("invalid date")
+            except (TypeError, ValueError) as exc:
+                raise ProviderError("BOOKKEEPING_INVALID", "请选择今天或之前的有效日期", 400) from exc
+        fields = {}
+        for key, limit in (("recharge_text", 500), ("cost_text", 500), ("note", 1000)):
+            value = data.get(key, "")
+            if not isinstance(value, str) or len(value) > limit or "\x00" in value:
+                raise ProviderError("BOOKKEEPING_INVALID", "记账文本无效或过长", 400, "金额和成本最多 500 字，备注最多 1000 字。")
+            fields[key] = value.strip()
+        revision = data.get("revision")
+        if type(revision) is not int or not 0 <= revision <= 9007199254740991:
+            raise ProviderError("BOOKKEEPING_INVALID", "记账版本无效，请刷新后重试", 400)
+        result = gateway.save_admin_bookkeeping(user.id, scope, stat_date.isoformat() if stat_date else None,
+                                               fields["recharge_text"], fields["cost_text"], fields["note"], revision)
+        if result.get("ok") is False:
+            if result.get("code") == "BOOKKEEPING_CONFLICT":
+                raise ProviderError("BOOKKEEPING_CONFLICT", "记录已在其他窗口修改", 409, "请先重新加载最新记录，再修改保存。当前输入已保留。")
+            raise ProviderError("BOOKKEEPING_SAVE_FAILED", "记账保存失败", 503)
+        return jsonify({"success": True, "record": result["record"]})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

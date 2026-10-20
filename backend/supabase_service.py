@@ -406,6 +406,17 @@ class SupabaseGateway:
         result = self.rpc("get_public_announcements", {"p_limit": max(1, min(limit, 20))})
         return result if isinstance(result, list) else []
 
+    def admin_bookkeeping(self, from_date: date, to_date: date) -> dict[str, Any]:
+        return self.rpc("get_admin_bookkeeping", {"p_from": from_date.isoformat(), "p_to": to_date.isoformat()})
+
+    def save_admin_bookkeeping(self, admin_user_id: str, scope: str, stat_date: str | None,
+                               recharge_text: str, cost_text: str, note: str, revision: int) -> dict[str, Any]:
+        return self.rpc("save_admin_bookkeeping", {
+            "p_admin_user_id": admin_user_id, "p_scope": scope, "p_date": stat_date,
+            "p_recharge_text": recharge_text, "p_cost_text": cost_text,
+            "p_note": note, "p_revision": revision,
+        })
+
     def admin_announcements(self, search: str = "", status: str = "all", limit: int = 100) -> list[dict[str, Any]]:
         result = self.rpc(
             "get_admin_announcements",
