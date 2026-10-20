@@ -15,12 +15,15 @@ import {
 } from "lucide-react";
 import { fetchImageUrl } from "../lib/client";
 
+const PLATFORM_FAILURE_DETAIL = "一般为以下原因：\n1.提示词有模型不支持的参数或违规用词触发审核拒绝\n2.余额不足\n3.高峰期使用人数过多";
+
 export default function Gallery({
   images,
   isGenerating,
   error,
   currentPrompt,
   mode,
+  billingMode = "own_key",
   selectedCount,
   onPreview,
   onModify,
@@ -132,7 +135,7 @@ export default function Gallery({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {isGenerating && <LoadingState />}
-        {!isGenerating && error && <ErrorState error={error} onRetry={onRetry} />}
+        {!isGenerating && error && <ErrorState error={error} billingMode={billingMode} onRetry={onRetry} />}
         {!isGenerating && !error && !hasImages && <EmptyState mode={mode} presetName={presetName} presetCategory={presetCategory} />}
         {!isGenerating && !error && hasImages && (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -327,7 +330,7 @@ function LoadingState() {
   );
 }
 
-function ErrorState({ error, onRetry }) {
+function ErrorState({ error, billingMode, onRetry }) {
   const errorInfo =
     typeof error === "string"
       ? {
@@ -337,22 +340,24 @@ function ErrorState({ error, onRetry }) {
           recovery: ["检查 API Key", "确认后端进程", "重新发起生成"],
         }
       : error;
-  const recovery = errorInfo?.recovery?.length
+  const platform = (errorInfo?.billing_mode || billingMode) === "platform";
+  const recovery = platform ? ["稍后重试", "联系站主核对本次请求"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"];
+  const upstream = platform ? errorInfo?.upstream_error : null;
 
   return (
     <div className="grid min-h-[520px] items-center gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <div className="max-w-xl">
         <div className="mb-4 inline-flex items-center gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-sm font-medium text-warning">
           <AlertTriangle size={16} />
-          服务状态需要处理
+          {platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
           {errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
-        <p className="mt-3 max-w-lg text-sm leading-7 text-text-muted">
-          {errorInfo?.detail ||
+        <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
+          {platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
             "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。"}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -376,7 +381,7 @@ function ErrorState({ error, onRetry }) {
         <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
             <ShieldCheck size={17} className="text-mint" />
-            运行诊断
+            {platform ? "错误详情" : "运行诊断"}
           </div>
           <span className="rounded-md border border-error/30 bg-error/10 px-2 py-1 text-xs font-medium text-error">
             未完成
@@ -384,9 +389,29 @@ function ErrorState({ error, onRetry }) {
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <div className="flex items-start justify-between gap-4">
-            <dt className="text-text-muted">当前状态</dt>
+            <dt className="text-text-muted">{platform ? "错误类别" : "当前状态"}</dt>
             <dd className="text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
           </div>
+          {upstream?.message && <div>
+            <dt className="mb-2 text-text-muted">图片服务返回的说明</dt>
+            <dd className="whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-bg-tertiary p-3 text-sm leading-6 text-text-secondary">{upstream.message}</dd>
+          </div>}
+          {upstream?.code && <div className="flex items-start justify-between gap-4">
+            <dt className="text-text-muted">上游错误码</dt>
+            <dd className="min-w-0 break-all text-right text-text-secondary">{upstream.code}</dd>
+          </div>}
+          {upstream?.type && upstream.type !== upstream.code && <div className="flex items-start justify-between gap-4">
+            <dt className="text-text-muted">上游错误类型</dt>
+            <dd className="min-w-0 break-all text-right text-text-secondary">{upstream.type}</dd>
+          </div>}
+          {upstream?.http_status && <div className="flex items-start justify-between gap-4">
+            <dt className="text-text-muted">上游 HTTP 状态</dt>
+            <dd className="text-right text-text-secondary">{upstream.http_status}</dd>
+          </div>}
+          {upstream?.request_id && <div>
+            <dt className="mb-1 text-text-muted">服务商请求编号</dt>
+            <dd className="break-all text-xs leading-6 text-text-secondary">{upstream.request_id}</dd>
+          </div>}
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">恢复动作</dt>
             <dd className="text-right font-medium text-text-primary">按建议处理后重试</dd>

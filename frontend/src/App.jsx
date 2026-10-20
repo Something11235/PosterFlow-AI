@@ -67,6 +67,7 @@ function normalizeApiError(data, fallback = DEFAULT_ERROR) {
     return {
       message: "无法连接图片生成服务",
       code: data?.code || "PROVIDER_NETWORK_BLOCKED",
+      upstream_error: data?.upstream_error,
       detail:
         data?.detail ||
         "后端向图片服务发起 HTTPS 请求时被网络策略拦截。常见原因包括中转站地址错误、防火墙、代理或当前运行环境禁止 Python 进程出站访问。",
@@ -83,6 +84,7 @@ function normalizeApiError(data, fallback = DEFAULT_ERROR) {
     code: data?.code || fallback.code,
     detail: data?.detail || fallback.detail,
     recovery: data?.recovery || fallback.recovery,
+    upstream_error: data?.upstream_error,
   };
 }
 const FALLBACK_STYLE_DATA = {
@@ -469,7 +471,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok || data.error) {
         const nextError = normalizeApiError(data);
-        setError(nextError);
+        setError({ ...nextError, billing_mode: billingMode });
         if (nextError.code === "EMAIL_UNVERIFIED") setNotice("请先完成邮箱验证，验证后即可使用免费积分");
         if (nextError.code === "PROVIDER_KEY_MISSING") setShowProviderSettings(true);
         await refreshAccount();
@@ -495,6 +497,7 @@ export default function App() {
       if (!referenceUploadFailed) await refreshAccount();
       setError({
         message: referenceUploadFailed ? "参考图上传失败" : "生成请求超时或后端连接中断",
+        billing_mode: billingMode,
         code: reason?.code || "BACKEND_OFFLINE",
         detail: reason?.detail || reason?.message || "本次请求可能被服务商或平台超时终止；未完成的任务会在超时后自动退回预留积分。",
         recovery: referenceUploadFailed
@@ -557,7 +560,7 @@ export default function App() {
             detail: "本次迭代请求没有完成。",
             recovery: ["检查后端服务", "确认原图仍存在", "重新发起迭代"],
           });
-          setError(nextError);
+          setError({ ...nextError, billing_mode: billingMode });
           if (nextError.code === "EMAIL_UNVERIFIED") setNotice("请先完成邮箱验证，验证后即可使用免费积分");
           await refreshAccount();
           return;
@@ -581,6 +584,7 @@ export default function App() {
         await refreshAccount();
         setError({
           message: "迭代请求超时或后端连接中断",
+          billing_mode: billingMode,
           code: reason?.code || "BACKEND_OFFLINE",
           detail: reason?.detail || reason?.message || "本次请求可能被服务商或平台超时终止；未完成的任务会在超时后自动退回预留积分。",
           recovery: ["等待几分钟后刷新账户", "不要连续重复点击", "稍后重新发起迭代"],
@@ -840,6 +844,7 @@ export default function App() {
 
             <section className="min-h-[620px] min-w-0 lg:min-h-0">
               <Gallery
+                billingMode={billingMode}
                 images={images}
                 isGenerating={isGenerating}
                 error={error}

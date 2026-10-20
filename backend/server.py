@@ -42,6 +42,7 @@ from flask import Flask, g, jsonify, make_response, redirect, render_template, r
 from flask_cors import CORS
 
 try:
+    from backend.provider_errors import describe_provider_rejection
     from backend.password_recovery import password_recovery
     from backend.image_preview import create_image_preview, preview_filename
     from backend.supabase_service import (
@@ -54,6 +55,7 @@ try:
     )
     from backend.payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
+    from provider_errors import describe_provider_rejection
     from password_recovery import password_recovery
     from image_preview import create_image_preview, preview_filename
     from supabase_service import (
@@ -164,13 +166,14 @@ if IMAGE_STORAGE_BACKEND == "local" or (IMAGE_STORAGE_BACKEND == "auto" and not 
 
 
 class ProviderError(Exception):
-    def __init__(self, code, message, status=502, detail="", recovery=None):
+    def __init__(self, code, message, status=502, detail="", recovery=None, upstream_error=None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
         self.detail = detail
         self.recovery = recovery or []
+        self.upstream_error = upstream_error
 
 
 @dataclass(frozen=True)
@@ -797,6 +800,7 @@ def provider_error_response(error):
             "code": error.code,
             "detail": error.detail,
             "recovery": error.recovery,
+            **({"upstream_error": error.upstream_error} if error.upstream_error else {}),
         }
     ), error.status
 
@@ -1529,6 +1533,13 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
     try:
         result = response.json()
     except ValueError as exc:
+        if provider.source == "platform" and response.status_code >= 400:
+            text = response.text if isinstance(response.text, str) else ""
+            if re.search(r"<\s*(?:html|!doctype|script)\b", text, re.I):
+                text = "图片服务返回了无法解析的错误页面，请联系服务商核对请求。"
+            raise ProviderError(**describe_provider_rejection(
+                {"message": text}, response.status_code, provider, response.headers, prompt
+            )) from exc
         raise ProviderError(
             "PROVIDER_BAD_RESPONSE",
             "图片服务返回了无法识别的响应",
@@ -1537,20 +1548,24 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
             ["确认接口地址是图片生成端点", "检查中转站兼容性", "稍后重试"],
         ) from exc
 
+    if provider.source == "platform" and not isinstance(result, dict):
+        raise ProviderError("PROVIDER_BAD_RESPONSE", "图片服务返回格式异常", 502,
+                            "服务商没有返回预期的图片响应对象。", ["联系图片服务商核对响应格式"])
     if response.status_code >= 400 or result.get("error"):
+        if provider.source == "platform":
+            raise ProviderError(**describe_provider_rejection(
+                result, response.status_code, provider, response.headers, prompt
+            ))
         provider_error = result.get("error") or result.get("message") or f"HTTP {response.status_code}"
         if isinstance(provider_error, dict):
             provider_error = provider_error.get("message") or json.dumps(provider_error, ensure_ascii=False)
         raise ProviderError(
-            "PROVIDER_REJECTED",
-            "图片生成服务拒绝了本次请求",
+            "PROVIDER_REJECTED", "图片生成服务拒绝了本次请求",
             response.status_code if response.status_code >= 400 else 502,
             str(provider_error),
-            [
-                "检查 API Key、余额与模型权限",
-                "参考图编辑需确认模型支持 input_references 或标准图片编辑接口",
-                "核对接口地址和模型标识",
-            ],
+            ["检查 API Key、余额与模型权限",
+             "参考图编辑需确认模型支持 input_references 或标准图片编辑接口",
+             "核对接口地址和模型标识"],
         )
 
     items = result.get("data") or result.get("images") or []
