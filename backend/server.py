@@ -42,6 +42,7 @@ from flask import Flask, g, jsonify, make_response, redirect, render_template, r
 from flask_cors import CORS
 
 try:
+    from backend.prompt_history import HISTORY_DAYS, HISTORY_PAGE_SIZE, history_cursor, parse_history_cursor
     from backend.provider_errors import describe_provider_rejection
     from backend.password_recovery import password_recovery
     from backend.image_preview import create_image_preview, preview_filename
@@ -55,6 +56,7 @@ try:
     )
     from backend.payment_service import PaymentError, configured_payment_channels, create_checkout, parse_alipay_callback, parse_wechat_callback
 except ModuleNotFoundError:  # Allows `python backend/server.py` in local development.
+    from prompt_history import HISTORY_DAYS, HISTORY_PAGE_SIZE, history_cursor, parse_history_cursor
     from provider_errors import describe_provider_rejection
     from password_recovery import password_recovery
     from image_preview import create_image_preview, preview_filename
@@ -1743,6 +1745,28 @@ def admin_metrics():
         return provider_error_response(as_provider_error(error))
 
 
+@app.route("/api/history", methods=["GET"])
+def prompt_history():
+    try:
+        user = require_authenticated_user()
+        try:
+            cursor = parse_history_cursor(request.args.get("cursor", ""))
+        except ValueError as exc:
+            raise ProviderError("HISTORY_CURSOR_INVALID", "历史记录分页无效，请刷新后重试", 400) from exc
+        cutoff = datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)
+        rows = SupabaseGateway().prompt_history(user.id, cutoff.isoformat(), cursor, HISTORY_PAGE_SIZE + 1)
+        page = rows[:HISTORY_PAGE_SIZE]
+        # Explicit allowlist: no image keys, URLs, provider host, or credentials.
+        entries = [{"id": row["id"], "prompt": row["prompt"], "created_at": row["created_at"]} for row in page]
+        response = jsonify({"success": True, "entries": entries, "retention_days": HISTORY_DAYS,
+                            "next_cursor": history_cursor(page[-1]) if len(rows) > HISTORY_PAGE_SIZE else None})
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Vary"] = "Authorization, Cookie"
+        return response
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
 def require_admin_user():
     user = require_authenticated_user()
     gateway = SupabaseGateway()
@@ -2473,7 +2497,9 @@ def health():
             "server_provider_configured": bool(DEFAULT_API_KEY and DEFAULT_ENDPOINT and DEFAULT_MODEL),
             "platform_provider_configured": platform_provider_configured() and is_supabase_configured(),
             "storage_backend": storage_backend_name(),
-            "history_enabled": False,
+            "history_enabled": True,
+            "history_kind": "prompt_text",
+            "history_retention_days": HISTORY_DAYS,
             "payment_enabled": bool(payment_channels),
             "payment_channels": payment_channels,
             "timestamp": datetime.now(timezone.utc).isoformat(),

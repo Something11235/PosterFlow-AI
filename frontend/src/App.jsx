@@ -16,6 +16,8 @@ import AccountPanel from "./components/AccountPanel";
 import AnnouncementBanner from "./components/AnnouncementBanner";
 import AdminMetricsPanel from "./components/AdminMetricsPanel";
 import RechargePanel from "./components/RechargePanel";
+import PromptHistoryPanel from "./components/PromptHistoryPanel";
+import { rememberGuestPrompt } from "./lib/promptHistory";
 import ParameterPanel from "./components/ParameterPanel";
 import PromptEditor from "./components/PromptEditor";
 import PresetLibrary from "./components/PresetLibrary";
@@ -172,6 +174,7 @@ export default function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -463,6 +466,7 @@ export default function App() {
       }
 
       generationRequestStarted = true;
+      if (!session?.user?.id) rememberGuestPrompt(body.prompt, requestId);
       const res = await fetch(`${API_BASE}/${redrawFromPrevious ? "modify" : "generate"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -510,6 +514,7 @@ export default function App() {
     }
   }, [
     count,
+    session?.user?.id,
     customSize.height,
     customSize.width,
     authHeaders,
@@ -539,6 +544,7 @@ export default function App() {
 
       try {
         generationRequestStarted = true;
+        if (!session?.user?.id) rememberGuestPrompt(modifyPrompt.trim(), requestId);
         const res = await fetch(`${API_BASE}/modify`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
@@ -593,7 +599,7 @@ export default function App() {
         setIsGenerating(false);
       }
     },
-    [authHeaders, billingMode, customSize.height, customSize.width, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, size, updateCreditBalance],
+    [authHeaders, billingMode, customSize.height, customSize.width, platformModel, providerHeaders, refreshAccount, requireGenerationAccess, session?.user?.id, size, updateCreditBalance],
   );
 
   const handleSaveProvider = useCallback((nextConfig) => {
@@ -710,6 +716,7 @@ export default function App() {
           onOpenAccount={() => setAccountOpen(true)}
           onOpenRecharge={() => setRechargeOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
+          onOpenHistory={() => setHistoryOpen(true)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
@@ -907,6 +914,7 @@ export default function App() {
       <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
       <RechargePanel open={rechargeOpen} onClose={() => setRechargeOpen(false)} />
+      <PromptHistoryPanel key={session?.user?.id || "guest"} open={historyOpen} userId={session?.user?.id} authHeaders={authHeaders} onClose={() => setHistoryOpen(false)} onUsePrompt={value => { setPrompt(value); setActivePreset(null); setMode("create"); setHistoryOpen(false); setNotice("历史提示词已填入编辑器"); }} />
 
       {(notice || selectedCount > 0) && (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-default bg-bg-secondary px-4 py-3 text-sm text-text-secondary shadow-2xl">

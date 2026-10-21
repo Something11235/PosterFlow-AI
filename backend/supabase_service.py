@@ -385,6 +385,17 @@ class SupabaseGateway:
             },
         )
 
+    def prompt_history(self, user_id: str, cutoff: str, cursor=None, limit: int = 51) -> list[dict[str, Any]]:
+        params = {
+            "user_id": f"eq.{user_id}", "select": "id,prompt,created_at",
+            "created_at": f"gt.{cutoff}", "prompt": "neq.",
+            "order": "created_at.desc,id.desc", "limit": str(limit),
+        }
+        if cursor:
+            before, row_id = cursor
+            params["or"] = f"(created_at.lt.{before},and(created_at.eq.{before},id.lt.{row_id}))"
+        return self._request("GET", "/rest/v1/generation_jobs", params=params)
+
     def delete_user(self, user_id: str) -> None:
         self._request("DELETE", f"/auth/v1/admin/users/{user_id}")
 

@@ -1,3 +1,4 @@
+import { rememberGuestPrompt } from "../lib/promptHistory";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActiveSelection,
@@ -1538,6 +1539,7 @@ export default function FabricCanvasWorkspace({
       body.request_id = requestId;
       const requestBody = JSON.stringify(body);
       generationRequestStarted = true;
+      if (!authenticated) rememberGuestPrompt(body.prompt, requestId);
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
