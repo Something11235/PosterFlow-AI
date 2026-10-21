@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useState } from "react";
 import { Clipboard, FileImage, FileText, Loader2, Paperclip, Send, Trash2 } from "lucide-react";
 import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 
+const PROMPT_CHARACTER_LIMIT = 6000;
+
 export default function PromptEditor({
   prompt,
   onPromptChange,
@@ -23,8 +25,11 @@ export default function PromptEditor({
   const fileInputRef = useRef(null);
   const promptRef = useRef(null);
   const [mentionHint, setMentionHint] = useState("");
-  const charCount = prompt.length;
+  const charCount = Array.from(prompt.trim()).length;
+  const promptTooLong = charCount > PROMPT_CHARACTER_LIMIT;
+  const generationDisabled = isGenerating || !prompt.trim() || promptTooLong;
   const promptQuality = useMemo(() => {
+    if (charCount > PROMPT_CHARACTER_LIMIT) return "超出限制";
     if (charCount > 180) return "信息充分";
     if (charCount > 60) return "可生成";
     return "待完善";
@@ -64,7 +69,7 @@ export default function PromptEditor({
             提示词
           </label>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">{charCount} 字</span>
+            <span id="prompt-character-count" className={`text-xs tabular-nums ${promptTooLong ? "text-error" : "text-text-muted"}`} title="最多6000个字符，首尾空白不计入限制">{charCount}/{PROMPT_CHARACTER_LIMIT}<span className="sr-only"> 字符</span></span>
             {(currentPrompt || prompt) && (
               <button
                 type="button"
@@ -82,17 +87,20 @@ export default function PromptEditor({
           id="prompt"
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
+          aria-describedby={`prompt-character-count${promptTooLong ? " prompt-length-warning" : ""}`}
+          aria-invalid={promptTooLong || undefined}
           placeholder="描述你想生成或修改的画面；可在下方上传素材并用 @图1、@图2 引用。"
           rows={8}
           className="min-h-52 w-full resize-y rounded-lg border border-border-default bg-bg-primary/78 px-4 py-3 text-base leading-7 text-text-primary placeholder:text-text-muted transition focus:border-accent/65"
         />
+        {promptTooLong && <p id="prompt-length-warning" role="alert" className="mt-2 text-xs leading-5 text-error">提示词最多 6000 个字符，请精简后再生成。</p>}
       </div>
 
       {showReference && (
         <div className="mb-4">
-          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
-            <Paperclip size={16} />
-            参考素材
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-sm font-medium text-text-secondary"><Paperclip size={16} />参考素材</span>
+            <span className="text-xs text-text-muted">单张最多 16 MB</span>
           </div>
           <button
             type="button"
@@ -149,9 +157,9 @@ export default function PromptEditor({
       <button
         type="button"
         onClick={onGenerate}
-        disabled={isGenerating || !prompt.trim()}
+        disabled={generationDisabled}
         className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
-          isGenerating || !prompt.trim()
+          generationDisabled
             ? "cursor-not-allowed bg-bg-elevated text-text-muted"
             : "bg-accent text-white shadow-lg shadow-accent/20 hover:bg-accent-hover active:scale-[0.99]"
         }`}

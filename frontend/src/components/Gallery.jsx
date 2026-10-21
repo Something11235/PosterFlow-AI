@@ -341,7 +341,7 @@ function ErrorState({ error, billingMode, onRetry }) {
         }
       : error;
   const platform = (errorInfo?.billing_mode || billingMode) === "platform";
-  const recovery = platform ? ["稍后重试", "联系站主核对本次请求"] : errorInfo?.recovery?.length
+  const recovery = platform ? ["请修改提示词或更换参考图重试"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"];
   const upstream = platform ? errorInfo?.upstream_error : null;
