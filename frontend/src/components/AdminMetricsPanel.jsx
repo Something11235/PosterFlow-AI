@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Activity, CircleDollarSign, CreditCard, Loader2, RefreshCw, Search, Send, ShieldCheck, UsersRound, X } from "lucide-react";
 import AnnouncementManager from "./AnnouncementManager";
 import AdminBookkeepingPanel from "./AdminBookkeepingPanel";
-import { beijingDate } from "../lib/adminBookkeeping";
+import { beijingDate, initialStatsFrom } from "../lib/adminBookkeeping";
 
 const METRIC_LABELS = {
   registered_users: "新增用户", verified_users: "已验证邮箱", daily_active_users: "今日活跃", monthly_active_users: "本月活跃",
@@ -32,7 +32,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
   const [signupBonusCredits, setSignupBonusCredits] = useState("10");
   const [settingsReason, setSettingsReason] = useState("");
   const [search, setSearch] = useState("");
-  const [from, setFrom] = useState(() => dateValue(-29));
+  const [from, setFrom] = useState(() => initialStatsFrom());
   const [to, setTo] = useState(() => dateValue(0));
   const [selectedUser, setSelectedUser] = useState(null);
   const [delta, setDelta] = useState("10");

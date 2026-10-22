@@ -1,10 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, BookOpen, CalendarDays, Check, Loader2, Save } from "lucide-react";
-import { amountInCents, beijingDate, money, summarizeDays } from "../lib/adminBookkeeping";
+import { ADMIN_STATS_START, amountInCents, beijingDate, formatLedgerAmount, money, summarizeDays } from "../lib/adminBookkeeping";
 
 const INPUT = "mt-2 min-h-11 w-full min-w-0 rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent disabled:opacity-50";
 const BUTTON = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50";
-const blank = { recharge_text: "", cost_text: "", note: "", revision: 0 };
 
 function TrendChart({ days, financial = false, onSelect }) {
   const [active, setActive] = useState(null);
@@ -36,14 +35,13 @@ function TrendChart({ days, financial = false, onSelect }) {
 
 export default function AdminBookkeepingPanel({ initialData, authHeaders, loading, onSavingChange }) {
   const [data, setData] = useState(null);
-  const [overview, setOverview] = useState(blank);
   const [daily, setDaily] = useState(null);
   const [statDate, setStatDate] = useState(() => beijingDate());
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [conflict, setConflict] = useState("");
-  const overviewDirty = useRef(false), dailyDirty = useRef(false), pending = useRef(null);
+  const dailyDirty = useRef(false), pending = useRef(null);
   const dayCache = useRef(new Map());
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; pending.current?.abort(); }; }, []);
@@ -51,13 +49,13 @@ export default function AdminBookkeepingPanel({ initialData, authHeaders, loadin
     if (!initialData) return;
     setData(initialData);
     for (const day of [...(initialData.days || []), initialData.today].filter(Boolean)) dayCache.current.set(day.stat_date, day);
-    if (!overviewDirty.current) setOverview(initialData.overview || blank);
   }, [initialData]);
   useEffect(() => {
     if (!dailyDirty.current) setDaily(dayCache.current.get(statDate) || null);
   }, [data, statDate]);
-  const days = data?.days || [];
-  const summary = useMemo(() => summarizeDays(data?.days || []), [data]);
+  const overview = data?.overview?.source === "daily" ? data.overview : null;
+  const days = useMemo(() => (data?.days || []).filter(day => day.stat_date >= ADMIN_STATS_START), [data]);
+  const summary = useMemo(() => summarizeDays(days), [days]);
   const locked = loading || Boolean(saving) || !data;
 
   const chooseDay = (dayOrDate) => {
@@ -66,54 +64,51 @@ export default function AdminBookkeepingPanel({ initialData, authHeaders, loadin
     dailyDirty.current = false; setStatDate(date); setError(""); setSuccess(""); setConflict("");
     setDaily(dayCache.current.get(date) || null);
   };
-  const readDay = async (reloadScope = "daily") => {
+  const readDay = async () => {
     if (pending.current || !statDate) return;
-    if (reloadScope === "daily" && dailyDirty.current && !window.confirm("重新加载会替换当前日期尚未保存的输入，确定继续吗？")) return;
-    if (reloadScope === "overview" && overviewDirty.current && !window.confirm("重新加载会替换总账尚未保存的输入，确定继续吗？")) return;
+    if (dailyDirty.current && !window.confirm("重新加载会替换当前日期尚未保存的输入，确定继续吗？")) return;
     const controller = new AbortController(); pending.current = controller; setSaving("read"); onSavingChange(true); setError("");
     try {
       const response = await fetch(`/api/admin/bookkeeping?${new URLSearchParams({ from: statDate, to: statDate })}`, { headers: authHeaders, credentials: "include", signal: controller.signal });
       const result = await response.json(); if (!response.ok) throw new Error(result.detail || result.error || "读取记录失败");
       if (!alive.current || controller.signal.aborted) return;
-      if (reloadScope === "overview") { overviewDirty.current = false; setOverview(result.bookkeeping.overview); }
-      else { dailyDirty.current = false; dayCache.current.set(statDate, result.bookkeeping.days[0]); setDaily(result.bookkeeping.days[0]); }
+      const record = result.bookkeeping.days[0];
+      dailyDirty.current = false; dayCache.current.set(statDate, record); setDaily(record);
+      setData(d => ({ ...d, overview: result.bookkeeping.overview, days: d.days.map(day => day.stat_date === record.stat_date ? record : day) }));
       setConflict(""); setSuccess("已读取最新记录。");
     } catch (e) { if (!controller.signal.aborted && alive.current) setError(e.message || "读取记录失败"); }
     finally { if (alive.current) { setSaving(""); onSavingChange(false); } if (pending.current === controller) pending.current = null; }
   };
-  const save = async (event, scope) => {
-    event.preventDefault(); if (pending.current || locked || (scope === "daily" && !daily)) return;
-    const fields = scope === "overview" ? overview : daily;
-    const controller = new AbortController(); pending.current = controller; setSaving(scope); onSavingChange(true); setError(""); setSuccess("");
+  const save = async (event) => {
+    event.preventDefault(); if (pending.current || locked || !daily) return;
+    const fields = daily;
+    const controller = new AbortController(); pending.current = controller; setSaving("daily"); onSavingChange(true); setError(""); setSuccess("");
     try {
-      const response = await fetch("/api/admin/bookkeeping", { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, credentials: "include", signal: controller.signal, body: JSON.stringify({ scope, stat_date: statDate, recharge_text: fields.recharge_text, cost_text: fields.cost_text, note: fields.note || "", revision: fields.revision }) });
+      const response = await fetch("/api/admin/bookkeeping", { method: "POST", headers: { ...authHeaders, "Content-Type": "application/json" }, credentials: "include", signal: controller.signal, body: JSON.stringify({ scope: "daily", stat_date: statDate, recharge_text: fields.recharge_text, cost_text: fields.cost_text, note: fields.note || "", revision: fields.revision }) });
       const result = await response.json();
       if (!alive.current || controller.signal.aborted) return;
-      if (!response.ok) { if (result.code === "BOOKKEEPING_CONFLICT") setConflict(scope); throw new Error(result.detail || result.error || "记账保存失败"); }
-      if (scope === "overview") { overviewDirty.current = false; setOverview(result.record); setData(d => ({ ...d, overview: result.record })); }
-      else {
-        dailyDirty.current = false; setDaily(result.record);
-        dayCache.current.set(result.record.stat_date, result.record);
-        setData(d => ({ ...d, today: result.record.stat_date === d.today_date ? result.record : d.today, days: d.days.map(day => day.stat_date === result.record.stat_date ? result.record : day) }));
-      }
-      setConflict(""); setSuccess(scope === "overview" ? "总账已保存。" : `${statDate} 的每日记录已保存。`);
+      if (!response.ok) { if (result.code === "BOOKKEEPING_CONFLICT") setConflict("daily"); throw new Error(result.detail || result.error || "记账保存失败"); }
+      dailyDirty.current = false; setDaily(result.record);
+      dayCache.current.set(result.record.stat_date, result.record);
+      setData(d => ({ ...d, overview: result.overview, today: result.record.stat_date === d.today_date ? result.record : d.today, days: d.days.map(day => day.stat_date === result.record.stat_date ? result.record : day) }));
+      setConflict(""); setSuccess(`${statDate} 的每日记录已保存${result.overview?.source === "daily" ? "，总账已更新" : ""}。`);
     } catch (e) { if (!controller.signal.aborted && alive.current) setError(e.message || "记账保存失败，当前输入已保留。"); }
     finally { if (alive.current) { setSaving(""); onSavingChange(false); } if (pending.current === controller) pending.current = null; }
   };
-  const changeOverview = (key, value) => { overviewDirty.current = true; setOverview(d => ({ ...d, [key]: value })); setSuccess(""); };
   const changeDaily = (key, value) => { dailyDirty.current = true; setDaily(d => ({ ...d, [key]: value })); setSuccess(""); };
 
   return <section className="mb-5 min-w-0 space-y-4" aria-label="经营记账与每日统计">
-    <form onSubmit={event => save(event, "overview")} className="rounded-lg border border-accent/25 bg-accent/5 p-4">
-      <div className="flex items-center gap-2"><BookOpen size={17} className="text-accent" /><h3 className="text-sm font-semibold text-text-primary">经营总账</h3><span className="ml-auto text-xs text-text-muted">手动记录</span></div>
-      <p className="mt-2 text-xs leading-5 text-text-muted">记录累计收款和成本，支持文字说明。总账独立保存，不随日期筛选变化，也不会自动累加每日记录。</p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs text-text-secondary" htmlFor="ledger-recharge">充值金额（元）<input id="ledger-recharge" className={INPUT} type="text" maxLength={500} value={overview.recharge_text} disabled={locked} onChange={e => changeOverview("recharge_text", e.target.value)} placeholder="输入累计充值金额或记账文字" /></label><label className="text-xs text-text-secondary" htmlFor="ledger-cost">已消耗成本<input id="ledger-cost" className={INPUT} type="text" maxLength={500} value={overview.cost_text} disabled={locked} onChange={e => changeOverview("cost_text", e.target.value)} placeholder="例如：接口费用、服务器费用" /></label></div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-text-muted">{overview.updated_at ? `最近保存：${new Date(overview.updated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}` : "尚未填写总账"}</span><button className={BUTTON} disabled={locked} type="submit">{saving === "overview" ? <Loader2 size={15} className="animate-spin-soft" /> : <Save size={15} />}保存总账</button></div>
-    </form>
+    <section aria-label="经营总账" className="rounded-lg border border-accent/25 bg-accent/5 p-4" aria-busy={locked}>
+      <div className="flex items-center gap-2"><BookOpen size={17} className="text-accent" /><h3 className="text-sm font-semibold text-text-primary">经营总账</h3><span className="ml-auto rounded-full border border-mint/25 bg-mint/10 px-2 py-1 text-xs text-mint">自动汇总</span></div>
+      <p className="mt-2 text-xs leading-5 text-text-muted">自动累加截至今日的全部每日记录，不受日期筛选或用户搜索影响。保存或修改每日记录后自动更新。</p>
+      <dl className="mt-3 grid gap-3 sm:grid-cols-2">{[["充值金额（元）", "ledger-recharge", overview?.recharge_text, "text-mint"], ["已消耗成本（元）", "ledger-cost", overview?.cost_text, "text-gold"]].map(([title, id, value, color]) => <div key={id} className="rounded-md border border-border-subtle bg-bg-primary/70 p-4"><dt className="text-xs text-text-secondary">{title}</dt><dd id={id} className={`mt-2 break-all text-2xl font-semibold tabular-nums ${color}`} aria-live="polite">{loading ? "—" : formatLedgerAmount(value)}</dd></div>)}</dl>
+      <p className="mt-3 text-xs leading-5 text-text-muted">{overview ? `共 ${overview.recorded_days} 天已保存记录；充值 ${overview.recharge_days} 天、成本 ${overview.cost_days} 天填写数字。` : loading || !data ? "正在加载累计记录…" : "累计数据暂不可用，请刷新后重试。"} 仅汇总纯数字金额，空白和文字说明不计入。{overview?.text_days > 0 && `其中 ${overview.text_days} 天包含文字金额，请在每日明细中核对。`}</p>
+      {overview?.updated_at && <p className="mt-2 text-xs text-text-muted">最近记账：{new Date(overview.updated_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</p>}
+    </section>
 
     <div className="rounded-lg border border-border-subtle bg-bg-tertiary p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><CalendarDays size={17} className="text-mint" /><h3 className="text-sm font-semibold text-text-primary">每日统计</h3></div><span className="text-xs text-text-muted">北京时间 · 可补记历史日期</span></div>
-      <form onSubmit={event => save(event, "daily")} className="mt-4">
+      <form onSubmit={save} className="mt-4">
         <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><label className="min-w-0 text-xs text-text-secondary" htmlFor="daily-date">记录日期<input id="daily-date" className={INPUT} type="date" max={data?.today_date || beijingDate()} value={statDate} disabled={locked} onChange={e => chooseDay(e.target.value)} /></label><div className="min-w-0 rounded-md border border-border-subtle bg-bg-primary/70 px-3 py-2"><p className="text-xs text-text-muted">当日新增用户 · 自动统计</p><p className="mt-1 text-xl font-semibold tabular-nums text-text-primary" data-testid="daily-new-users">{daily?.new_users ?? "—"}<span className="ml-2 text-xs font-normal text-text-muted">人</span></p></div><button type="button" className="min-h-11 rounded-md border border-border-default px-3 text-sm text-text-secondary disabled:opacity-50" disabled={locked || !statDate} onClick={() => readDay()}>读取该日记录</button></div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2"><label htmlFor="daily-recharge" className="text-xs text-text-secondary">当日充值金额（元，手动）<input id="daily-recharge" className={INPUT} type="text" maxLength={500} value={daily?.recharge_text || ""} disabled={locked || !daily} onChange={e => changeDaily("recharge_text", e.target.value)} placeholder="例如：128.50，也可记录文字" /></label><label htmlFor="daily-cost" className="text-xs text-text-secondary">当日已消耗成本（元，手动）<input id="daily-cost" className={INPUT} type="text" maxLength={500} value={daily?.cost_text || ""} disabled={locked || !daily} onChange={e => changeDaily("cost_text", e.target.value)} placeholder="例如：36.80，也可记录文字" /></label></div>
         <label className="mt-3 block text-xs text-text-secondary" htmlFor="daily-note">当日备注<textarea id="daily-note" className={`${INPUT} min-h-20 py-3`} maxLength={1000} value={daily?.note || ""} disabled={locked || !daily} onChange={e => changeDaily("note", e.target.value)} placeholder="补充收款、支出或运营情况" /></label>
@@ -121,12 +116,12 @@ export default function AdminBookkeepingPanel({ initialData, authHeaders, loadin
       </form>
     </div>
     {error && <p className="rounded-md border border-error/30 bg-error/10 p-3 text-sm text-error" role="alert">{error}</p>}
-    {conflict && <button type="button" className="min-h-11 rounded-md border border-border-default px-3 text-sm text-text-primary" disabled={locked} onClick={() => readDay(conflict)}>重新加载{conflict === "overview" ? "总账" : "该日"}最新记录</button>}
+    {conflict && <button type="button" className="min-h-11 rounded-md border border-border-default px-3 text-sm text-text-primary" disabled={locked} onClick={() => readDay()}>重新加载该日最新记录</button>}
     {success && <p role="status" className="flex items-center gap-2 text-sm text-mint"><Check size={16} />{success}</p>}
 
     <div className="rounded-lg border border-border-subtle bg-bg-tertiary p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary"><BarChart3 size={17} className="text-accent" />经营趋势看板</h3><span className="text-xs text-text-muted">{data ? `${data.from} — ${data.to}` : "等待加载"}</span></div>
-      <p className="mt-2 text-xs leading-5 text-text-muted">使用控制台上方的日期筛选查询，最多 90 天。用户搜索不影响经营统计。</p>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary"><BarChart3 size={17} className="text-accent" />经营趋势看板</h3><span className="text-xs text-text-muted">{days.length ? `${days[0].stat_date} — ${days.at(-1).stat_date}` : "暂无区间数据"}</span></div>
+      <p className="mt-2 text-xs leading-5 text-text-muted">统计起始日为 2026-10-11。使用控制台上方的日期筛选查询，最多 90 天；不展示起始日之前的数据。用户搜索不影响经营统计。</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">{[
         ["区间新增用户", data ? summary.newUsers.toLocaleString("zh-CN") : "—", `${days.length} 天 · 自动统计`, "text-accent"],
         ["已记录充值（元）", summary.rechargeDays ? money(summary.rechargeCents) : "—", `${summary.rechargeDays} / ${days.length} 天填写数字`, "text-mint"],

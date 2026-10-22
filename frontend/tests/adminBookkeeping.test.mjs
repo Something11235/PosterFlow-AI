@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { amountInCents, beijingDate, summarizeDays } from "../src/lib/adminBookkeeping.js";
+import { amountInCents, beijingDate, formatLedgerAmount, initialStatsFrom, summarizeDays } from "../src/lib/adminBookkeeping.js";
 import { toApiDate, toInputDate } from "../src/lib/announcementTime.js";
 import { announcementVersion, readVersions, rememberVersions } from "../src/lib/announcementVisibility.js";
 
@@ -21,6 +21,17 @@ test("daily sums use cents and report incomplete and freeform entries", () => {
 test("Beijing date rolls over eight hours ahead of UTC", () => {
   assert.equal(beijingDate(0, new Date("2026-10-20T16:00:00Z")), "2026-10-21");
   assert.equal(beijingDate(-1, new Date("2026-10-20T16:00:00Z")), "2026-10-20");
+});
+test("admin charts start on October 11 and retain the 90-day API bound", () => {
+  assert.equal(initialStatsFrom(new Date("2026-10-21T16:00:00Z")), "2026-10-11");
+  assert.equal(initialStatsFrom(new Date("2027-01-10T16:00:00Z")), "2026-10-14");
+});
+test("cumulative SQL decimal totals display exactly without floating-point rounding", () => {
+  assert.equal(formatLedgerAmount("1280.10"), "1,280.10");
+  assert.equal(formatLedgerAmount("99999999999999999.99"), "99,999,999,999,999,999.99");
+  assert.equal(formatLedgerAmount("-0.25"), "-0.25");
+  assert.equal(formatLedgerAmount("0.00"), "0.00");
+  for (const value of [null, undefined, "", "待核对", "1,000.00"]) assert.equal(formatLedgerAmount(value), "—");
 });
 test("announcement edit-save round trip never shifts the instant by eight hours", () => {
   const instant = "2026-10-20T16:00:00.000Z";

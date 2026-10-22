@@ -1845,7 +1845,7 @@ def admin_bookkeeping():
             if result.get("code") == "BOOKKEEPING_CONFLICT":
                 raise ProviderError("BOOKKEEPING_CONFLICT", "记录已在其他窗口修改", 409, "请先重新加载最新记录，再修改保存。当前输入已保留。")
             raise ProviderError("BOOKKEEPING_SAVE_FAILED", "记账保存失败", 503)
-        return jsonify({"success": True, "record": result["record"]})
+        return jsonify({"success": True, "record": result["record"], "overview": result.get("overview")})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

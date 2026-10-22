@@ -1,5 +1,19 @@
 // Monetary text stays untouched. Only plain decimals participate in charts;
 // blanks and notes are missing observations, never silently converted to zero.
+export const ADMIN_STATS_START = "2026-10-11";
+
+export function initialStatsFrom(now = new Date()) {
+  // The existing API bounds each query to 90 days.
+  return [ADMIN_STATS_START, beijingDate(-89, now)].sort().at(-1);
+}
+
+export function formatLedgerAmount(value) {
+  if (typeof value !== "string" || !/^-?\d+\.\d{2}$/.test(value)) return "—";
+  const [whole, fraction] = value.split(".");
+  const negative = whole.startsWith("-");
+  return `${negative ? "-" : ""}${BigInt(whole.replace(/^-/, "")).toLocaleString("zh-CN")}.${fraction}`;
+}
+
 export function amountInCents(text) {
   const value = String(text ?? "").trim();
   if (!/^-?\d{1,12}(?:\.\d{1,2})?$/.test(value)) return null;

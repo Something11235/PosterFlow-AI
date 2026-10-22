@@ -41,6 +41,14 @@ class AdminBookkeepingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.get_json()["code"], "BOOKKEEPING_CONFLICT")
 
+    def test_daily_save_returns_authoritative_all_time_totals_without_an_extra_query(self):
+        overview = {"source": "daily", "recharge_text": "0.30", "cost_text": "0.00", "recorded_days": 2}
+        self.gateway.save_admin_bookkeeping.return_value["overview"] = overview
+        response = self.post()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["overview"], overview)
+        self.gateway.admin_bookkeeping.assert_not_called()
+
     def test_non_admin_and_cross_origin_writes_rejected(self):
         for method in ("get", "post"):
             with patch.object(server, "require_admin_user", side_effect=server.ProviderError("ADMIN_REQUIRED", "没有管理员权限", 403)):

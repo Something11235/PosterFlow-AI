@@ -32,9 +32,8 @@ begin
   v_data := public.get_admin_bookkeeping(v_today,v_today);
   if v_data->'today'->>'cost_text' <> '接口费用待核对' or v_data->'today'->>'note' <> '<b>literal note</b>'
     or (v_data->'today'->>'revision')::bigint <> v_revision + 1 then raise exception 'Refresh overwrote manual fields'; end if;
-  v_revision := (v_data->'overview'->>'revision')::bigint;
-  v_saved := public.save_admin_bookkeeping(v_admin,'overview',null,'微信收款 100 元','服务器 20 元','',v_revision);
-  if not (v_saved->>'ok')::boolean then raise exception 'Overview save failed'; end if;
+  if v_data->'overview'->>'source' <> 'daily' or v_data->'overview' <> public.get_admin_bookkeeping_totals()
+    then raise exception 'Overview is not the all-time daily aggregate'; end if;
   begin
     perform public.get_admin_bookkeeping(v_today-90,v_today);
     raise exception 'Unbounded range accepted';
