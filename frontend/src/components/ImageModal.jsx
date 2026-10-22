@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Download, RefreshCw, X } from "lucide-react";
+import { Download, Loader2, RefreshCw, X } from "lucide-react";
 import { fetchImageBlob } from "../lib/client";
 
-export default function ImageModal({ filename, onClose, onModify, onDownloadImage, authenticated = false, authHeaders }) {
+export default function ImageModal({ filename, onClose, onModify, onDownloadImage, isDownloading = false, authenticated = false, authHeaders }) {
   const [modifyText, setModifyText] = useState("");
   const [assetUrl, setAssetUrl] = useState("");
   const [assetError, setAssetError] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let alive = true;
     let objectUrl = "";
     setAssetUrl("");
     setAssetError("");
-    fetchImageBlob(filename, { authenticated, headers: authHeaders }).then((blob) => {
+    fetchImageBlob(filename, { authenticated, headers: authHeaders, forceRefresh: retryCount > 0 }).then((blob) => {
       if (alive) {
         objectUrl = URL.createObjectURL(blob);
         setAssetUrl(objectUrl);
@@ -22,7 +23,7 @@ export default function ImageModal({ filename, onClose, onModify, onDownloadImag
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [authHeaders, authenticated, filename]);
+  }, [authHeaders, authenticated, filename, retryCount]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -37,7 +38,7 @@ export default function ImageModal({ filename, onClose, onModify, onDownloadImag
   }, [handleKeyDown]);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/82 backdrop-blur-sm animate-fade-in">
+    <div role="dialog" aria-modal="true" aria-label="原图预览" className="fixed inset-0 z-50 flex flex-col bg-black/82 backdrop-blur-sm animate-fade-in">
       <div className="flex items-center justify-between border-b border-white/10 bg-bg-primary/72 px-4 py-3">
         <div>
           <p className="text-sm font-semibold text-white">原图预览</p>
@@ -55,13 +56,28 @@ export default function ImageModal({ filename, onClose, onModify, onDownloadImag
 
       <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-h-0 items-center justify-center rounded-lg border border-white/10 bg-bg-primary/72 p-3">
-          {assetError && <p role="alert" className="text-sm text-text-muted">{assetError}</p>}
-          <img
-            src={assetUrl || undefined}
+          {!assetUrl && !assetError && (
+            <p role="status" className="flex items-center gap-2 text-sm text-text-secondary">
+              <Loader2 size={18} className="animate-spin" />
+              正在加载原图，请稍候…
+            </p>
+          )}
+          {assetError && (
+            <div className="flex flex-col items-center gap-4 px-3 text-center">
+              <p role="alert" className="text-sm leading-6 text-text-secondary">{assetError}</p>
+              <button type="button" onClick={() => setRetryCount(value => value + 1)}
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-4 text-sm text-accent transition hover:bg-accent/20">
+                <RefreshCw size={16} />重新加载原图
+              </button>
+            </div>
+          )}
+          {assetUrl && !assetError && <img
+            src={assetUrl}
             alt="生成图片原图预览"
             referrerPolicy="no-referrer"
             className="max-h-full max-w-full rounded-md object-contain shadow-2xl"
-          />
+            onError={() => setAssetError("图片解码失败，请重新加载原图。")}
+          />}
         </div>
 
         <aside className="flex flex-col rounded-lg border border-white/10 bg-bg-secondary p-4">
@@ -73,10 +89,12 @@ export default function ImageModal({ filename, onClose, onModify, onDownloadImag
           <button
             type="button"
             onClick={() => onDownloadImage(filename)}
-            className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
+            disabled={isDownloading}
+            aria-busy={isDownloading}
+            className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover disabled:cursor-wait disabled:opacity-65"
           >
-            <Download size={17} />
-            下载原图
+            {isDownloading ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
+            {isDownloading ? "正在读取原图…" : "下载原图"}
           </button>
 
           {onModify && (

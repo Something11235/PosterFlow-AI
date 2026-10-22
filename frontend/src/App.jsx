@@ -156,6 +156,8 @@ export default function App() {
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [downloadingImages, setDownloadingImages] = useState(new Set());
+  const downloadingImagesRef = useRef(new Set());
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState("");
 
@@ -659,10 +661,18 @@ export default function App() {
   }, []);
 
   const handleDownloadImage = useCallback(async (filename) => {
+    if (downloadingImagesRef.current.has(filename)) return;
+    downloadingImagesRef.current.add(filename);
+    setDownloadingImages(new Set(downloadingImagesRef.current));
+    setNotice("正在读取原图，请稍候…");
     try {
       await downloadImage(filename, { authenticated: Boolean(session), headers: authHeaders });
+      setNotice("已请求浏览器下载原图");
     } catch (reason) {
       setNotice("下载失败：" + (reason?.message || "请稍后重试"));
+    } finally {
+      downloadingImagesRef.current.delete(filename);
+      setDownloadingImages(new Set(downloadingImagesRef.current));
     }
   }, [authHeaders, session]);
 
@@ -893,6 +903,7 @@ export default function App() {
                 onClearSelection={() => setSelectedImages(new Set())}
                 onDownloadBatch={handleDownloadBatch}
                 onDownloadImage={handleDownloadImage}
+                downloadingImages={downloadingImages}
                 isExporting={isExporting}
                 onAddToCanvas={handleAddToCanvas}
                 onCopyPrompt={handleCopyPrompt}
@@ -911,7 +922,9 @@ export default function App() {
 
       {previewImage && (
         <ImageModal
+          key={previewImage}
           onDownloadImage={handleDownloadImage}
+          isDownloading={downloadingImages.has(previewImage)}
           filename={previewImage}
           onClose={() => setPreviewImage(null)}
           onModify={mode === "iterative" ? handleModify : null}

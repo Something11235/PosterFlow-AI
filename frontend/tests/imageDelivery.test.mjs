@@ -6,7 +6,7 @@ globalThis.window = {
   location: { origin: "https://posterflow.example" },
   localStorage: { getItem: () => "test-client", setItem() {} },
 };
-const { clearImageUrlCache, fetchImageUrl, fetchImageBlob, imageDownloadUrl } = await import("../src/lib/client.js");
+const { clearImageUrlCache, fetchImageUrl, fetchImageBlob, imageDownloadUrl, IMAGE_URL_TIMEOUT_MS, IMAGE_READ_TIMEOUT_MS } = await import("../src/lib/client.js");
 const { createImageArchive, MAX_EXPORT_BYTES } = await import("../src/lib/batchDownload.js");
 const options = { authenticated: true, headers: { Authorization: "Bearer user-a" } };
 const directUrl = "https://project.supabase.co/storage/v1/object/sign/test.png?token=test";
@@ -209,4 +209,142 @@ test("in-flight reads cannot repopulate a cleared login cache", async () => {
 test("HTML/JSON error payloads cannot be cached or downloaded as images", async () => {
   mock.method(globalThis, "fetch", async (url) => url.includes("/url") ? signed() : Response.json({ error: "bad image" }));
   await assert.rejects(fetchImageBlob("test.png", options), /有效图片/);
+});
+
+async function waitFor(predicate) {
+  for (let tries = 0; tries < 30; tries += 1) {
+    if (predicate()) return;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.fail("Expected image request did not start");
+}
+
+test("a stalled signing request is aborted and releases callers to the authenticated fallback", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signingSignal;
+  let attempts = 0;
+  mock.method(globalThis, "fetch", async (url, init) => {
+    if (url.includes("/url")) {
+      attempts += 1;
+      signingSignal = init.signal;
+      return new Promise(() => {}); // Reproduce a transport that ignores abort.
+    }
+    assert.equal(init.headers.Authorization, options.headers.Authorization);
+    return new Response("fallback-image");
+  });
+  const pending = fetchImageBlob("timeout.png", options);
+  await waitFor(() => signingSignal);
+  t.mock.timers.tick(IMAGE_URL_TIMEOUT_MS);
+  assert.equal((await pending).size, 14);
+  assert.equal(signingSignal.aborted, true);
+  const retry = fetchImageUrl("timeout.png", options);
+  await waitFor(() => attempts === 2);
+  t.mock.timers.tick(IMAGE_URL_TIMEOUT_MS);
+  assert.equal(await retry, "/api/images/timeout.png");
+});
+
+test("the signing deadline also covers a stalled JSON body", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let bodyStarted = false;
+  mock.method(globalThis, "fetch", async () => ({
+    ok: true, json: () => { bodyStarted = true; return new Promise(() => {}); },
+  }));
+  const pending = fetchImageUrl("json-timeout.png", options);
+  await waitFor(() => bodyStarted);
+  t.mock.timers.tick(IMAGE_URL_TIMEOUT_MS);
+  assert.equal(await pending, "/api/images/json-timeout.png");
+});
+
+test("a stalled original rejects both preview and download, then permits a fresh retry", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal;
+  let reads = 0;
+  let release;
+  mock.method(globalThis, "fetch", async (url, init) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    if (reads === 1) {
+      signal = init.signal;
+      return new Promise(resolve => { release = resolve; });
+    }
+    return new Response("fresh-image");
+  });
+  const preview = fetchImageBlob("read-timeout.png", options);
+  const download = fetchImageBlob("read-timeout.png", options);
+  const rejected = Promise.all([
+    assert.rejects(preview, { code: "IMAGE_READ_TIMEOUT" }),
+    assert.rejects(download, /原图读取超时/),
+  ]);
+  await waitFor(() => signal);
+  assert.equal(reads, 1);
+  t.mock.timers.tick(IMAGE_READ_TIMEOUT_MS);
+  await rejected;
+  assert.equal(signal.aborted, true);
+  const fresh = await fetchImageBlob("read-timeout.png", options);
+  assert.equal(await fresh.text(), "fresh-image");
+  release(new Response("late-stale-image"));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await fetchImageBlob("read-timeout.png", options), fresh);
+  assert.equal(reads, 2);
+});
+
+test("the original deadline covers the complete response body, not only response headers", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let bodyStarted = false;
+  let signal;
+  mock.method(globalThis, "fetch", async (url, init) => {
+    if (url.includes("/url")) return signed();
+    signal = init.signal;
+    return { ok: true, status: 200, blob: () => { bodyStarted = true; return new Promise(() => {}); } };
+  });
+  const rejected = assert.rejects(fetchImageBlob("body-timeout.png", options), /原图读取超时/);
+  await waitFor(() => bodyStarted);
+  t.mock.timers.tick(IMAGE_READ_TIMEOUT_MS);
+  await rejected;
+  assert.equal(signal.aborted, true);
+});
+
+test("explicit retry refreshes the signature and cached original, without affecting other images", async () => {
+  let signs = 0;
+  let reads = 0;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) { signs += 1; return signed(); }
+    reads += 1;
+    return new Response("image-" + reads);
+  });
+  const other = await fetchImageBlob("other.png", options);
+  const first = await fetchImageBlob("retry.png", options);
+  const refreshed = await fetchImageBlob("retry.png", { ...options, forceRefresh: true });
+  assert.notEqual(first, refreshed);
+  assert.equal(signs, 3);
+  assert.equal(reads, 3);
+  assert.equal(await fetchImageBlob("other.png", options), other);
+  assert.equal(await fetchImageBlob("retry.png", options), refreshed);
+});
+
+test("network errors are actionable and do not reveal signed URLs or retain failed requests", async () => {
+  let reads = 0;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    reads += 1;
+    if (reads === 1) throw new TypeError("Network request failed for " + directUrl);
+    return new Response("retry-success");
+  });
+  await assert.rejects(fetchImageBlob("network.png", options), error => {
+    assert.match(error.message, /检查网络连接后重试/);
+    assert.equal(error.message.includes("token="), false);
+    return true;
+  });
+  assert.equal((await fetchImageBlob("network.png", options)).size, 13);
+});
+
+test("expired or empty originals produce explicit failures and never enter the image cache", async () => {
+  let empty = false;
+  mock.method(globalThis, "fetch", async (url) => {
+    if (url.includes("/url")) return signed();
+    return empty ? new Response("") : new Response("missing", { status: 404 });
+  });
+  await assert.rejects(fetchImageBlob("missing.png", options), /图片不存在或已过期/);
+  empty = true;
+  await assert.rejects(fetchImageBlob("missing.png", options), /图片内容为空/);
 });

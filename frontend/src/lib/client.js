@@ -31,9 +31,27 @@ const MAX_IMAGE_URLS = 256;
 const imageBlobs = new Map();
 const pendingImageBlobs = new Map();
 export const MAX_IMAGE_CACHE_BYTES = 48 * 1024 * 1024;
+export const IMAGE_URL_TIMEOUT_MS = 15 * 1000;
+export const IMAGE_READ_TIMEOUT_MS = 45 * 1000;
 const IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
 let imageCacheBytes = 0;
 let cacheEpoch = 0;
+
+function withImageTimeout(read, timeoutMs, message) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(message);
+      error.code = "IMAGE_READ_TIMEOUT";
+      // Reject even if a browser/transport does not settle after aborting.
+      reject(error);
+      controller.abort();
+    }, timeoutMs);
+  });
+  return Promise.race([Promise.resolve().then(() => read(controller.signal)), deadline])
+    .finally(() => clearTimeout(timer));
+}
 
 function imageCacheIdentity(filename, { authenticated = false, headers = {}, variant = "original" } = {}) {
   const authorization = new Headers(headers).get("Authorization") || "";
@@ -59,6 +77,7 @@ export async function fetchImageUrl(filename, { authenticated = false, headers =
   const cached = imageUrls.get(cacheKey);
   if (cacheable && !forceRefresh && cached?.expiresAt > Date.now()) return cached.url;
   if (cacheable && !forceRefresh && pendingImageUrls.has(cacheKey)) return pendingImageUrls.get(cacheKey);
+  if (forceRefresh) imageUrls.delete(cacheKey);
   const safeFilename = encodeURIComponent(filename);
   const params = new URLSearchParams();
   if (!authenticated) params.set("client_id", CLIENT_ID);
@@ -67,12 +86,16 @@ export async function fetchImageUrl(filename, { authenticated = false, headers =
   const fallback = apiAssetUrl("images", filename, { authenticated });
   const pending = (async () => {
     try {
-      const response = await fetch(`/api/images/${safeFilename}/url${query}`, {
-        headers: { ...CLIENT_HEADERS, ...headers },
-        credentials: "include",
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.url) throw new Error(payload?.error || "图片临时地址生成失败");
+      const payload = await withImageTimeout(async (signal) => {
+        const response = await fetch(`/api/images/${safeFilename}/url${query}`, {
+          headers: { ...CLIENT_HEADERS, ...headers },
+          credentials: "include",
+          signal,
+        });
+        const data = await response.json();
+        if (!response.ok || !data?.url) throw new Error("图片临时地址生成失败");
+        return data;
+      }, IMAGE_URL_TIMEOUT_MS, "图片地址获取超时，请重试。");
       const ttl = Math.max(0, (Number(payload.expires_in) || 0) - 60) * 1000;
       if (cacheable && epoch === cacheEpoch && ttl > 0 && payload.direct !== false) {
         if (imageUrls.size >= MAX_IMAGE_URLS) imageUrls.delete(imageUrls.keys().next().value);
@@ -102,24 +125,44 @@ export async function fetchImageBlob(filename, options = {}) {
   const { key, cacheable } = imageCacheIdentity(filename, options);
   const epoch = cacheEpoch;
   const cached = imageBlobs.get(key);
-  if (cacheable && cached?.expiresAt > Date.now()) {
+  if (cacheable && !options.forceRefresh && cached?.expiresAt > Date.now()) {
     imageBlobs.delete(key);
     imageBlobs.set(key, cached);
     return cached.blob;
   }
-  if (cacheable && pendingImageBlobs.has(key)) return pendingImageBlobs.get(key);
+  if (cacheable && !options.forceRefresh && pendingImageBlobs.has(key)) return pendingImageBlobs.get(key);
+  if (cached && options.forceRefresh) {
+    imageBlobs.delete(key);
+    imageCacheBytes -= cached.blob.size;
+  }
   const pending = (async () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const url = await fetchImageUrl(filename, { ...options, forceRefresh: attempt > 0 });
+      const url = await fetchImageUrl(filename, { ...options, forceRefresh: Boolean(options.forceRefresh) || attempt > 0 });
       const sameOrigin = new URL(url, window.location.origin).origin === window.location.origin;
-      const response = await fetch(url, sameOrigin
-        ? { headers: { ...CLIENT_HEADERS, ...options.headers }, credentials: "include" }
-        : { credentials: "omit", referrerPolicy: "no-referrer" });
-      if (attempt === 0 && [401, 403].includes(response.status)) continue;
-      if (!response.ok) throw new Error("图片请求失败：" + response.status);
-      const contentType = response.headers?.get("Content-Type") || "";
-      if (/^(application\/json|text\/html)/i.test(contentType)) throw new Error("图片服务没有返回有效图片");
-      const blob = await response.blob();
+      const blob = await withImageTimeout(async (signal) => {
+        let response;
+        try {
+          response = await fetch(url, { ...(sameOrigin
+            ? { headers: { ...CLIENT_HEADERS, ...options.headers }, credentials: "include" }
+            : { credentials: "omit", referrerPolicy: "no-referrer" }), signal });
+        } catch {
+          throw new Error("图片读取失败，请检查网络连接后重试。");
+        }
+        if (attempt === 0 && [401, 403].includes(response.status)) return null;
+        if (response.status === 404) throw new Error("图片不存在或已过期（404），请选择其他图片。");
+        if (!response.ok) throw new Error("图片请求失败：" + response.status);
+        const contentType = response.headers?.get("Content-Type") || "";
+        if (/^(application\/json|text\/html)/i.test(contentType)) throw new Error("图片服务没有返回有效图片");
+        let content;
+        try {
+          content = await response.blob();
+        } catch {
+          throw new Error("图片读取失败，请检查网络连接后重试。");
+        }
+        if (!content.size) throw new Error("图片内容为空，请重新加载。");
+        return content;
+      }, IMAGE_READ_TIMEOUT_MS, "原图读取超时，请检查网络连接后重试。");
+      if (!blob) continue;
       if (cacheable && epoch === cacheEpoch && blob.size <= MAX_IMAGE_CACHE_BYTES) {
         for (const [entryKey, entry] of imageBlobs) {
           if (entryKey === key || entry.expiresAt <= Date.now()) {
