@@ -1,9 +1,9 @@
 import { CLIENT_HEADERS } from "./client.js";
 import { optimizeReferenceBlob } from "./referenceCompression.js";
+import { MAX_REFERENCE_FILE_BYTES, REFERENCE_FILE_ACCEPT } from "./referenceSelection.js";
 
 const API_BASE = "/api";
-const MAX_REFERENCE_BYTES = 16 * 1024 * 1024;
-const SUPPORTED_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const SUPPORTED_TYPES = new Set(REFERENCE_FILE_ACCEPT.split(","));
 
 function responseError(payload, fallback) {
   const error = new Error(String(payload?.error || payload?.detail || fallback));
@@ -27,7 +27,7 @@ function normalizeEntry(entry, index) {
   if (!(blob instanceof Blob)) throw new Error("参考图内容无法读取");
   const contentType = String(blob.type || "").toLowerCase();
   if (!SUPPORTED_TYPES.has(contentType)) throw new Error("参考图仅支持 PNG、JPG、WebP 或 GIF");
-  if (blob.size > MAX_REFERENCE_BYTES) throw new Error("参考图不能超过 16 MB");
+  if (blob.size > MAX_REFERENCE_FILE_BYTES) throw new Error("参考图不能超过 16 MB");
   const extension = contentType === "image/jpeg" ? "jpg" : contentType.split("/")[1];
   const filename = entry?.name || (blob instanceof File && blob.name) || `reference-${index + 1}.${extension}`;
   return { blob, contentType, filename, preservePixels: Boolean(entry?.preservePixels) };

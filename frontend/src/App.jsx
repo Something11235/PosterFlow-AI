@@ -37,6 +37,7 @@ import { CLIENT_HEADERS, clearImageUrlCache, downloadImage, recoverGeneration } 
 import { createImageArchive } from "./lib/batchDownload";
 import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
+import { appendReferenceFiles, removeReferenceMentions } from "./lib/referenceSelection";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
 const CanvasWorkspace = lazy(() => import("./components/FabricCanvasWorkspace"));
@@ -148,7 +149,8 @@ export default function App() {
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
   const [count, setCount] = useState(1);
   const [referenceFiles, setReferenceFiles] = useState([]);
-  const [referencePreviews, setReferencePreviews] = useState([]);
+  const referenceFilesRef = useRef([]);
+  const [referenceFeedback, setReferenceFeedback] = useState(null);
 
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -397,13 +399,36 @@ export default function App() {
     setCurrentPrompt(generatedPrompt);
   }, []);
 
-  const handleReferenceChange = useCallback((files) => {
-    const nextFiles = Array.isArray(files) ? files.slice(0, MAX_REFERENCE_IMAGES) : files ? [files] : [];
-    setReferenceFiles(nextFiles);
-    setReferencePreviews([]);
-    Promise.all(nextFiles.map((file) => new Promise((resolve) => {
-      const reader = new FileReader(); reader.onload = (event) => resolve(event.target.result); reader.onerror = () => resolve(""); reader.readAsDataURL(file);
-    }))).then(setReferencePreviews);
+  const handleReferenceAdd = useCallback((files) => {
+    if (!files.length) return;
+    const result = appendReferenceFiles(referenceFilesRef.current, files);
+    referenceFilesRef.current = result.files;
+    setReferenceFiles(result.files);
+    const messages = [];
+    if (result.added) messages.push(`已添加 ${result.added} 张参考图`);
+    if (result.duplicates) messages.push(`已跳过 ${result.duplicates} 张重复图片`);
+    if (result.oversized) messages.push(`${result.oversized} 张超过 16 MB，未添加`);
+    if (result.unsupported) messages.push(`${result.unsupported} 张格式不支持或无法识别，请使用 PNG、JPG、WebP 或 GIF`);
+    if (result.overflow) messages.push(`最多保留 ${MAX_REFERENCE_IMAGES} 张，另外 ${result.overflow} 张未添加`);
+    setReferenceFeedback({ text: messages.join("；"), warning: Boolean(result.oversized || result.unsupported || result.overflow) });
+  }, []);
+
+  const handleReferenceRemove = useCallback((index) => {
+    const current = referenceFilesRef.current;
+    if (!Number.isInteger(index) || index < 0 || index >= current.length) return;
+    const remaining = current.filter((_file, position) => position !== index);
+    referenceFilesRef.current = remaining;
+    setReferenceFiles(remaining);
+    setPrompt(value => removeReferenceMentions(value, index, current.length));
+    setReferenceFeedback({ text: `已删除图${index + 1}，剩余图片已重新编号，相关 @图 引用已同步更新。`, warning: false });
+  }, []);
+
+  const handleReferenceClear = useCallback(() => {
+    const previousCount = referenceFilesRef.current.length;
+    referenceFilesRef.current = [];
+    setReferenceFiles([]);
+    setPrompt(value => removeReferenceMentions(value, null, previousCount));
+    setReferenceFeedback({ text: "已清空全部参考图及对应的 @图 引用。", warning: false });
   }, []);
 
   const handleApplyPreset = useCallback((preset) => {
@@ -826,8 +851,10 @@ export default function App() {
                 isGenerating={isGenerating}
                 currentPrompt={currentPrompt}
                 referenceFiles={referenceFiles}
-                onReferenceChange={handleReferenceChange}
-                referencePreviews={referencePreviews}
+                onReferenceAdd={handleReferenceAdd}
+                onReferenceRemove={handleReferenceRemove}
+                onReferenceClear={handleReferenceClear}
+                referenceFeedback={referenceFeedback}
                 mode={mode}
                 onCopyPrompt={handleCopyPrompt}
                 providerConfigured={providerConfigured}

@@ -1,8 +1,22 @@
-import React, { useMemo, useRef, useState } from "react";
-import { Clipboard, FileImage, FileText, Loader2, Paperclip, Send, Trash2 } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Clipboard, FileImage, FileText, Loader2, Paperclip, Plus, Send, Trash2, X } from "lucide-react";
 import { MAX_REFERENCE_IMAGES } from "../lib/provider";
+import { REFERENCE_FILE_ACCEPT, referenceFileKey } from "../lib/referenceSelection";
 
 const PROMPT_CHARACTER_LIMIT = 6000;
+
+function ReferenceThumbnail({ file, number }) {
+  const [url, setUrl] = useState("");
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const nextUrl = URL.createObjectURL(file);
+    setUrl(nextUrl); setFailed(false);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [file]);
+  return url && !failed
+    ? <img src={url} alt={`参考图${number}预览`} className="h-20 w-full rounded object-cover" onError={() => setFailed(true)} />
+    : <div className="flex h-20 items-center justify-center rounded bg-bg-tertiary text-text-muted"><FileImage size={23} /><span className="sr-only">参考图预览暂不可用</span></div>;
+}
 
 export default function PromptEditor({
   prompt,
@@ -10,11 +24,11 @@ export default function PromptEditor({
   onGenerate,
   isGenerating,
   currentPrompt,
-  referenceFile,
-  referenceFiles,
-  onReferenceChange,
-  referencePreview,
-  referencePreviews,
+  referenceFiles = [],
+  onReferenceAdd,
+  onReferenceRemove,
+  onReferenceClear,
+  referenceFeedback,
   mode,
   onCopyPrompt,
   providerConfigured,
@@ -35,9 +49,8 @@ export default function PromptEditor({
     return "待完善";
   }, [charCount]);
 
-  const showReference = true;
-  const files = referenceFiles || (referenceFile ? [referenceFile] : []);
-  const previews = referencePreviews || (referencePreview ? [referencePreview] : []);
+  const files = referenceFiles;
+  const referenceLimitReached = files.length >= MAX_REFERENCE_IMAGES;
   const insertMention = (index) => {
     const mention = "@图" + (index + 1); const input = promptRef.current;
     const start = input?.selectionStart ?? prompt.length; const end = input?.selectionEnd ?? start;
@@ -96,27 +109,27 @@ export default function PromptEditor({
         {promptTooLong && <p id="prompt-length-warning" role="alert" className="mt-2 text-xs leading-5 text-error">提示词最多 6000 个字符，请精简后再生成。</p>}
       </div>
 
-      {showReference && (
-        <div className="mb-4">
+        <div className="mb-4" role="group" aria-label="参考图片管理">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-2 text-sm font-medium text-text-secondary"><Paperclip size={16} />参考素材</span>
-            <span className="text-xs text-text-muted">单张最多 16 MB</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted"><span className="tabular-nums">{files.length}/{MAX_REFERENCE_IMAGES} 张</span><span>单张最多 16 MB</span></div>
           </div>
+          {files.length > 0 && <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {files.map((file, index) => <div key={referenceFileKey(file)} className="relative min-w-0 rounded-md border border-border-subtle bg-bg-primary/60 p-1.5">
+              <button type="button" onClick={() => insertMention(index)} aria-label={`插入 @图${index + 1}：${file.name}`} className="block w-full min-w-0 rounded text-left transition hover:bg-bg-elevated">
+                <div className="relative"><ReferenceThumbnail file={file} number={index + 1} /><span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 text-[11px] font-semibold text-white">图{index + 1}</span></div>
+                <p className="mt-1 truncate text-xs text-text-primary" title={file.name}>{file.name}</p><p className="truncate text-[11px] text-accent">点击插入 @图{index + 1}</p>
+              </button>
+              <button type="button" onClick={() => onReferenceRemove(index)} aria-label={`删除参考图${index + 1}：${file.name}`} title={`删除 ${file.name}`} className="absolute right-2 top-2 inline-flex min-h-9 min-w-9 items-center justify-center rounded-md border border-white/15 bg-bg-primary/90 text-text-secondary transition hover:border-error/50 hover:bg-error/15 hover:text-error"><X size={16} /></button>
+            </div>)}
+          </div>}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex min-h-24 w-full items-center justify-center rounded-lg border border-dashed border-border-default bg-bg-tertiary/70 p-3 transition hover:border-accent/45 hover:bg-bg-elevated"
+            disabled={referenceLimitReached}
+            className={`flex w-full items-center justify-center rounded-lg border border-dashed border-border-default bg-bg-tertiary/70 p-3 text-text-muted transition hover:border-accent/45 hover:bg-bg-elevated disabled:cursor-not-allowed disabled:opacity-55 ${files.length ? "min-h-12" : "min-h-24"}`}
           >
-            {files.length ? (
-              <div className="grid w-full grid-cols-2 gap-2 text-left sm:grid-cols-4">
-                {files.map((file, index) => (
-                  <button type="button" key={file.name + index} onClick={(event) => { event.stopPropagation(); insertMention(index); }} className="group min-w-0 rounded-md border border-border-subtle bg-bg-primary/60 p-1.5 text-left transition hover:border-accent/50">
-                    <div className="relative">{previews[index] && <img src={previews[index]} alt={"参考图" + (index + 1) + "预览"} className="h-20 w-full rounded object-cover" />}<span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white">图{index + 1}</span></div>
-                    <p className="mt-1 truncate text-xs text-text-primary">{file.name}</p><p className="truncate text-[11px] text-accent">点击插入 @图{index + 1}</p>
-                  </button>
-                ))}
-              </div>
-            ) : (
+            {files.length ? <span className="inline-flex items-center gap-2 text-sm"><Plus size={17} />{referenceLimitReached ? `已达 ${MAX_REFERENCE_IMAGES} 张上限` : "继续添加参考图"}</span> : (
               <div className="flex flex-col items-center gap-2 text-text-muted">
                 <FileImage size={24} />
                 <span className="text-sm">上传参考图片</span>
@@ -126,28 +139,33 @@ export default function PromptEditor({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={REFERENCE_FILE_ACCEPT}
+            aria-label="选择参考图片"
             className="hidden"
             multiple
-            onChange={(event) => onReferenceChange(Array.from(event.target.files || []))}
+            onChange={(event) => {
+              const selected = Array.from(event.currentTarget.files || []);
+              event.currentTarget.value = "";
+              if (selected.length) onReferenceAdd(selected);
+            }}
           />
           {files.length > 0 && (
             <button
               type="button"
               onClick={() => {
-                onReferenceChange([]);
+                onReferenceClear();
                 if (fileInputRef.current) fileInputRef.current.value = "";
               }}
               className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-xs text-text-muted transition hover:bg-bg-tertiary hover:text-error"
             >
               <Trash2 size={14} />
-              移除参考图
+              清空全部参考图
             </button>
           )}
-          {files.length > 0 && <p className="mt-1 text-xs leading-5 text-text-muted">最多 {MAX_REFERENCE_IMAGES} 张，按顺序对应 @图1、@图2……。想尽量保持图1背景不变，请明确写“只添加/移动主体，其他元素、镜头和背景保持不变”。</p>}
+          <p className="mt-1 text-xs leading-5 text-text-muted">最多 {MAX_REFERENCE_IMAGES} 张，可分次追加，按顺序对应 @图1、@图2……。点击图片插入引用，点击右上角 × 单独删除。</p>
+          {referenceFeedback?.text && <p className={`mt-2 break-words text-xs leading-5 ${referenceFeedback.warning ? "text-gold" : "text-text-muted"}`} role={referenceFeedback.warning ? "alert" : "status"}>{referenceFeedback.text}</p>}
           {mentionHint && <p className="mt-1 text-xs text-mint" role="status">{mentionHint}</p>}
         </div>
-      )}
 
       {!providerConfigured && (
         <p className="mb-3 rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-xs leading-5 text-gold" role="status">
