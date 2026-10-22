@@ -858,6 +858,7 @@ export default function App() {
                 prompt={prompt}
                 onPromptChange={setPrompt}
                 onGenerate={handleGenerate}
+                onOpenProvider={() => setShowProviderSettings(true)}
                 isGenerating={isGenerating}
                 currentPrompt={currentPrompt}
                 referenceFiles={referenceFiles}

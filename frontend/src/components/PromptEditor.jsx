@@ -22,6 +22,7 @@ export default function PromptEditor({
   prompt,
   onPromptChange,
   onGenerate,
+  onOpenProvider,
   isGenerating,
   currentPrompt,
   referenceFiles = [],
@@ -41,7 +42,7 @@ export default function PromptEditor({
   const [mentionHint, setMentionHint] = useState("");
   const charCount = Array.from(prompt.trim()).length;
   const promptTooLong = charCount > PROMPT_CHARACTER_LIMIT;
-  const generationDisabled = isGenerating || !prompt.trim() || promptTooLong;
+  const generationDisabled = isGenerating || (providerConfigured && (!prompt.trim() || promptTooLong));
   const promptQuality = useMemo(() => {
     if (charCount > PROMPT_CHARACTER_LIMIT) return "超出限制";
     if (charCount > 180) return "信息充分";
@@ -169,12 +170,12 @@ export default function PromptEditor({
 
       {!providerConfigured && (
         <p className="mb-3 rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-xs leading-5 text-gold" role="status">
-          还没有图片服务配置。点击下方按钮后可填写自己的 Key 和中转站。
+          还没有图片服务配置。点击下方按钮选择平台积分，或填写自己的 Key 和中转站。
         </p>
       )}
       <button
         type="button"
-        onClick={onGenerate}
+        onClick={providerConfigured ? onGenerate : onOpenProvider}
         disabled={generationDisabled}
         className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
           generationDisabled
