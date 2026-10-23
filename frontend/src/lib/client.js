@@ -121,6 +121,20 @@ export function imageDownloadUrl(url, filename) {
   return target.href;
 }
 
+export async function fetchImageDownloadUrl(filename, options = {}) {
+  // This path only obtains a URL. A user-clicked link lets the browser download
+  // independently of the shared fetch/blob request used by preview and canvas.
+  const rawUrl = await fetchImageUrl(filename, { ...options, variant: "original", forceRefresh: true });
+  const target = new URL(rawUrl, window.location.origin);
+  if (target.origin === window.location.origin) {
+    return apiAssetUrl("download", filename, options);
+  }
+  if (target.protocol !== "https:" || target.username || target.password) {
+    throw new Error("下载地址暂时不可用，请重试。");
+  }
+  return imageDownloadUrl(target.href, filename);
+}
+
 export async function fetchImageBlob(filename, options = {}) {
   const { key, cacheable } = imageCacheIdentity(filename, options);
   const epoch = cacheEpoch;

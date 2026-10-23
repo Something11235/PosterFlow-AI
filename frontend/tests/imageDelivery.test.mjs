@@ -6,7 +6,7 @@ globalThis.window = {
   location: { origin: "https://posterflow.example" },
   localStorage: { getItem: () => "test-client", setItem() {} },
 };
-const { clearImageUrlCache, fetchImageUrl, fetchImageBlob, imageDownloadUrl, IMAGE_URL_TIMEOUT_MS, IMAGE_READ_TIMEOUT_MS } = await import("../src/lib/client.js");
+const { clearImageUrlCache, fetchImageUrl, fetchImageBlob, fetchImageDownloadUrl, imageDownloadUrl, IMAGE_URL_TIMEOUT_MS, IMAGE_READ_TIMEOUT_MS } = await import("../src/lib/client.js");
 const { createImageArchive, MAX_EXPORT_BYTES } = await import("../src/lib/batchDownload.js");
 const options = { authenticated: true, headers: { Authorization: "Bearer user-a" } };
 const directUrl = "https://project.supabase.co/storage/v1/object/sign/test.png?token=test";
@@ -347,4 +347,59 @@ test("expired or empty originals produce explicit failures and never enter the i
   await assert.rejects(fetchImageBlob("missing.png", options), /图片不存在或已过期/);
   empty = true;
   await assert.rejects(fetchImageBlob("missing.png", options), /图片内容为空/);
+});
+
+test("backup download obtains a fresh authenticated URL without waiting for a stalled original", async () => {
+  let signs = 0;
+  let reads = 0;
+  let release;
+  mock.method(globalThis, "fetch", async (url, init) => {
+    if (url.includes("/url")) {
+      assert.equal(init.headers.Authorization, options.headers.Authorization);
+      signs += 1;
+      return signed();
+    }
+    reads += 1;
+    return new Promise(resolve => { release = resolve; });
+  });
+  const pending = fetchImageBlob("test.png", options);
+  await waitFor(() => release);
+  const backup = new URL(await fetchImageDownloadUrl("test.png", options));
+  assert.equal(backup.origin, "https://project.supabase.co");
+  assert.equal(backup.searchParams.get("token"), "test");
+  assert.equal(backup.searchParams.get("download"), "test.png");
+  assert.equal(backup.searchParams.has("access_token"), false);
+  assert.equal(signs, 2);
+  assert.equal(reads, 1);
+  release(new Response("original"));
+  await pending;
+});
+
+test("backup fallback uses the existing cookie-authenticated download route", async () => {
+  mock.method(globalThis, "fetch", async (_url, init) => {
+    assert.equal(init.headers.Authorization, options.headers.Authorization);
+    return Response.json({ error: "temporarily unavailable" }, { status: 503 });
+  });
+  assert.equal(await fetchImageDownloadUrl("测试.png", options), "/api/download/%E6%B5%8B%E8%AF%95.png");
+});
+
+test("guest backup fallback carries only the browser client ID, never a user token", async () => {
+  mock.method(globalThis, "fetch", async () => Response.json({}, { status: 503 }));
+  assert.equal(await fetchImageDownloadUrl("test.png"), "/api/download/test.png?client_id=test-client");
+});
+
+test("backup download always uses the original and renews a previously cached signature", async () => {
+  const requests = [];
+  mock.method(globalThis, "fetch", async url => { requests.push(url); return signed(); });
+  await fetchImageUrl("test.png", options);
+  await fetchImageDownloadUrl("test.png", { ...options, variant: "thumbnail" });
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(url => !url.includes("thumbnail")));
+});
+
+test("backup links reject unsafe protocols and embedded credentials", async () => {
+  for (const url of ["javascript:alert(1)", "http://external.example/test.png", "https://user:password@external.example/test.png"]) {
+    mock.method(globalThis, "fetch", async () => signed(url));
+    await assert.rejects(fetchImageDownloadUrl("test.png", options), /下载地址暂时不可用/);
+  }
 });
