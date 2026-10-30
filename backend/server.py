@@ -46,6 +46,7 @@ try:
     from backend.provider_errors import describe_provider_rejection
     from backend.password_recovery import password_recovery
     from backend.image_preview import create_image_preview, preview_filename
+    from backend.image_edit_mask import validate_edit_mask
     from backend.credits import credit_amount, credit_text
     from backend.admin_multimedia import enrich_overview
     from backend.supabase_service import (
@@ -62,6 +63,7 @@ except ModuleNotFoundError:  # Allows `python backend/server.py` in local develo
     from provider_errors import describe_provider_rejection
     from password_recovery import password_recovery
     from image_preview import create_image_preview, preview_filename
+    from image_edit_mask import validate_edit_mask
     from credits import credit_amount, credit_text
     from admin_multimedia import enrich_overview
     from supabase_service import (
@@ -2382,7 +2384,9 @@ def modify():
         prompt, size, custom_size, quality, _count, strength = parse_generation_request(data)
         reference_storage_paths = validate_reference_storage_paths(data.get("reference_storage_paths"))
         mask_storage_path = validate_reference_storage_path(data.get("mask_storage_path"))
-        temporary_storage_paths = reference_storage_paths + ([mask_storage_path] if mask_storage_path else [])
+        temporary_storage_paths = list(dict.fromkeys(reference_storage_paths + ([mask_storage_path] if mask_storage_path else [])))
+        # Older canvas clients accidentally included the mask as a normal image.
+        reference_storage_paths = [path for path in reference_storage_paths if path != mask_storage_path]
         if reference_storage_paths:
             direct_references = [stored_reference_to_base64(path) for path in reference_storage_paths]
         else:
@@ -2401,6 +2405,11 @@ def modify():
                 "局部重绘需要一张仍保存在服务端的历史图片，或由画布提交一张参考图。",
                 ["重新选择画布图片", "确认历史图片没有过期", "再发起局部重绘"],
             )
+        if mask_b64:
+            try:
+                validate_edit_mask(mask_b64, ref_b64[0] if isinstance(ref_b64, list) else ref_b64)
+            except ValueError as error:
+                raise ProviderError("IMAGE_MASK_INVALID", "局部编辑蒙版无效", 400, str(error)) from None
         execution = execute_generation(
             data,
             requested_count=1,

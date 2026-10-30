@@ -35,8 +35,31 @@ export async function readImageTask(requestId, headers, signal) {
 // Legacy requests remain byte-for-byte on their existing routes. New model
 // requests submit once, then only GET the durable task; never retry a paid POST.
 export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000, maxWait = 240000 } = {}) {
-  const body = JSON.parse(init.body);
+  let body = JSON.parse(init.body);
   if (!apimartImageModel(requestImageModel(body, init.headers))) return fetch(endpoint, init);
+  if (requestImageModel(body, init.headers) === "grok-imagine-2.0-ext" && body.operation === "region_edit") {
+    // Segment is free and separate from the single paid edit intent. Never
+    // resubmit either intent automatically, including ambiguous connections.
+    try {
+      let response = await boundedFetch(`${APIMART_IMAGES_BASE}/segments`, init, 90000);
+      if (!response.ok) return response;
+      let segment = await response.json();
+      const start = Date.now();
+      while (segment.status !== "completed") {
+        if (!segment.receipt || Date.now() - start > Math.min(maxWait, 60000)) throw new Error("原图准备尚未完成，尚未提交收费编辑，请稍后再试。");
+        await sleep(pollInterval);
+        response = await boundedFetch(`${APIMART_IMAGES_BASE}/segments/status`, { ...init, body: JSON.stringify({receipt:segment.receipt, platform_model:body.platform_model}) }, 30000);
+        if (!response.ok) return response;
+        segment = await response.json();
+      }
+      if (!segment.segment_receipt) throw new Error("原图准备未返回有效结果，尚未提交收费编辑。");
+      body = {request_id:body.request_id, platform_model:body.platform_model, prompt:body.prompt,
+        operation:"region_edit", selection_regions:body.selection_regions, segment_receipt:segment.segment_receipt, count:1};
+      init = {...init, body:JSON.stringify(body)};
+    } catch {
+      return responseJson({error:"原图准备尚未确认，尚未提交收费编辑，请稍后再试。",code:"IMAGE_REGION_PENDING",generation_submitted:false},503);
+    }
+  }
   let response;
   try {
     response = await boundedFetch(`${APIMART_IMAGES_BASE}/generations`, init, 90000);

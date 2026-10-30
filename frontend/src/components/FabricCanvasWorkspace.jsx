@@ -15,7 +15,7 @@ import {
   Textbox,
   Triangle,
 } from "fabric";
-import { MAX_REFERENCE_IMAGES, apimartImageModel } from "../lib/provider";
+import { apimartImageModel } from "../lib/provider";
 import { cleanupReferencePaths, uploadReferenceBlobs } from "../lib/referenceUpload";
 import {
   ArrowUpRight,
@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { fetchImageBlob, recoverGeneration } from "../lib/client";
 import CanvasAiPanel from "./CanvasAiPanel";
+import { canvasEditCapability, canvasReferenceError, canvasGenerationSize, canvasReferencePayload, exportCanvasEditMask, isMaskAnnotation, canvasSelectionRegions } from "../lib/canvasImageEditing";
 
 const CANVAS_DB_NAME = "posterflow-ai-fabric-canvas";
 const CANVAS_DB_STORE = "scenes";
@@ -413,19 +414,7 @@ function selectionSnapshot(canvas) {
   };
 }
 
-function normalizedImageSize(width, height) {
-  const safeWidth = Math.max(1, Number(width) || 1);
-  const safeHeight = Math.max(1, Number(height) || 1);
-  const ratio = safeWidth / safeHeight;
-  if (ratio >= 1) {
-    const targetHeight = 1024;
-    return { width: Math.min(2048, Math.max(256, Math.round((targetHeight * ratio) / 8) * 8)), height: targetHeight };
-  }
-  const targetWidth = 1024;
-  return { width: targetWidth, height: Math.min(2048, Math.max(256, Math.round((targetWidth / ratio) / 8) * 8)) };
-}
-
-async function compressReferenceBlob(blob, maxBytes) {
+async function compressReferenceBlob(blob, maxBytes, preservePng = false) {
   if (blob.size <= maxBytes) return blob;
   const bitmap = await createImageBitmap(blob);
   let scale = 1;
@@ -443,12 +432,13 @@ async function compressReferenceBlob(blob, maxBytes) {
       const compressed = await new Promise((resolve, reject) => {
         canvas.toBlob(
           (result) => (result ? resolve(result) : reject(new Error("参考图压缩失败。"))),
-          "image/jpeg",
+          preservePng ? "image/png" : "image/jpeg",
           quality,
         );
       });
       if (compressed.size <= maxBytes) return compressed;
-      if (quality > 0.65) quality -= 0.1;
+      if (preservePng) scale *= 0.8;
+      else if (quality > 0.65) quality -= 0.1;
       else {
         scale *= 0.8;
         quality = 0.82;
@@ -460,7 +450,7 @@ async function compressReferenceBlob(blob, maxBytes) {
   throw new Error("参考图压缩后仍然过大，请缩小画布选区后重试。");
 }
 
-async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBytes = CLEAN_REFERENCE_MAX_BYTES) {
+async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBytes = CLEAN_REFERENCE_MAX_BYTES, preservePng = false) {
   const targets = objects.filter((object) => object && canvas.getObjects().includes(object));
   const bounds = unionBounds(targets);
   if (!bounds) throw new Error("没有可导出的画布内容");
@@ -485,7 +475,7 @@ async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBy
       multiplier,
     });
     const blob = dataUrlToBlob(dataUrl);
-    return maxEdge ? compressReferenceBlob(blob, maxBytes) : blob;
+    return maxEdge ? compressReferenceBlob(blob, maxBytes, preservePng) : blob;
   } finally {
     visibility.forEach((visible, object) => object.set("visible", visible));
     canvas.backgroundColor = previousBackground;
@@ -496,47 +486,6 @@ async function exportObjects(canvas, objects, padding = 0, maxEdge = null, maxBy
   }
 }
 
-
-async function exportEditMask(canvas, target, annotations, maxEdge = REFERENCE_EXPORT_MAX_EDGE) {
-  const targetBounds = objectBounds(target);
-  const selected = annotations.filter((object) => object && boxesOverlap(targetBounds, objectBounds(object), 0));
-  if (!selected.length) return null;
-  const multiplier = Math.min(2, maxEdge / Math.max(1, targetBounds.w, targetBounds.h));
-  const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = Math.max(1, Math.round(targetBounds.w * multiplier));
-  maskCanvas.height = Math.max(1, Math.round(targetBounds.h * multiplier));
-  const context = maskCanvas.getContext("2d");
-  if (!context) throw new Error("浏览器无法创建局部编辑蒙版。");
-  context.fillStyle = "#000";
-  context.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
-  context.fillStyle = "#fff";
-  selected.forEach((object) => {
-    const bounds = objectBounds(object);
-    const left = (bounds.x - targetBounds.x) * multiplier;
-    const top = (bounds.y - targetBounds.y) * multiplier;
-    const width = bounds.w * multiplier;
-    const height = bounds.h * multiplier;
-    if (object.posterflowMeta?.shape === "ellipse") {
-      context.beginPath();
-      context.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
-      context.fill();
-    } else if (object.posterflowType === "annotation-brush" && Array.isArray(object.path)) {
-      context.beginPath();
-      object.path.forEach((command) => {
-        if (command[0] === "M") context.moveTo((command[1] - targetBounds.x) * multiplier, (command[2] - targetBounds.y) * multiplier);
-        else if (command[0] === "L") context.lineTo((command[1] - targetBounds.x) * multiplier, (command[2] - targetBounds.y) * multiplier);
-      });
-      context.strokeStyle = "#fff";
-      context.lineWidth = (Number(object.strokeWidth) || 28) * multiplier;
-      context.lineCap = "round";
-      context.lineJoin = "round";
-      context.stroke();
-    } else context.fillRect(left, top, width, height);
-  });
-  return new Promise((resolve, reject) => {
-    maskCanvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("局部编辑蒙版生成失败。"))), "image/png");
-  });
-}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -719,7 +668,7 @@ export default function FabricCanvasWorkspace({
   onOpenRecharge,
   onCanvasGenerated,
 }) {
-  const modelReferenceLimit = apimartImageModel(imageModel)?.maxReferences ?? MAX_REFERENCE_IMAGES;
+  const modelReferenceLimit = canvasEditCapability(imageModel).referenceLimit;
   const [canvas, setCanvas] = useState(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const [status, setStatus] = useState({ type: "saved", message: "正在读取本机画布" });
@@ -1468,6 +1417,30 @@ export default function FabricCanvasWorkspace({
     [canvas, fetchGeneratedFile],
   );
 
+  // Preview and submit use the same export policy and reference capacity.
+  const prepareRedrawReferences = async (currentSelection) => {
+    const problem = canvasReferenceError(imageModel, currentSelection.imageCount, currentSelection.annotationCount, currentSelection.objects);
+    if (problem) throw new Error(problem);
+    const target = currentSelection.image;
+    const selectedImages = [target, ...currentSelection.images.filter(item => item.raw !== target.raw)];
+    const annotations = currentSelection.objects.filter(object => ANNOTATION_TYPES.has(object.posterflowType));
+    const needsMask = canvasEditCapability(imageModel).mask && annotations.some(isMaskAnnotation);
+    const cleanReferences = [];
+    // Export temporarily changes Fabric visibility/selection. Serialize exports
+    // so one image cannot restore another export's temporary scene state.
+    for (const [index, item] of selectedImages.entries()) {
+      cleanReferences.push(await exportObjects(canvas, [item.raw], 0, REFERENCE_EXPORT_MAX_EDGE,
+        CLEAN_REFERENCE_MAX_BYTES, needsMask && index === 0));
+    }
+    const regionEdit = canvasEditCapability(imageModel).kind === "region";
+    const selectionRegions = regionEdit ? canvasSelectionRegions(target.raw, annotations) : null;
+    const annotationReference = currentSelection.annotationCount && !regionEdit
+      ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE, ANNOTATED_REFERENCE_MAX_BYTES)
+      : null;
+    const maskBlob = needsMask ? await exportCanvasEditMask(target.raw, annotations, cleanReferences[0]) : null;
+    return { selectedImages, cleanReferences, annotationReference, maskBlob, selectionRegions };
+  };
+
   const handleAiGenerate = async () => {
     if (billingMode === "platform" && !authenticated) {
       onAuthRequired?.();
@@ -1475,8 +1448,9 @@ export default function FabricCanvasWorkspace({
     }
     if (!canvas || !providerConfigured || aiBusy) return;
     const currentSelection = selectionSnapshot(canvas);
-    if (workflow !== "frame" && (modelReferenceLimit === 0 || currentSelection.imageCount > modelReferenceLimit)) {
-      setAiError({ message: modelReferenceLimit === 0 ? "当前模型不支持参考图重绘" : `当前模型最多支持 ${modelReferenceLimit} 张参考图`, detail: "请减少所选图片，或切换到其他图片模型。" });
+    const referenceProblem = workflow !== "frame" && canvasReferenceError(imageModel, currentSelection.imageCount, currentSelection.annotationCount, currentSelection.objects);
+    if (referenceProblem) {
+      setAiError({ message: "当前选择无法用于重绘", detail: referenceProblem });
       return;
     }
     const manualPrompt = drafts[workflow].trim();
@@ -1510,34 +1484,22 @@ export default function FabricCanvasWorkspace({
       if (workflow === "frame") {
         const ratio =
           CANVAS_FRAME_RATIOS[target.meta?.posterflowRatioKey] ||
-          normalizedImageSize(target.props.w, target.props.h);
+          { width: target.props.w, height: target.props.h };
         body = {
           prompt,
-          size: "custom",
-          custom_width: Number(target.meta?.posterflowTargetWidth) || ratio.width,
-          custom_height: Number(target.meta?.posterflowTargetHeight) || ratio.height,
+          ...canvasGenerationSize(imageModel, Number(target.meta?.posterflowTargetWidth) || ratio.width,
+            Number(target.meta?.posterflowTargetHeight) || ratio.height, target.meta?.posterflowRatioKey),
           quality: "auto",
           ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
           count: 1,
         };
       } else {
         endpoint = "/api/modify";
-        const selectedImages = [
-          target,
-          ...(currentSelection.images || []).filter((item) => item.raw !== target.raw),
-        ].slice(0, MAX_REFERENCE_IMAGES);
-        const cleanReferences = await Promise.all(selectedImages.map((item) => exportObjects(
-          canvas, [item.raw], 0, REFERENCE_EXPORT_MAX_EDGE, CLEAN_REFERENCE_MAX_BYTES,
-        )));
-        const annotationReference = currentSelection.annotationCount && cleanReferences.length < modelReferenceLimit
-          ? await exportObjects(canvas, currentSelection.objects, 24, REFERENCE_EXPORT_MAX_EDGE, ANNOTATED_REFERENCE_MAX_BYTES)
-          : null;
-        const maskBlob = currentSelection.annotationCount && !apimartImageModel(imageModel)
-          ? await exportEditMask(canvas, target, currentSelection.objects.filter((object) => object !== target && ANNOTATION_TYPES.has(object.posterflowType)))
-          : null;
+        const { selectedImages, cleanReferences, annotationReference, maskBlob, selectionRegions } = await prepareRedrawReferences(currentSelection);
         const referenceEntries = cleanReferences.map((blob, index) => ({
           blob,
           name: `canvas-reference-${index + 1}.png`,
+          preservePixels: Boolean(maskBlob) && index === 0,
         }));
         if (annotationReference) referenceEntries.push({ blob: annotationReference, name: "canvas-annotation.png" });
         setStatus({ type: "loading", message: "正在上传画布参考图" });
@@ -1548,6 +1510,7 @@ export default function FabricCanvasWorkspace({
             message: `正在上传画布参考图（${current}/${total}）`,
           }),
         });
+        const imageReferencePaths = [...temporaryReferencePaths];
         let maskStoragePath = null;
         if (maskBlob) {
           const maskPaths = await uploadReferenceBlobs(
@@ -1560,7 +1523,6 @@ export default function FabricCanvasWorkspace({
         const annotationList = currentSelection.annotationTexts
           .map((textValue, index) => String(index + 1) + ". " + textValue)
           .join("\n");
-        const size = normalizedImageSize(target.props.w, target.props.h);
         const editPrompt = [
           "执行局部图片编辑，不要重新创作一张不同风格的图片。",
           "前" + selectedImages.length + "张输入图按顺序对应用户提示词中的 @图1 至 @图" + selectedImages.length + "；如果存在最后一张标注说明图，它只用于理解修改位置，不参与 @引用。请综合这些参考图完成合成与编辑。",
@@ -1575,11 +1537,9 @@ export default function FabricCanvasWorkspace({
         ].join("\n");
         body = {
           prompt: editPrompt,
-          reference_storage_paths: temporaryReferencePaths.slice(0, MAX_REFERENCE_IMAGES),
-          ...(maskStoragePath ? { mask_storage_path: maskStoragePath } : {}),
-          size: "custom",
-          custom_width: size.width,
-          custom_height: size.height,
+          ...canvasReferencePayload(imageReferencePaths, maskStoragePath),
+          ...(selectionRegions ? { operation: "region_edit", selection_regions: selectionRegions } : {}),
+          ...canvasGenerationSize(imageModel, target.props.w, target.props.h),
           quality: "auto",
           ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
         };
@@ -1663,29 +1623,7 @@ export default function FabricCanvasWorkspace({
     previewReturnFocusRef.current = document.activeElement;
     setStatus({ type: "loading", message: "正在准备重绘检查" });
     try {
-      const target = currentSelection.image;
-      const selectedImages = [
-        target,
-        ...(currentSelection.images || []).filter((item) => item.raw !== target.raw),
-      ].slice(0, MAX_REFERENCE_IMAGES);
-      const cleanReferences = await Promise.all(
-        selectedImages.map((item) => exportObjects(
-          canvas,
-          [item.raw],
-          0,
-          REFERENCE_EXPORT_MAX_EDGE,
-          CLEAN_REFERENCE_MAX_BYTES,
-        )),
-      );
-      const annotationBlob = currentSelection.annotationCount
-        ? await exportObjects(
-            canvas,
-            currentSelection.objects,
-            24,
-            REFERENCE_EXPORT_MAX_EDGE,
-            ANNOTATED_REFERENCE_MAX_BYTES,
-          )
-        : null;
+      const { cleanReferences, annotationReference: annotationBlob } = await prepareRedrawReferences(currentSelection);
       setReferencePreview({
         referenceItems: cleanReferences.map((blob, index) => ({
           url: URL.createObjectURL(blob),

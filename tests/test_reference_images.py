@@ -1,6 +1,8 @@
 import base64
+import io
 import unittest
 from unittest.mock import Mock, patch
+from PIL import Image
 
 from backend import server
 
@@ -280,7 +282,9 @@ class CanvasModifyRouteTests(unittest.TestCase):
         cleanup.assert_called_once_with([path])
 
     def test_modify_passes_storage_mask_to_image_provider_and_cleans_both(self):
-        encoded = base64.b64encode(VALID_PNG).decode("ascii")
+        output = io.BytesIO()
+        Image.new("RGBA", (64, 48), (0, 0, 0, 0)).save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
         reference_path = "posterflow/client-12345678/references/0123456789abcdef0123456789abcdef.png"
         mask_path = "posterflow/client-12345678/references/abcdefabcdefabcdefabcdefabcdefab.png"
         generated = [{"filename": "storage-edit.png", "index": 1}]
@@ -297,15 +301,26 @@ class CanvasModifyRouteTests(unittest.TestCase):
                 headers={"X-Client-Id": "client-12345678", "X-Billing-Mode": "own_key"},
                 json={
                     "prompt": "按蒙版修改",
-                    "reference_storage_paths": [reference_path],
+                    "reference_storage_paths": [reference_path, mask_path],
                     "mask_storage_path": mask_path,
                     "request_id": "12345678-1234-5678-1234-567812345679",
                 },
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(generate_images.call_args.args[2], [encoded])
         self.assertEqual(generate_images.call_args.kwargs["mask_b64"], encoded)
         cleanup.assert_called_once_with([reference_path, mask_path])
+
+    def test_opaque_mask_is_rejected_before_credit_reservation(self):
+        output = io.BytesIO()
+        Image.new("RGBA", (64, 48), (0, 0, 0, 255)).save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        with patch.object(server, "execute_generation") as execute:
+            response = self.client.post("/api/modify", headers={"X-Client-Id":"client-12345678","X-Billing-Mode":"own_key"}, json={"prompt":"synthetic edit","reference_images_b64":[encoded],"mask_b64":encoded})
+        self.assertEqual(response.status_code,400)
+        self.assertEqual(response.json["code"],"IMAGE_MASK_INVALID")
+        execute.assert_not_called()
 
 
 if __name__ == "__main__":

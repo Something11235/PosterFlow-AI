@@ -62,3 +62,26 @@ test("manual task recovery uses GET without resubmitting generation", async t =>
   });
   assert.equal((await readImageTask(requestId, {})).images[0].filename, "recovered.png");
 });
+
+test("Grok region editing prepares the asset before exactly one paid POST", async t => {
+  const calls=[];
+  install(t,async(url,init)=>{
+    calls.push({url,body:JSON.parse(init.body)});
+    if(url.endsWith('/segments'))return json({status:'pending',receipt:'synthetic-task-proof'});
+    if(url.endsWith('/segments/status'))return json({status:'completed',segment_receipt:'synthetic-asset-proof'});
+    return json({job:{status:'completed'},images:[{filename:'region.png'}]});
+  });
+  const response=await imageGenerationFetch('/api/modify',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'grok-imagine-2.0-ext',request_id:requestId,prompt:'fixture',operation:'region_edit',reference_storage_paths:['main'],selection_regions:[{outer:{points:[0,0,1,0,1,1]}}]})},{pollInterval:0});
+  assert.equal((await response.json()).images[0].filename,'region.png');
+  assert.deepEqual(calls.map(call=>call.url),['/api/apimart-images/segments','/api/apimart-images/segments/status','/api/apimart-images/generations']);
+  assert.equal(calls[2].body.segment_receipt,'synthetic-asset-proof');
+  assert.equal(calls[2].body.reference_storage_paths,undefined);
+});
+
+test("failed or unknown free preparation never sends a paid edit", async t => {
+  let calls=0;
+  install(t,async()=>{calls++;throw new Error('synthetic network failure');});
+  const response=await imageGenerationFetch('/api/modify',{method:'POST',headers:{'X-Provider-Model':'grok-imagine-2.0-ext'},body:JSON.stringify({request_id:requestId,prompt:'fixture',operation:'region_edit'})},{pollInterval:0});
+  assert.equal((await response.json()).generation_submitted,false);
+  assert.equal(calls,1);
+});

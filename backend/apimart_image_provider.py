@@ -22,7 +22,7 @@ MODELS = {
     "grok-imagine-image-2.0": {"name": "Grok Imagine Image 2.0", "references": 3, "count": 4, "resolutions": ("1K", "2K"), "reference_credit_cost": 2, "automatic_resolution": True},
     "grok-imagine-2.0-ext": {"name": "grok-imagine-2.0-ext", "references": 0, "count": 4, "resolutions": ("quality",), "automatic_resolution": True},
 }
-RATIOS = {"square_1_1": "1:1", "landscape_16_9": "16:9", "portrait_9_16": "9:16", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "wide_21_9": "21:9"}
+RATIOS = {"square_1_1": "1:1", "landscape_3_2": "3:2", "portrait_2_3": "2:3", "landscape_16_9": "16:9", "portrait_9_16": "9:16", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "wide_21_9": "21:9"}
 TASK_ID = re.compile(r"^[A-Za-z0-9_-]{8,160}$")
 MAX_BYTES = 25 * 1024 * 1024
 REFERENCE_UPLOAD_HOSTS = frozenset({"upload.apimart.ai", "getapib.org"})

@@ -77,6 +77,16 @@ class ImageProtocolTests(unittest.TestCase):
             self.assertEqual(body.get("aspect_ratio") or body.get("size"), "16:9")
         self.assertEqual(provider.build_request("gemini-nano-banana-2.1", {"prompt": "@图1"}, ["one"])["image_urls"], ["one"])
 
+    def test_canvas_named_ratios_and_source_aspect_editing(self):
+        frames = {"square_1_1": "1:1", "landscape_3_2": "3:2", "portrait_2_3": "2:3", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "landscape_16_9": "16:9", "portrait_9_16": "9:16"}
+        for model in provider.MODELS:
+            for size, expected in frames.items():
+                body = provider.build_request(model, {"prompt": "synthetic canvas", "size": size})
+                self.assertEqual(body.get("aspect_ratio") or body.get("size"), expected)
+            if provider.MODELS[model]["references"]:
+                body = provider.build_request(model, {"prompt": "synthetic edit", "size": ""}, ["reference"])
+                self.assertEqual(body.get("aspect_ratio") or body.get("size"), "auto")
+
     def test_model_capabilities_reject_before_paid_calls(self):
         invalid = [
             ("grok-imagine-2.0-ext", {"prompt": "cat"}, ["ref"]),
@@ -155,6 +165,37 @@ class ImageRouteTests(unittest.TestCase):
         self.headers = {"X-Billing-Mode": "platform"}
         self.job = {"id": "33333333-3333-4333-8333-333333333333", "request_id": REQUEST, "model": "gemini-nano-banana-2.1", "billing_mode": "platform", "status": "submitted", "requested_count": 1, "image_keys": [], "provider_task_id": TASK, "created_at": "2026-10-23T00:00:00+00:00"}
         self.body = {"platform_model": "gemini-nano-banana-2.1", "request_id": REQUEST, "prompt": "cat"}
+
+    def test_region_source_receipt_and_one_paid_submission_use_existing_store(self):
+        from backend import grok_region
+        regions = [{"outer": {"points": [0.1, 0.1, 0.9, 0.1, 0.9, 0.9, 0.1, 0.9]}}]
+        body = {**self.body, "platform_model": grok_region.MODEL, "operation": "region_edit", "selection_regions": regions}
+        store = Mock()
+        store.begin.return_value = {"existing": False, "job": self.job}
+        store.apply.return_value = {"job": self.job}
+        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_storage_paths", return_value=["synthetic-source"]), patch.object(server, "stored_reference_to_base64", return_value="synthetic-image"), patch.object(server, "cleanup_reference_storage_paths"), patch.object(provider, "upload_reference", return_value="https://getapib.org/synthetic.png"), patch.object(provider, "submit", return_value=TASK) as submit, patch.object(provider, "api_request", return_value={"data": {"status": "completed", "result": {"image_id": "asset_synthetic"}}}):
+            result = self.client.post("/api/apimart-images/segments", json=body, headers=self.headers)
+            self.assertEqual(result.status_code, 200)
+            store.begin.assert_not_called()
+            self.assertEqual(submit.call_args.args[1]["operation"], "segment")
+            result = self.client.post("/api/apimart-images/segments/status", json={"platform_model": grok_region.MODEL, "receipt": result.json["receipt"]}, headers=self.headers)
+            self.assertEqual(result.json["status"], "completed")
+            receipt = result.json["segment_receipt"]
+            submit.reset_mock()
+            with patch.object(server, "validate_reference_storage_paths", return_value=[]):
+                result = self.client.post("/api/apimart-images/generations", json={**body, "segment_receipt": receipt}, headers=self.headers)
+                self.assertEqual(result.status_code, 202)
+                submit.assert_called_once()
+                self.assertEqual(submit.call_args.args[1]["image_id"], "asset_synthetic")
+                self.assertNotIn("image_urls", submit.call_args.args[1])
+
+    def test_foreign_or_invalid_region_receipt_cannot_reserve_or_submit(self):
+        from backend import grok_region
+        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore") as store, patch.object(provider, "submit") as submit:
+            result = self.client.post("/api/apimart-images/generations", json={**self.body, "platform_model": grok_region.MODEL, "operation": "region_edit", "segment_receipt": grok_region.proof("synthetic-key", "other-owner", "asset", "asset_other"), "selection_regions": [{"outer": {"points": [0,0,1,0,1,1]}}]}, headers=self.headers)
+            self.assertEqual(result.status_code, 400)
+            store.assert_not_called()
+            submit.assert_not_called()
 
     def test_duplicate_submit_never_calls_provider_twice(self):
         store = Mock()

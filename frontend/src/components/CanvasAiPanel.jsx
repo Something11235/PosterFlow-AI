@@ -1,6 +1,7 @@
 import React, { useRef } from "react";
 import ImageModelSelect from "./ImageModelSelect";
 import { MAX_REFERENCE_IMAGES } from "../lib/provider";
+import { canvasEditCapability, canvasReferenceError } from "../lib/canvasImageEditing";
 import {
   CheckCircle2,
   Eye,
@@ -43,7 +44,9 @@ export default function CanvasAiPanel({
   const hasTarget = isFrameWorkflow ? Boolean(selection.holder) : Boolean(selection.image);
   const hasInstruction =
     Boolean(prompt.trim()) || (!isFrameWorkflow && Boolean(selection.annotationTexts?.length));
-  const referenceBlocked = !isFrameWorkflow && (referenceLimit === 0 || (selection.imageCount || 1) > referenceLimit);
+  const editCapability = canvasEditCapability(imageModel);
+  const referenceProblem = !isFrameWorkflow && canvasReferenceError(imageModel, selection.imageCount || 1, selection.annotationCount, selection.objects);
+  const referenceBlocked = Boolean(referenceProblem);
   const generateLabel = isFrameWorkflow ? "生成到选中图框" : "生成重绘版本";
   const insertMention = (index) => {
     const mention = `@图${index}`;
@@ -91,6 +94,7 @@ export default function CanvasAiPanel({
             type="button"
             role="tab"
             aria-selected={isFrameWorkflow}
+            disabled={busy}
             onClick={() => onWorkflowChange("frame")}
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm transition ${
               isFrameWorkflow ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-muted hover:text-text-secondary"
@@ -103,6 +107,7 @@ export default function CanvasAiPanel({
             type="button"
             role="tab"
             aria-selected={!isFrameWorkflow}
+            disabled={busy}
             onClick={() => onWorkflowChange("redraw")}
             className={`flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm transition ${
               !isFrameWorkflow ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-muted hover:text-text-secondary"
@@ -113,7 +118,15 @@ export default function CanvasAiPanel({
           </button>
         </div>
 
-        {referenceBlocked && <p role="alert" className="mt-3 text-xs leading-5 text-gold">{referenceLimit === 0 ? "当前模型仅支持文字生成，请切换模型后重绘。" : `当前模型最多支持 ${referenceLimit} 张参考图，请减少所选图片。`}</p>}
+        {!isFrameWorkflow && <p className="mt-3 text-xs leading-5 text-text-muted" role="status">
+          {editCapability.kind === "mask" ? "支持框选或画笔选区编辑；文字与箭头用于说明。模型会尽量保留选区外内容，无法保证像素完全不变。"
+            : editCapability.kind === "reference" ? "支持参考图与文字修改。圈选标注作为位置提示，当前不支持精确蒙版编辑，其他区域也可能变化。"
+              : editCapability.kind === "region" ? "支持单张原图的矩形或圆形选区编辑；当前不支持多图合成或画笔选区。每张结果 1 积分，自带 Key 不扣网站积分。"
+              : editCapability.kind === "text" ? "支持 AI 图片框文字生图；本站尚未接入此模型的选区编辑。"
+                : "自定义模型的编辑能力由所配置的图片服务决定；当前仅发送参考图与修改说明。"}
+          {editCapability.referenceLimit > 0 && editCapability.kind !== "region" && " 标注说明图占用 1 个参考图名额。"}
+        </p>}
+        {referenceBlocked && <p role="alert" className="mt-3 text-xs leading-5 text-gold">{referenceProblem}</p>}
 
         {isFrameWorkflow && (
           <div className="mt-4 border-b border-border-subtle pb-4">
@@ -190,7 +203,7 @@ export default function CanvasAiPanel({
                     : "未检测到邻近标注，仅使用干净原图"
                   : selection.imageCount > 1
                     ? "可同时选择多张原图（最多 " + referenceLimit + " 张），并按图1、图2顺序用于 @引用。"
-                    : "先用矩形框/圆形框圈出要修改的区域，再用 @图1、@图2 指定素材；未圈选区域会尽量保持不变。"}
+                    : "选择原图后，可用矩形框、圆形框或画笔标出修改区域，再用 @图1、@图2 指定素材。"}
             </p>
           </div>
         </div>
@@ -260,7 +273,7 @@ export default function CanvasAiPanel({
           <button
             type="button"
             onClick={onPreviewReferences}
-            disabled={busy || previewBusy || !hasTarget}
+            disabled={busy || previewBusy || !hasTarget || referenceBlocked}
             className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-border-default bg-bg-primary px-4 text-sm font-medium text-text-secondary transition hover:border-accent/45 hover:bg-bg-elevated hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
           >
             {previewBusy ? <Loader2 size={17} className="animate-spin-soft" /> : <Eye size={17} />}

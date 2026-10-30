@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 
@@ -10,9 +11,11 @@ from flask import Blueprint, jsonify, request
 
 try:
     from backend import apimart_image_provider as provider
+    from backend import grok_region
     from backend.supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 except ModuleNotFoundError:
     import apimart_image_provider as provider
+    import grok_region
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 
 PUBLIC_FIELDS = ("request_id", "model", "billing_mode", "status", "requested_count", "image_keys", "error_code", "created_at", "reference_count", "unit_credit_cost", "pricing_resolution")
@@ -174,7 +177,12 @@ def create_image_blueprint(server):
                 if not previous:
                     raise provider.ImageTaskError("PREVIOUS_IMAGE_MISSING", "原图已过期或暂时无法读取，请更换参考图。")
                 references = [server.validate_reference_image_b64(previous)]
-            body = provider.build_request(model, data, references)
+            region_edit = model == grok_region.MODEL and data.get("operation") == "region_edit"
+            if data.get("operation") and not region_edit:
+                raise provider.ImageTaskError("IMAGE_REGION_INVALID", "当前模型不支持此编辑方式。")
+            if region_edit and (references or data.get("mask_b64") or data.get("mask_storage_path")):
+                raise provider.ImageTaskError("IMAGE_REGION_INVALID", "选区编辑须先完成原图准备，请重新选择原图。")
+            body = grok_region.build_request(data, key, owner) if region_edit else provider.build_request(model, data, references)
             store = ImageStore()
             begun = store.begin(owner, user_id, request_id, mode, model, body, str(data.get("prompt", "")).strip())
             if begun.get("existing"):
@@ -194,6 +202,49 @@ def create_image_blueprint(server):
             return jsonify(result(applied["job"], applied.get("balance"))), 202
         finally:
             server.cleanup_reference_storage_paths(paths)
+
+    @bp.post("/segments")
+    @bp.post("/segments/status")
+    def segment():
+        origin = request.headers.get("Origin")
+        if origin and origin.rstrip("/") not in {request.host_url.rstrip("/"), *server.ALLOWED_ORIGINS}:
+            raise provider.ImageTaskError("ORIGIN_FORBIDDEN", "请求来源不受支持。", 403)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise provider.ImageTaskError("IMAGE_REGION_INVALID", "原图准备请求无效。")
+        mode, key, owner, _user = context()
+        model = data.get("platform_model") if mode == "platform" else request.headers.get("X-Provider-Model", "").strip()
+        if model != grok_region.MODEL:
+            raise provider.ImageTaskError("IMAGE_REGION_INVALID", "当前模型不支持此编辑方式。")
+        server.enforce_rate_limit("image-segment-status" if request.path.endswith("/status") else "image-segment-submit", owner, 60 if request.path.endswith("/status") else 8, 60)
+        if request.path.endswith("/status"):
+            task = grok_region.read_proof(key, owner, "task", data.get("receipt"))
+        else:
+            grok_region.selection_regions(data.get("selection_regions"))
+            paths = server.validate_reference_storage_paths(data.get("reference_storage_paths"))
+            if len(paths) != 1:
+                raise provider.ImageTaskError("IMAGE_REGION_INVALID", "选区编辑需要且只支持一张本人上传的原图。")
+            request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, owner + normalize_id(data.get("request_id")) + ":segment"))
+            try:
+                reference = server.stored_reference_to_base64(paths[0])
+                url = provider.upload_reference(key, reference)
+                task = provider.submit(key, {"model": grok_region.MODEL, "operation": "segment", "image_urls": [url], "cache_only": True, "include_mask_rle": False}, request_id)
+            finally:
+                server.cleanup_reference_storage_paths(paths)
+            return jsonify(success=True, status="pending", receipt=grok_region.proof(key, owner, "task", task))
+        remote = provider.api_request("GET", "/tasks/" + task, key)
+        payload = remote.get("data", {}) if isinstance(remote, dict) else {}
+        if not isinstance(payload, dict):
+            raise provider.ImageTaskError("IMAGE_REGION_PENDING", "原图准备结果暂未确认，请稍后重试。", 503)
+        status = payload.get("status")
+        if status in ("failed", "cancelled"):
+            raise provider.ImageTaskError("IMAGE_REGION_FAILED", "原图准备未成功，尚未提交收费编辑。")
+        if status != "completed":
+            return jsonify(success=True, status="pending", receipt=data["receipt"])
+        asset = payload.get("result", {}).get("image_id")
+        if not isinstance(asset, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", asset):
+            raise provider.ImageTaskError("IMAGE_REGION_FAILED", "原图准备缺少有效图片资产，尚未提交收费编辑。", 502)
+        return jsonify(success=True, status="completed", segment_receipt=grok_region.proof(key, owner, "asset", asset))
 
     @bp.get("/tasks")
     def tasks():
