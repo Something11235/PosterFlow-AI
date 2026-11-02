@@ -4,6 +4,14 @@
     "name": "DeepSeek",
     "images": [
       {
+        "id": "deepseek-three-views",
+        "label": "三视图",
+        "url": "/ai-companions/deepseek-three-views.jpg",
+        "width": 5504,
+        "height": 3072,
+        "bytes": 1282337
+      },
+      {
         "id": "deepseek-01",
         "label": "图片 01",
         "url": "/ai-companions/deepseek-01.jpg",
