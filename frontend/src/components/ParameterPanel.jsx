@@ -102,6 +102,8 @@ export default function ParameterPanel({
           <button
             type="button"
             onClick={() => onSizeChange("custom")}
+            disabled={(apimartSpec?.value === "seedream-5-0-lite" || apimartSpec?.customSize === false)}
+            title={(apimartSpec?.value === "seedream-5-0-lite" || apimartSpec?.customSize === false) ? "此模型只支持比例与清晰度档位，请选择上方画幅" : undefined}
             className={`min-h-16 rounded-lg border p-3 text-left transition ${
               customSizeActive
                 ? "border-accent/45 bg-accent/12"

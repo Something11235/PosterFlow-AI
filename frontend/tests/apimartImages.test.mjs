@@ -18,7 +18,7 @@ function install(t, fetch) {
   t.after(() => { global.fetch = oldFetch; global.window = oldWindow; });
 }
 test("existing image models retain their original endpoint and body", async t => {
-  const init = { method: "POST", headers: { "X-Billing-Mode": "platform" }, body: JSON.stringify({ platform_model: "gpt-image-2", request_id: requestId, prompt: "猫" }) };
+  const init = { method: "POST", headers: { "X-Billing-Mode": "platform" }, body: JSON.stringify({ platform_model: "gpt-image-2.5-flare", request_id: requestId, prompt: "猫" }) };
   let called;
   install(t, async (...args) => { called = args; return json({ images: [] }); });
   await imageGenerationFetch("/api/modify", init);

@@ -10,6 +10,7 @@ export default function Sidebar({
   mode,
   modes,
   onModeChange,
+  disabledModes = [],
   providerConfigured,
   providerName,
   onOpenProvider,
@@ -75,6 +76,8 @@ export default function Sidebar({
             <button
               key={key}
               type="button"
+              disabled={disabledModes.includes(key)}
+              title={disabledModes.includes(key) ? "当前模型未开放此功能" : undefined}
               onClick={() => onModeChange(key)}
               className={`group flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border px-2 text-xs font-medium transition lg:min-h-11 lg:justify-start lg:px-3 lg:text-sm ${
                 active

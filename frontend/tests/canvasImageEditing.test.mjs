@@ -8,7 +8,7 @@ test("all seven canvas frame proportions use named ratios for the asynchronous m
   for (const { value: model } of APIMART_IMAGE_MODELS) for (const ratio of frames) {
     assert.deepEqual(canvasGenerationSize(model, 1360, 1024, ratio), { size: ratio === "square" ? "square_1_1" : ratio });
   }
-  assert.deepEqual(canvasGenerationSize("gpt-image-2", 1792, 1008, "landscape_16_9"), { size: "custom", custom_width: 1792, custom_height: 1008 });
+  assert.deepEqual(canvasGenerationSize("gpt-image-2.5-flare", 1792, 1008, "landscape_16_9"), { size: "custom", custom_width: 1792, custom_height: 1008 });
 });
 
 test("arbitrary reference images follow source proportions without rounded custom pixels", () => {
@@ -20,6 +20,7 @@ test("arbitrary reference images follow source proportions without rounded custo
 test("annotations never disappear at the reference limit and text-only editing stays blocked", () => {
   for (const { value: model } of IMAGE_MODEL_OPTIONS) {
     if (model === "grok-imagine-2.0-ext") continue;
+    if (canvasEditCapability(model).kind === "disabled") { assert.ok(canvasReferenceError(model,1,0)); continue; }
     const { referenceLimit } = canvasEditCapability(model);
     if (!referenceLimit) { assert.ok(canvasReferenceError(model, 1, 0)); continue; }
     assert.equal(canvasReferenceError(model, referenceLimit, 0), "");

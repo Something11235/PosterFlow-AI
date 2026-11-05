@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, ChevronRight, Image, Layers3, Music2, Search, Video } from "lucide-react";
 import StudioArt from "./StudioArt";
+import ModelBadge from "../ModelBadge";
 import CreativeMaterials from "./CreativeMaterials";
 import VideoWorkspace from "./VideoWorkspace";
 import { restoreVideoHistory } from "../../lib/video";
@@ -61,7 +62,7 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
         <div className="studio-model-grid">{filteredModels.map(model => {
           const Icon = ICONS[model.area];
           return <article className={`studio-model-card studio-tone-${model.area}`} key={model.id}>
-            <div><span className="studio-model-icon"><Icon size={21} /></span><small>{STUDIO_AREAS.find(item => item.id === model.area).short} / {model.maker}</small></div><h2>{model.name}</h2><p>{model.summary}</p><footer><span>{model.area === "image" ? <>{model.capability}<span className="mt-1 block leading-relaxed">{model.pricing}</span></> : model.area === "music" ? "音乐创作 · 2 积分 / 次" : model.available ? ["seedance-2.5","seedance-2.0","seedance-2.0-fast","gemini-omni-1.1-flash","MiniMax-H3","MiniMax-H3-Max","wan3.0-video","flux-3-video"].includes(model.id) ? "按实际用量结算 · 0.5 积分为档 · 提交先预留" : "480P 0.5 积分/秒 · 720P 1 积分/秒（参考视频＋生成时长）" : "模型预览 · 规划接入"}</span></footer>
+            <div><span className="studio-model-icon"><Icon size={21} /></span><small>{STUDIO_AREAS.find(item => item.id === model.area).short} / {model.maker}</small></div><h2>{model.name}{model.area === "image" && <ModelBadge model={model.id === "nano-banana-2.1" ? "gemini-nano-banana-2.1" : model.id}/>}</h2><p>{model.summary}</p><footer><span>{model.area === "image" ? <>{model.capability}<span className="mt-1 block leading-relaxed">{model.pricing}</span></> : model.area === "music" ? "音乐创作 · 2 积分 / 次" : model.available ? ["seedance-2.5","seedance-2.0","seedance-2.0-fast","gemini-omni-1.1-flash","MiniMax-H3","MiniMax-H3-Max","wan3.0-video","flux-3-video"].includes(model.id) ? "按实际用量结算 · 0.5 积分为档 · 提交先预留" : "480P 0.5 积分/秒 · 720P 1 积分/秒（参考视频＋生成时长）" : "模型预览 · 规划接入"}</span></footer>
           </article>;
         })}</div>
         {!filteredModels.length && <div className="studio-empty-state"><Search size={28} /><h2>没有找到匹配的模型</h2><p>试试其他名称，或选择全部创作类型。</p><button type="button" className="studio-secondary" onClick={() => { setModelSearch(""); setModelFilter("all"); }}>清除筛选</button></div>}

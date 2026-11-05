@@ -10,6 +10,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import Gallery from "./components/Gallery";
+import { canvasEditCapability } from "./lib/canvasImageEditing";
 import ImageTaskQueue from "./components/ImageTaskQueue";
 import { createImageTaskStore, IMAGE_TASK_LIMIT, referenceCapability } from "./lib/imageTasks";
 import { imageGenerationFetch, readImageTask } from "./lib/apimartImages";
@@ -347,6 +348,9 @@ export default function App() {
   const selectedCount = selectedImages.size;
   const hasBrowserProvider = isProviderConfigComplete(providerConfig);
   const activeImageModel = billingMode === "platform" ? platformModel : providerConfig.model;
+  const canvasAllowed = canvasEditCapability(activeImageModel).kind !== "disabled";
+  const canvasAllowedRef = useRef(canvasAllowed);
+  canvasAllowedRef.current = canvasAllowed;
   const apimartSpec = apimartImageModel(activeImageModel);
   const referenceSpec = referenceCapability(apimartSpec);
   const materialReferenceSpec = useRef(referenceSpec);
@@ -362,6 +366,7 @@ export default function App() {
   useEffect(() => {
     if (!apimartSpec) return;
     setCount(previous => Math.min(previous, apimartSpec.maxCount));
+    if (apimartSpec.value === "seedream-5-0-lite" || apimartSpec.customSize === false) setSize(previous => previous === "custom" ? "" : previous);
     if (!apimartSpec.automaticResolution) setImageResolution(previous => apimartSpec.resolutions.includes(previous) ? previous : apimartSpec.resolutions[0]);
   }, [apimartSpec]);
   // 平台积分模式不向用户暴露实际中转站/服务商域名；自带 Key 模式仍显示用户自己的配置。
@@ -410,6 +415,7 @@ export default function App() {
   }, [apimartSpec, apimartConfigured, billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
 
   const handleAddToCanvas = useCallback((filenames) => {
+    if (!canvasAllowedRef.current) { setNotice("当前模型未开放无限画布，请先切换模型。"); return; }
     const uniqueFilenames = [...new Set(filenames.filter(Boolean))];
     if (!uniqueFilenames.length) return;
     setPendingCanvasImport({
@@ -480,6 +486,7 @@ export default function App() {
       setReferenceFeedback({ text: result.duplicates ? "这张 AI娘图片已在参考图列表中。" : "已加入 AI娘参考图，可在提示词中使用 @图 引用。", warning: false });
       setMode("create");setStudioArea("image");setNotice("AI娘图片已加入参考图。");
     } else if (target === "canvas") {
+      if (!canvasAllowedRef.current) throw new Error("当前模型未开放无限画布，请先切换模型。");
       setPendingCanvasImport({ id: crypto.randomUUID(), files: [file] });
       setStudioArea("image");setMode("canvas");setNotice("正在把 AI娘图片加入无限画布…");
     } else throw new Error("请选择参考图或无限画布。");
@@ -491,6 +498,7 @@ export default function App() {
     }
     if (!requireGenerationAccess()) return;
     if (!providerConfigured) { setShowProviderSettings(true); return; }
+    if (previousImage && !canvasAllowedRef.current) { setNotice("当前模型未开放局部重绘，请使用参考图创作或切换模型。"); return; }
     if (previousImage && referenceSpec.disabled) {
       setNotice("当前模型仅支持文生图，请切换到 AI 创作或选择支持参考图的模型。"); return;
     }
@@ -525,7 +533,7 @@ export default function App() {
         ...(previousImage ? { previous_image: previousImage } : { count }),
         ...(size ? { size } : {}),
         ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
-        quality: "auto", ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
+        quality: "auto", ...(previousImage ? { canvas_workflow: "iterative" } : {}), ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
         ...(apimartSpec && !apimartSpec.automaticResolution ? { resolution: imageResolution } : {}) };
       if (!previousImage && !referenceSpec.disabled && referenceFiles.length) {
         paths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders });
@@ -692,7 +700,8 @@ export default function App() {
         {classicWorkspace ? <Sidebar
           mode={mode}
           modes={MODE_META}
-          onModeChange={setMode}
+          onModeChange={(value) => { if (value === "create" || canvasAllowed) setMode(value); else setNotice("当前模型未开放局部重绘与无限画布。"); }}
+          disabledModes={canvasAllowed ? [] : ["canvas", "iterative"]}
           providerConfigured={providerConfigured}
           providerName={providerName}
           onOpenProvider={() => setShowProviderSettings(true)}
@@ -757,6 +766,8 @@ export default function App() {
                   <button
                     type="button"
                     key={key}
+                    disabled={key !== "create" && !canvasAllowed}
+                    title={key !== "create" && !canvasAllowed ? "当前模型未开放局部重绘与无限画布" : undefined}
                     onClick={() => setMode(key)}
                     aria-pressed={mode === key}
                     className={`flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 text-sm transition ${

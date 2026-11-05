@@ -61,33 +61,18 @@ class GenerationCreditSettlementTests(unittest.TestCase):
         self.gateway.settle_generation.assert_called_once_with("job-2", 1, unittest.mock.ANY, ["image.png"])
         self.assertEqual(result["images"], [{"filename": "image.png"}])
 
-    def test_gpt_image_2_is_an_allowed_platform_model(self):
-        provider = server.ProviderConfig(
-            api_key="test-key", endpoint="https://provider.example/v1/images/generations",
-            model="gpt-image-2", auth_type="bearer", source="platform"
-        )
-        self.gateway.reserve_credits.return_value = {"ok": True, "existing": False, "job_id": "job-3", "status": "running"}
-        self.gateway.settle_generation.return_value = {"ok": True, "balance": 8}
+    def test_retired_gpt_image_2_cannot_create_new_platform_jobs(self):
         with (
             patch.object(server, "platform_provider_configured", return_value=True),
             patch.object(server, "require_authenticated_user", return_value=Mock(id="user-1")),
             patch.object(server, "SupabaseGateway", return_value=self.gateway),
-            patch.object(server, "resolve_provider_config", return_value=provider),
-            patch.object(server, "enforce_rate_limit"),
+            patch.object(server, "resolve_provider_config") as resolve,
         ):
-            result = server.execute_generation(
-                {"billing_mode": "platform", "platform_model": "gpt-image-2", "request_id": "44444444-4444-4444-8444-444444444444"},
-                requested_count=1,
-                prompt="test",
-                generate_callback=lambda _provider: [{"filename": "image.png"}],
-            )
-
-        self.assertEqual(result["images"], [{"filename": "image.png"}])
-        self.gateway.reserve_credits.assert_called_once_with(
-            "user-1", "44444444-4444-4444-8444-444444444444", 1,
-            "provider.example", "gpt-image-2", "test",
-            None, None,
-        )
+            with self.assertRaises(server.ProviderError) as error:
+                server.execute_generation({"billing_mode":"platform","platform_model":"gpt-image-2","request_id":"44444444-4444-4444-8444-444444444444"}, requested_count=1, prompt="test", generate_callback=Mock())
+        self.assertEqual(error.exception.code, "MODEL_NOT_ALLOWED")
+        self.gateway.reserve_credits.assert_not_called()
+        resolve.assert_not_called()
 
     def test_daily_caps_are_disabled_even_with_legacy_environment_settings(self):
         self.gateway.settle_generation.return_value = {"ok": True, "balance": 8}

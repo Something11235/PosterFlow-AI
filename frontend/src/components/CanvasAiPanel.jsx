@@ -41,7 +41,7 @@ export default function CanvasAiPanel({
 }) {
   const promptRef = useRef(null);
   const isFrameWorkflow = workflow === "frame";
-  const hasTarget = isFrameWorkflow ? Boolean(selection.holder) : Boolean(selection.image);
+  const hasTarget = (isFrameWorkflow ? Boolean(selection.holder) : Boolean(selection.image)) && canvasEditCapability(imageModel).kind !== "disabled";
   const hasInstruction =
     Boolean(prompt.trim()) || (!isFrameWorkflow && Boolean(selection.annotationTexts?.length));
   const editCapability = canvasEditCapability(imageModel);
@@ -89,6 +89,7 @@ export default function CanvasAiPanel({
 
       <div className="p-4">
         <ImageModelSelect model={imageModel} referenceCount={isFrameWorkflow ? 0 : Math.max(1, selection.images?.length || 1)} billingMode={billingMode} onModelChange={onImageModelChange} onOpenProvider={onOpenProvider} disabled={busy} />
+        {editCapability.kind === "disabled" && <p role="alert" className="mb-3 text-xs leading-5 text-gold">当前模型未确认支持局部编辑，已禁用无限画布 AI 功能。切换模型可继续使用，画布内容已保留。</p>}
         <div className="grid grid-cols-2 rounded-md border border-border-subtle bg-bg-primary p-1" role="tablist">
           <button
             type="button"
@@ -120,6 +121,7 @@ export default function CanvasAiPanel({
 
         {!isFrameWorkflow && <p className="mt-3 text-xs leading-5 text-text-muted" role="status">
           {editCapability.kind === "mask" ? "支持框选或画笔选区编辑；文字与箭头用于说明。模型会尽量保留选区外内容，无法保证像素完全不变。"
+            : editCapability.kind === "interactive" ? "支持坐标与手绘标记编辑。矩形或圆形框会用于定位，画笔、箭头与文字会作为标注说明；无法保证其他区域像素完全不变。"
             : editCapability.kind === "reference" ? "支持参考图与文字修改。圈选标注作为位置提示，当前不支持精确蒙版编辑，其他区域也可能变化。"
               : editCapability.kind === "region" ? "支持单张原图的矩形或圆形选区编辑；当前不支持多图合成或画笔选区。每张结果 1 积分，自带 Key 不扣网站积分。"
               : editCapability.kind === "text" ? "支持 AI 图片框文字生图；本站尚未接入此模型的选区编辑。"

@@ -1,15 +1,29 @@
 import { apimartImageModel, IMAGE_MODEL_OPTIONS, MAX_REFERENCE_IMAGES } from "./provider.js";
 
 export function canvasEditCapability(model) {
+  if (apimartImageModel(model)?.canvasEdit === false) return { referenceLimit: apimartImageModel(model).maxReferences, mask: false, kind: "disabled" };
   if (model === "grok-imagine-2.0-ext") return { referenceLimit: 1, mask: false, kind: "region" };
   const spec = apimartImageModel(model);
+  if (spec?.interactiveEdit) return { referenceLimit: spec.maxReferences, mask: false, kind: "interactive" };
   const known = IMAGE_MODEL_OPTIONS.some(option => option.value === model);
   return { referenceLimit: spec?.maxReferences ?? MAX_REFERENCE_IMAGES,
     mask: known && !spec, kind: spec?.maxReferences === 0 ? "text" : spec ? "reference" : known ? "mask" : "custom" };
 }
 
+export function interactiveEditInstructions(target, annotations) {
+  const source = target.getBoundingRect();
+  return annotations.filter(object => object.posterflowType === "annotation-shape").map(object => {
+    const box = object.getBoundingRect();
+    const clamp = value => Math.round(Math.max(0, Math.min(1000, value)));
+    const x1=clamp((box.left-source.left)/source.width*1000), y1=clamp((box.top-source.top)/source.height*1000);
+    const x2=clamp((box.left+box.width-source.left)/source.width*1000), y2=clamp((box.top+box.height-source.top)/source.height*1000);
+    return x2>x1 && y2>y1 ? `<bbox>${x1} ${y1} ${x2} ${y2}</bbox>` : "";
+  }).filter(Boolean).join("、");
+}
+
 export function canvasReferenceError(model, imageCount, annotationCount, objects = []) {
   const { referenceLimit, kind } = canvasEditCapability(model);
+  if (kind === "disabled") return "当前模型未确认支持局部编辑，已禁用无限画布，请切换模型。";
   if (kind === "region") {
     if (imageCount !== 1) return "选区编辑每次只支持一张原图，请仅选择主图。";
     if (objects.some(object => object.posterflowType === "annotation-brush")) return "此模型当前支持矩形与圆形选区，请移除画笔标注，或切换 GPT 图片模型。";

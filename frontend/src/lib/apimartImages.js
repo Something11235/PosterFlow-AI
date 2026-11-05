@@ -36,6 +36,7 @@ export async function readImageTask(requestId, headers, signal) {
 // requests submit once, then only GET the durable task; never retry a paid POST.
 export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000, maxWait = 240000 } = {}) {
   let body = JSON.parse(init.body);
+  if (requestImageModel(body, init.headers) === "gpt-image-2") return responseJson({error:"GPT Image 2 已下线，请重新选择模型。",code:"MODEL_RETIRED"},400);
   if (!apimartImageModel(requestImageModel(body, init.headers))) return fetch(endpoint, init);
   if (requestImageModel(body, init.headers) === "grok-imagine-2.0-ext" && body.operation === "region_edit") {
     // Segment is free and separate from the single paid edit intent. Never

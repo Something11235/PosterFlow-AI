@@ -10,12 +10,16 @@ export const STUDIO_AREAS = [
 ];
 
 export const IMAGE_MODELS = [
+  { id: "gpt-image-2.6-flare", name: "GPT Image 2.6 Flare", maker: "GPT Image", summary: "Ext Flare · 1K 单图创作与多图参考编辑", capability: "文生图 · 参考图编辑", available: true, provider: "apimart" },
+  { id: "gpt-image-2.6-sunburst", name: "GPT Image 2.6 Sunburst", maker: "GPT Image", summary: "Ext Sunburst · 1K 单图创作与多图参考编辑", capability: "文生图 · 参考图编辑", available: true, provider: "apimart" },
   { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", maker: "GPT Image", summary: "海报设计与创意画面 · 支持多图参考", capability: "文生图 · 参考图编辑", available: true },
   { id: "gpt-image-2.5-sunburst", name: "GPT Image 2.5 Sunburst", maker: "GPT Image", summary: "场景构图与图片改写 · 支持多图参考", capability: "文生图 · 参考图编辑", available: true },
-  { id: "gpt-image-2", name: "GPT Image 2", maker: "GPT Image", summary: "通用图像创作 · 图片编辑与多图融合", capability: "文生图 · 参考图编辑", available: true },
   { id: "nano-banana-2.1", name: "Nano Banana 2.1", maker: "Nano Banana", summary: "多图参考与细节编辑 · 支持最高 4K", capability: "文生图 · 参考图编辑", available: true, provider: "apimart" },
   { id: "grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", maker: "Grok", summary: "最多 3 张参考图 · 支持 1K / 2K", capability: "文生图 · 参考图编辑", available: true, provider: "apimart" },
   { id: "grok-imagine-2.0-ext", name: "Grok Imagine 2.0 Ext", maker: "Grok", summary: "文字创作与画布单图选区修改", capability: "文生图 · 画布选区编辑", available: true, provider: "apimart" },
+  { id: "seedream-5-0-pro", name: "（即梦）Seedream 5.0 Pro", maker: "即梦", summary: "单图创作 · 多图参考与标注编辑", capability: "文生图 · 参考图 · 标注编辑", available: true, provider: "apimart" },
+  { id: "seedream-5-0-lite", name: "（即梦）Seedream 5.0 Lite", maker: "即梦", summary: "2K / 3K / 4K · 参考图创作与组图", capability: "文生图 · 参考图 · 组图", available: true, provider: "apimart" },
+  { id: "seedream-5-0-flash", name: "（即梦）Seedream 5.0 Flash", maker: "即梦", summary: "单图创作 · 多图参考与标注编辑", capability: "文生图 · 参考图 · 标注编辑", available: true, provider: "apimart" },
 ];
 export const MUSIC_MODELS = [
   { id: "suno", name: "suno", maker: "Suno", summary: "灵感成曲 · 参考音频创作 · 音频改编", draftReady: true },

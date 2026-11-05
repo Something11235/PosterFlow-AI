@@ -44,10 +44,11 @@ class ImageStore:
 
     def begin(self, owner, user, request_id, mode, model, body, prompt):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        return self.rpc("begin_apimart_image_job_v3", {"p_owner": owner, "p_user": user, "p_request": request_id, "p_mode": mode, "p_model": model, "p_count": body["n"], "p_fingerprint": fingerprint, "p_prompt": prompt, "p_reference_count": len(body.get("image_urls") or []), "p_resolution": body.get("resolution")})
+        rpc_name = "begin_gpt26_image_job" if model.startswith("gpt-image-2.6-") else "begin_seedream_image_job" if model.startswith("seedream-") else "begin_apimart_image_job_v3"
+        return self.rpc(rpc_name, {"p_owner": owner, "p_user": user, "p_request": request_id, "p_mode": mode, "p_model": model, "p_count": body["n"], "p_fingerprint": fingerprint, "p_prompt": prompt, "p_reference_count": len(body.get("image_urls") or []), "p_resolution": body.get("resolution", "").upper() or None})
 
     def apply(self, owner, request_id, event, **kwargs):
-        return self.rpc("apply_apimart_image_job", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
+        return self.rpc("apply_image_job_v3", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
 
     def jobs(self, owner, request_id=None):
         params = {"owner_scope": "eq." + owner, "select": "*", "order": "created_at.desc", "limit": "50"}
@@ -177,6 +178,7 @@ def create_image_blueprint(server):
                 if not previous:
                     raise provider.ImageTaskError("PREVIOUS_IMAGE_MISSING", "原图已过期或暂时无法读取，请更换参考图。")
                 references = [server.validate_reference_image_b64(previous)]
+            references = provider.normalize_model_references(model, references)
             region_edit = model == grok_region.MODEL and data.get("operation") == "region_edit"
             if data.get("operation") and not region_edit:
                 raise provider.ImageTaskError("IMAGE_REGION_INVALID", "当前模型不支持此编辑方式。")

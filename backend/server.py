@@ -112,7 +112,6 @@ PLATFORM_MODEL = os.getenv("PLATFORM_IMAGE_MODEL", "gpt-image-2.5-flare").strip(
 PLATFORM_IMAGE_MODELS = {
     "gpt-image-2.5-flare": 1,
     "gpt-image-2.5-sunburst": 1,
-    "gpt-image-2": 1,
 }
 if PLATFORM_MODEL not in PLATFORM_IMAGE_MODELS:
     PLATFORM_MODEL = "gpt-image-2.5-flare"
@@ -956,6 +955,8 @@ def resolve_provider_config(billing_mode="own_key", resolve_dns=True, platform_m
             "请输入中转站支持的图片模型标识。",
             ["查看中转站模型文档", "填写模型标识", "保存后重新生成"],
         )
+    if model == "gpt-image-2":
+        raise ProviderError("MODEL_RETIRED", "GPT Image 2 已下线，请重新选择模型。", 400)
     auth_type = auth_type.strip()
     auth_type_key = auth_type.lower()
     if not auth_type:
@@ -2659,6 +2660,11 @@ except ModuleNotFoundError:
     from apimart_image_routes import create_image_blueprint
 import sys
 app.register_blueprint(create_image_blueprint(sys.modules[__name__]))
+try:
+    from backend.model_badges import create_model_badge_blueprint
+except ModuleNotFoundError:
+    from model_badges import create_model_badge_blueprint
+app.register_blueprint(create_model_badge_blueprint(sys.modules[__name__]))
 
 
 if os.path.exists(FRONTEND_BUILD):

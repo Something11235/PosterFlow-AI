@@ -18,9 +18,14 @@ except ModuleNotFoundError:
 
 BASE = "https://api.apimart.ai/v1"
 MODELS = {
-    "gemini-nano-banana-2.1": {"name": "Nano Banana 2.1", "references": 8, "count": 4, "resolutions": ("1K", "2K", "4K"), "resolution_credit_costs": {"4K": 2}},
+    "gpt-image-2.6-flare": {"name": "GPT Image 2.6 Flare", "version": "flare", "references": 8, "count": 1, "resolutions": ("1K",), "credit_cost": 1, "canvas_edit": False},
+    "gpt-image-2.6-sunburst": {"name": "GPT Image 2.6 Sunburst", "version": "sunburst", "references": 8, "count": 1, "resolutions": ("1K",), "credit_cost": 1, "canvas_edit": False},
+    "gemini-nano-banana-2.1": {"name": "Nano Banana 2.1", "references": 8, "count": 1, "resolutions": ("1K", "2K", "4K"), "resolution_credit_costs": {"4K": 2}},
     "grok-imagine-image-2.0": {"name": "Grok Imagine Image 2.0", "references": 3, "count": 4, "resolutions": ("1K", "2K"), "reference_credit_cost": 2, "automatic_resolution": True},
     "grok-imagine-2.0-ext": {"name": "grok-imagine-2.0-ext", "references": 0, "count": 4, "resolutions": ("quality",), "automatic_resolution": True},
+    "seedream-5-0-pro": {"name": "（即梦）Seedream 5.0 Pro", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 2, "canvas_edit": True},
+    "seedream-5-0-lite": {"name": "（即梦）Seedream 5.0 Lite", "references": 8, "count": 4, "resolutions": ("2K", "3K", "4K"), "credit_cost": 1, "canvas_edit": False},
+    "seedream-5-0-flash": {"name": "（即梦）Seedream 5.0 Flash", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 0.5, "canvas_edit": True},
 }
 RATIOS = {"square_1_1": "1:1", "landscape_3_2": "3:2", "portrait_2_3": "2:3", "landscape_16_9": "16:9", "portrait_9_16": "9:16", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "wide_21_9": "21:9"}
 TASK_ID = re.compile(r"^[A-Za-z0-9_-]{8,160}$")
@@ -38,6 +43,10 @@ def build_request(model, data, references=()):
     if model not in MODELS:
         raise ImageTaskError("MODEL_NOT_ALLOWED", "请选择已接入的图片模型。")
     spec = MODELS[model]
+    if model.startswith("gpt-image-2.6-"):
+        return build_gpt26_request(model, data, references)
+    if model.startswith("seedream-"):
+        return build_seedream_request(model, data, references)
     prompt = data.get("prompt", "")
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt.strip()) > 6000:
         raise ImageTaskError("PROMPT_INVALID", "提示词须为 1–6000 个字符。")
@@ -69,6 +78,8 @@ def build_request(model, data, references=()):
     if ratio not in allowed:
         raise ImageTaskError("IMAGE_SIZE_INVALID", "此模型不支持所选比例，请选择其他画面比例。")
     body = {"model": model, "prompt": prompt.strip(), "n": count}
+    if model == "gemini-nano-banana-2.1":
+        body.update(model="gemini-nano-banana-2.1-ext", official_fallback=True)
     if not spec.get("automatic_resolution"):
         resolution = data.get("resolution", spec["resolutions"][0])
         if resolution not in spec["resolutions"]:
@@ -82,6 +93,105 @@ def build_request(model, data, references=()):
         body["image_urls"] = list(references)
     if model == "grok-imagine-2.0-ext":
         body["response_format"] = "url"
+    return body
+
+
+def normalize_model_references(model, references):
+    if model.startswith("gpt-image-2.6-") and any(len(base64.b64decode(ref)) > 20 * 1024 * 1024 for ref in references):
+        raise ImageTaskError("REFERENCE_IMAGE_INVALID", "GPT Image 2.6 每张参考图不能超过 20 MB。")
+    if model == "gemini-nano-banana-2.1" and sum(len(base64.b64decode(ref)) for ref in references) > 50 * 1024 * 1024:
+        raise ImageTaskError("REFERENCE_IMAGE_INVALID", "Nano 参考图合计不能超过 50 MB。")
+    if not model.startswith("seedream-"):
+        return references
+    result = []
+    lite = model == "seedream-5-0-lite"
+    try:
+        for encoded in references:
+            raw = base64.b64decode(encoded, validate=True)
+            with Image.open(io.BytesIO(raw)) as image:
+                ratio = image.width / image.height
+                if min(image.size) <= 14 or image.width * image.height > 36_000_000 or not (1/3 <= ratio <= 3 if lite else 1/16 <= ratio <= 16):
+                    raise ValueError()
+                if lite and image.format not in ("PNG", "JPEG"):
+                    output = io.BytesIO()
+                    image.convert("RGBA" if "A" in image.getbands() else "RGB").save(output, format="PNG")
+                    raw = output.getvalue()
+                if len(raw) > (10 if lite else 30) * 1024 * 1024:
+                    raise ValueError()
+                result.append(base64.b64encode(raw).decode("ascii"))
+    except Exception:
+        raise ImageTaskError("REFERENCE_IMAGE_INVALID", "参考图不符合所选即梦模型的尺寸、比例或大小限制，请更换或压缩图片。") from None
+    return result
+
+
+def build_gpt26_request(model, data, references):
+    version = MODELS[model]["version"]
+    prompt, count = data.get("prompt"), data.get("count", 1)
+    if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 6000:
+        raise ImageTaskError("PROMPT_INVALID", "提示词须为 1–6000 个字符。")
+    if type(count) is not int or count != 1:
+        raise ImageTaskError("IMAGE_COUNT_INVALID", "GPT Image 2.6 Ext 当前仅支持单次生成 1 张。")
+    if len(references) > 8:
+        raise ImageTaskError("REFERENCE_MODEL_LIMIT", "本站 GPT Image 2.6 最多支持 8 张参考图。")
+    if str(data.get("resolution", "1K")).lower() != "1k":
+        raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "GPT Image 2.6 Ext 当前仅开放 1K。")
+    if data.get("canvas_workflow") or any(data.get(key) for key in ("mask_b64", "mask_storage_path", "markup", "markup_url", "selection_regions")):
+        raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "GPT Image 2.6 Ext 尚未支持蒙版或标注局部编辑，请使用普通参考图创作。")
+    if data.get("version", version) != version or data.get("output_format", "png") != "png":
+        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口使用所选 Ext 版本与 PNG 输出，请勿覆盖版本。")
+    size = data.get("size", "")
+    ratio = RATIOS.get(size) if size else "auto"
+    if ratio not in {"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"}:
+        raise ImageTaskError("IMAGE_SIZE_INVALID", "GPT Image 2.6 Ext 仅支持画面比例，不能指定像素尺寸。")
+    quality = data.get("quality", "auto")
+    if quality not in ("auto", "low", "medium", "high", "xhigh", "max"):
+        raise ImageTaskError("IMAGE_QUALITY_INVALID", "请选择有效的图片质量。")
+    body = {"model": "gpt-image-2.6-ext", "version": version, "prompt": prompt.strip(), "resolution": "1k", "size": ratio, "output_format": "png", "n": 1}
+    if "quality" in data:
+        body["quality"] = quality
+    if references:
+        body["image_urls"] = list(references)
+    return body
+
+
+def build_seedream_request(model, data, references):
+    spec = MODELS[model]
+    prompt, count = data.get("prompt"), data.get("count", 1)
+    if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 6000:
+        raise ImageTaskError("PROMPT_INVALID", "提示词须为 1–6000 个字符。")
+    if type(count) is not int or not 1 <= count <= spec["count"] or len(references) > spec["references"] or len(references) + count > 15:
+        raise ImageTaskError("REFERENCE_MODEL_LIMIT", "所选即梦模型的出图数量或参考图数量超出限制。")
+    if data.get("mask_b64") or data.get("mask_storage_path") or data.get("layer_decomposition") or data.get("background") == "transparent" or data.get("stream") or data.get("tools"):
+        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "此创作入口未开放蒙版、图层拆分、透明背景、流式或联网搜索参数。")
+    if data.get("canvas_workflow") and not spec["canvas_edit"]:
+        raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "该模型尚未确认支持局部编辑，请切换其他模型使用无限画布。")
+    resolution = data.get("resolution", spec["resolutions"][0])
+    if resolution not in spec["resolutions"]:
+        raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "请选择当前即梦模型支持的清晰度。")
+    size = data.get("size", "")
+    ratio = RATIOS.get(size) if size else ("1:1" if model.endswith("lite") and not references else "auto")
+    body = {"model": model, "prompt": prompt.strip(), "n": count, "resolution": resolution, "output_format": "png"}
+    if size == "custom":
+        try:
+            width, height = int(data.get("custom_width", 0)), int(data.get("custom_height", 0))
+            if width <= 0 or height <= 0:
+                raise ValueError()
+            if model.endswith("lite"):
+                divisor = math.gcd(width, height)
+                ratio = f"{width//divisor}:{height//divisor}"
+            else:
+                if not 921600 <= width * height <= 4624220 or not 1/16 <= width / height <= 16:
+                    raise ValueError()
+                body["size"] = f"{width}x{height}"
+                body.pop("resolution")  # Exact pixels override resolution upstream.
+        except (ValueError, TypeError):
+            raise ImageTaskError("IMAGE_SIZE_INVALID", "即梦精确尺寸须为 921600–4624220 总像素、宽高比不超过 16:1。") from None
+    if "size" not in body:
+        if ratio not in {"auto", "1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "2:1", "1:2", "21:9"}:
+            raise ImageTaskError("IMAGE_SIZE_INVALID", "当前即梦模型不支持此画面比例。")
+        body["size"] = ratio
+    if references:
+        body["image_urls"] = list(references)
     return body
 
 
@@ -138,7 +248,7 @@ def query(key, task_id):
     if not TASK_ID.fullmatch(task_id):
         raise ImageTaskError("APIMART_TASK_INVALID", "图片任务编号无效。")
     payload = api_request("GET", f"/tasks/{task_id}?language=zh", key)
-    row = payload.get("data")
+    row = payload.get("data", payload)
     if not isinstance(row, dict) or (row.get("id") and row["id"] != task_id):
         raise ImageTaskError("APIMART_TASK_INVALID", "图片任务状态暂时无法确认。", 503)
     images = (row.get("result") or {}).get("images", [])
@@ -150,6 +260,8 @@ def query(key, task_id):
                 if isinstance(url, str):
                     urls.append(url)
     status = row.get("status")
+    if status == "success":
+        status = "completed"
     return {"status": status if status in ("pending", "processing", "completed", "failed", "cancelled") else "unknown", "urls": urls,
             "error_code": image_failure_code(row.get('error') or row) if status in ('failed', 'cancelled') else None}
 

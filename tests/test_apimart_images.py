@@ -102,7 +102,7 @@ class ImageProtocolTests(unittest.TestCase):
 
     def test_provider_body_whitelist_omits_secrets_and_callbacks(self):
         body = provider.build_request("gemini-nano-banana-2.1", {"prompt": "cat", "api_key": "sentinel", "webhook": "https://invalid.test", "quality": "high", "provider": "override"})
-        self.assertEqual(set(body), {"model", "prompt", "n", "size", "resolution"})
+        self.assertEqual(set(body), {"model", "prompt", "n", "size", "resolution", "official_fallback"})
         self.assertNotIn("sentinel", json.dumps(body))
 
     def test_both_submission_shapes_and_idempotency(self):
@@ -261,7 +261,7 @@ class ImageRouteTests(unittest.TestCase):
 
     def test_reference_upload_failure_refunds_without_submitting_generation(self):
         store = Mock();store.begin.return_value = {"existing": False, "job": self.job}
-        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=["synthetic-base64"]), patch.object(provider, "upload_reference", side_effect=provider.ImageTaskError("REFERENCE_UPLOAD_FAILED", "upload failed", 502)), patch.object(provider, "submit") as submit:
+        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=[base64.b64encode(b"synthetic").decode()]), patch.object(provider, "upload_reference", side_effect=provider.ImageTaskError("REFERENCE_UPLOAD_FAILED", "upload failed", 502)), patch.object(provider, "submit") as submit:
             result = self.client.post("/api/apimart-images/generations", json=self.body, headers=self.headers)
         self.assertEqual(result.status_code, 502)
         self.assertEqual(store.apply.call_args.args[2], "failed")

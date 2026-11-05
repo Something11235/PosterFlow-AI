@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 import { fetchImageBlob, recoverGeneration } from "../lib/client";
 import CanvasAiPanel from "./CanvasAiPanel";
-import { canvasEditCapability, canvasReferenceError, canvasGenerationSize, canvasReferencePayload, exportCanvasEditMask, isMaskAnnotation, canvasSelectionRegions } from "../lib/canvasImageEditing";
+import { canvasEditCapability, canvasReferenceError, canvasGenerationSize, canvasReferencePayload, exportCanvasEditMask, isMaskAnnotation, canvasSelectionRegions, interactiveEditInstructions } from "../lib/canvasImageEditing";
 
 const CANVAS_DB_NAME = "posterflow-ai-fabric-canvas";
 const CANVAS_DB_STORE = "scenes";
@@ -1447,6 +1447,10 @@ export default function FabricCanvasWorkspace({
       return;
     }
     if (!canvas || !providerConfigured || aiBusy) return;
+    if (canvasEditCapability(imageModel).kind === "disabled") {
+      setAiError({ message: "当前模型未开放无限画布", detail: "请切换支持局部编辑的模型，画布内容已保留。" });
+      return;
+    }
     const currentSelection = selectionSnapshot(canvas);
     const referenceProblem = workflow !== "frame" && canvasReferenceError(imageModel, currentSelection.imageCount, currentSelection.annotationCount, currentSelection.objects);
     if (referenceProblem) {
@@ -1487,6 +1491,7 @@ export default function FabricCanvasWorkspace({
           { width: target.props.w, height: target.props.h };
         body = {
           prompt,
+          canvas_workflow: "frame",
           ...canvasGenerationSize(imageModel, Number(target.meta?.posterflowTargetWidth) || ratio.width,
             Number(target.meta?.posterflowTargetHeight) || ratio.height, target.meta?.posterflowRatioKey),
           quality: "auto",
@@ -1525,6 +1530,7 @@ export default function FabricCanvasWorkspace({
           .join("\n");
         const editPrompt = [
           "执行局部图片编辑，不要重新创作一张不同风格的图片。",
+          ...(apimartImageModel(imageModel)?.interactiveEdit ? ["主图待编辑区域的归一化坐标（0–1000）：" + (interactiveEditInstructions(target.raw, currentSelection.objects) || "以最后一张标注说明图及用户文字为准。") ] : []),
           "前" + selectedImages.length + "张输入图按顺序对应用户提示词中的 @图1 至 @图" + selectedImages.length + "；如果存在最后一张标注说明图，它只用于理解修改位置，不参与 @引用。请综合这些参考图完成合成与编辑。",
           "输入图1是主要目标图，严格保留它的画风、人物身份、脸部、姿势、构图、背景、光影、配色和宽高比例。",
           annotationReference
@@ -1537,6 +1543,7 @@ export default function FabricCanvasWorkspace({
         ].join("\n");
         body = {
           prompt: editPrompt,
+          canvas_workflow: "redraw",
           ...canvasReferencePayload(imageReferencePaths, maskStoragePath),
           ...(selectionRegions ? { operation: "region_edit", selection_regions: selectionRegions } : {}),
           ...canvasGenerationSize(imageModel, target.props.w, target.props.h),

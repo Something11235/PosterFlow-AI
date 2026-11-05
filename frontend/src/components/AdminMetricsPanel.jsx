@@ -5,6 +5,7 @@ import AdminBookkeepingPanel from "./AdminBookkeepingPanel";
 import AdminUsageRecords from "./AdminUsageRecords";
 import AdminMusicOverview from "./AdminMusicOverview";
 import AdminCreditCodes from "./AdminCreditCodes";
+import AdminModelBadges from "./AdminModelBadges";
 import { beijingDate, initialStatsFrom } from "../lib/adminBookkeeping";
 import { creditText, creditUnits } from "../lib/credits";
 
@@ -228,6 +229,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
               <button type="button" onClick={clearHistoryStorage} disabled={clearingStorage} className="inline-flex min-h-11 flex-none items-center justify-center gap-2 rounded-md border border-error/35 bg-error/10 px-4 text-sm font-medium text-error hover:bg-error/15 disabled:cursor-not-allowed disabled:opacity-50">{clearingStorage ? <Loader2 size={15} className="animate-spin-soft" /> : <RefreshCw size={15} />}{clearingStorage ? "清理中…" : "清空历史图片"}</button>
             </div>
           </section>
+          <AdminModelBadges authHeaders={authHeaders} />
           <AnnouncementManager authHeaders={authHeaders} />
           <AdminCreditCodes authHeaders={authHeaders} />
 
