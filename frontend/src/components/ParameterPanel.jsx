@@ -33,9 +33,12 @@ export default function ParameterPanel({
   apimartSpec,
   resolution,
   onResolutionChange,
+  outputFormat = "png",
+  onOutputFormatChange,
 }) {
   const sizeMap = Object.keys(sizes || {}).length ? sizes : FALLBACK_SIZES;
   const customSizeActive = size === "custom";
+  const gifMode = apimartSpec?.outputFormats?.includes("gif") && outputFormat === "gif";
 
   const updateCustomDimension = (dimension, value) => {
     onCustomSizeChange({ ...customSize, [dimension]: value });
@@ -54,7 +57,8 @@ export default function ParameterPanel({
         </span>
       </div>
 
-      <fieldset className="mb-4">
+      {apimartSpec?.outputFormats && <label className="mb-4 block text-xs text-text-secondary">输出格式<select aria-label="图片输出格式" value={outputFormat} onChange={event => onOutputFormatChange?.(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary"><option value="png">PNG 静态图</option><option value="gif">GIF 动图</option></select>{gifMode && <span className="mt-2 block leading-5 text-text-muted">GIF 仅支持文字生成，尺寸自动决定，单次 1 个，仍为 1 积分。请在提示词中描述动作和循环方式。</span>}</label>}
+      <fieldset className="mb-4 disabled:opacity-50" disabled={gifMode}>
         <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
           <LayoutTemplate size={16} />
           画面尺寸
@@ -179,7 +183,7 @@ export default function ParameterPanel({
 
       {apimartSpec && <div className="mb-4 space-y-3 rounded-lg border border-accent/25 bg-accent/5 p-3">
         {!apimartSpec.automaticResolution && <label className="block text-xs text-text-secondary">清晰度<select aria-label="图片清晰度" value={resolution} onChange={event => onResolutionChange(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary">{apimartSpec.resolutions.map(value => <option key={value} value={value}>{value === "quality" ? "质量模式" : value}</option>)}</select></label>}
-        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 模式不扣网站积分" : apimartSpec.resolutionCreditCosts ? `当前 ${resolution} 每张 ${imageCreditCost(apimartSpec.value, 0, resolution)} 积分（${count} 张共 ${count * imageCreditCost(apimartSpec.value, 0, resolution)} 积分）。${imagePricingLabel(apimartSpec.value)}` : apimartSpec.referenceCreditCost ? `纯文生图每张 ${apimartSpec.creditCost} 积分，参考图编辑每张 ${apimartSpec.referenceCreditCost} 积分` : `每张 ${apimartSpec.creditCost} 积分`} · 单次最多 {apimartSpec.maxCount} 张 · {apimartSpec.maxReferences ? `最多 ${apimartSpec.maxReferences} 张参考图` : "仅支持文生图"}。画面采用比例控制，实际像素以生成结果为准。</p>
+        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 模式不扣网站积分" : apimartSpec.resolutionCreditCosts ? `当前 ${resolution} 每张 ${imageCreditCost(apimartSpec.value, 0, resolution)} 积分（${count} 张共 ${count * imageCreditCost(apimartSpec.value, 0, resolution)} 积分）。${imagePricingLabel(apimartSpec.value)}` : apimartSpec.referenceCreditCost ? `纯文生图每张 ${apimartSpec.creditCost} 积分，参考图编辑每张 ${apimartSpec.referenceCreditCost} 积分` : `每张 ${apimartSpec.creditCost} 积分`} · 单次最多 {apimartSpec.maxCount} 张 · {gifMode ? "GIF 仅支持文生图，尺寸自动决定" : apimartSpec.maxReferences ? `最多 ${apimartSpec.maxReferences} 张参考图` : "仅支持文生图"}。{!gifMode && "画面采用比例控制，实际像素以生成结果为准。"}</p>
       </div>}
 
       <div className="rounded-lg border border-border-subtle bg-bg-primary/55 p-3">

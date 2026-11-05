@@ -136,7 +136,8 @@ def create_image_blueprint(server):
             prefix = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00")).strftime("%Y%m%d_%H%M%S")
             for i, url in enumerate(urls):
                 data = provider.download_image(url)
-                name = f"{prefix}_{job['id'].replace('-', '')[:12]}_{i + 1}.png"
+                extension = "gif" if data[:6] in (b"GIF87a", b"GIF89a") else "png"
+                name = f"{prefix}_{job['id'].replace('-', '')[:12]}_{i + 1}.{extension}"
                 server.store_generated_image(name, data)
                 names.append(name)
             applied = store.apply(owner, request_id, "completed", p_images=names, p_token=token)

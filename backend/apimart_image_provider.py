@@ -137,16 +137,19 @@ def build_gpt26_request(model, data, references):
         raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "GPT Image 2.6 Ext 当前仅开放 1K。")
     if data.get("canvas_workflow") or any(data.get(key) for key in ("mask_b64", "mask_storage_path", "markup", "markup_url", "selection_regions")):
         raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "GPT Image 2.6 Ext 尚未支持蒙版或标注局部编辑，请使用普通参考图创作。")
-    if data.get("version", version) != version or data.get("output_format", "png") != "png":
-        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口使用所选 Ext 版本与 PNG 输出，请勿覆盖版本。")
+    output_format = data.get("output_format", "png")
+    if data.get("version", version) != version or output_format not in ("png", "gif"):
+        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口支持 PNG 或 GIF，请勿覆盖所选 Ext 版本。")
+    if output_format == "gif" and (references or data.get("size") not in (None, "", "auto")):
+        raise ImageTaskError("IMAGE_GIF_INVALID", "GIF 动图仅支持文字生成，不能带参考图或指定比例。")
     size = data.get("size", "")
-    ratio = RATIOS.get(size) if size else "auto"
+    ratio = "auto" if size in ("", "auto") else RATIOS.get(size)
     if ratio not in {"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"}:
         raise ImageTaskError("IMAGE_SIZE_INVALID", "GPT Image 2.6 Ext 仅支持画面比例，不能指定像素尺寸。")
     quality = data.get("quality", "auto")
     if quality not in ("auto", "low", "medium", "high", "xhigh", "max"):
         raise ImageTaskError("IMAGE_QUALITY_INVALID", "请选择有效的图片质量。")
-    body = {"model": "gpt-image-2.6-ext", "version": version, "prompt": prompt.strip(), "resolution": "1k", "size": ratio, "output_format": "png", "n": 1}
+    body = {"model": "gpt-image-2.6-ext", "version": version, "prompt": prompt.strip(), "resolution": "1k", "size": ratio, "output_format": output_format, "n": 1}
     if "quality" in data:
         body["quality"] = quality
     if references:
@@ -317,6 +320,14 @@ def download_image(url):
         with Image.open(io.BytesIO(data)) as image:
             if image.width * image.height > 40_000_000:
                 raise ValueError()
+            if image.format == "GIF":
+                # Preserve original frame timing, loop and disposal byte-for-byte.
+                if image.n_frames > 300 or image.width * image.height * image.n_frames > 400_000_000:
+                    raise ValueError()
+                for index in range(image.n_frames):
+                    image.seek(index)
+                    image.load()
+                return bytes(data)
             image.load()
             output = io.BytesIO()
             image.save(output, format="PNG")

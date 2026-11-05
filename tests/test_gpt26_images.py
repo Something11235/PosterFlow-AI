@@ -14,7 +14,7 @@ class Gpt26ImageTests(unittest.TestCase):
     def test_unsupported_count_resolution_canvas_and_formats_never_reach_provider(self):
         for version in ('flare', 'sunburst'):
             model = 'gpt-image-2.6-' + version
-            for extra in ({'count': 2}, {'count': True}, {'resolution': '2K'}, {'resolution': '4K'}, {'mask_b64': 'fixture'}, {'markup': 'fixture'}, {'canvas_workflow': 'frame'}, {'canvas_workflow': 'iterative'}, {'size': 'custom', 'custom_width': 1024, 'custom_height': 1024}, {'output_format': 'svg'}, {'output_format': 'gif'}, {'quality': 'ultra'}, {'version': 'sunburst' if version == 'flare' else 'flare'}):
+            for extra in ({'count': 2}, {'count': True}, {'resolution': '2K'}, {'resolution': '4K'}, {'mask_b64': 'fixture'}, {'markup': 'fixture'}, {'canvas_workflow': 'frame'}, {'canvas_workflow': 'iterative'}, {'size': 'custom', 'custom_width': 1024, 'custom_height': 1024}, {'output_format': 'svg'}, {'quality': 'ultra'}, {'version': 'sunburst' if version == 'flare' else 'flare'}):
                 with self.subTest(model=model, extra=extra), self.assertRaises(provider.ImageTaskError):
                     provider.build_request(model, {'prompt': 'fixture', **extra})
             with self.assertRaises(provider.ImageTaskError):

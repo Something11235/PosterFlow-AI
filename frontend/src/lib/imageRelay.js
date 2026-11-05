@@ -24,8 +24,9 @@ export async function readImageRelay(filename, headers, readWithTimeout) {
     }, 40000, "网站备用通道读取超时，请稍后重试。");
     parts.push(part); offset += part.size;
   } while (offset < total);
-  const blob = new Blob(parts, { type: "image/png" });
+  const gif = filename.toLowerCase().endsWith(".gif");
+  const blob = new Blob(parts, { type: gif ? "image/gif" : "image/png" });
   const signature = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-  if (![137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => signature[index] === value)) throw new Error("原图格式异常，请重试。");
+  if (gif ? !/^GIF8[79]a$/.test(String.fromCharCode(...signature.slice(0, 6))) : ![137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => signature[index] === value)) throw new Error("原图格式异常，请重试。");
   return blob;
 }

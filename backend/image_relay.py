@@ -15,7 +15,7 @@ def image_content(server, filename):
     try:
         user = server.require_authenticated_user()
         g.posterflow_storage_scope = "user-" + user.id
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.png", filename) or ".." in filename:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.(?:png|gif)", filename) or ".." in filename:
             raise error("IMAGE_NAME_INVALID", "图片文件名无效", 400)
         raw_offset = request.args.get("offset", "0")
         if not re.fullmatch(r"[0-9]{1,8}", raw_offset):
@@ -51,7 +51,7 @@ def image_content(server, filename):
             content.extend(chunk)
         if len(content) != end - start + 1:
             raise error("IMAGE_RELAY_INVALID", "原图读取不完整，请重试", 502)
-        if offset == 0 and not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        if offset == 0 and not (content[:6] in (b"GIF87a", b"GIF89a") if filename.endswith(".gif") else content.startswith(b"\x89PNG\r\n\x1a\n")):
             raise error("IMAGE_RELAY_INVALID", "原图格式异常，请重试", 502)
         response = make_response(bytes(content))
         response.headers.update({"Content-Type": "application/octet-stream", "Cache-Control": "private, no-store",

@@ -10,7 +10,7 @@ PREVIEW_MAX_PIXELS = 20_000_000
 
 
 def preview_filename(filename):
-    return "_thumb_" + filename
+    return "_thumb_" + (filename[:-4] + ".png" if filename.lower().endswith(".gif") else filename)
 
 
 def create_image_preview(content):

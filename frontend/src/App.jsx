@@ -162,6 +162,7 @@ export default function App() {
   const [size, setSize] = useState("");
   const [platformModel, setPlatformModel] = useState(DEFAULT_PLATFORM_MODEL);
   const [imageResolution, setImageResolution] = useState("1K");
+  const [imageOutputFormat, setImageOutputFormat] = useState("png");
   const [apimartConfigured, setApimartConfigured] = useState(false);
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
   const [count, setCount] = useState(1);
@@ -352,7 +353,8 @@ export default function App() {
   const canvasAllowedRef = useRef(canvasAllowed);
   canvasAllowedRef.current = canvasAllowed;
   const apimartSpec = apimartImageModel(activeImageModel);
-  const referenceSpec = referenceCapability(apimartSpec);
+  const gifMode = apimartSpec?.outputFormats?.includes("gif") && imageOutputFormat === "gif";
+  const referenceSpec = referenceCapability(gifMode ? {...apimartSpec, maxReferences: 0} : apimartSpec);
   const materialReferenceSpec = useRef(referenceSpec);
   materialReferenceSpec.current = referenceSpec;
   const platformReady = Boolean((apimartSpec ? apimartConfigured : serverProvider.platformConfigured) && session);
@@ -363,6 +365,10 @@ export default function App() {
       .then(response => response.json()).then(data => { if (!controller.signal.aborted) setApimartConfigured(Boolean(data.platform_configured)); }).catch(() => {});
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    if (!apimartSpec?.outputFormats?.includes("gif")) setImageOutputFormat("png");
+    if (gifMode) setSize("");
+  }, [apimartSpec, gifMode]);
   useEffect(() => {
     if (!apimartSpec) return;
     setCount(previous => Math.min(previous, apimartSpec.maxCount));
@@ -498,6 +504,7 @@ export default function App() {
     }
     if (!requireGenerationAccess()) return;
     if (!providerConfigured) { setShowProviderSettings(true); return; }
+    if (gifMode && referenceFiles.length) { setNotice("GIF 动图仅支持文字生成，请移除参考图或切回 PNG。"); return; }
     if (previousImage && !canvasAllowedRef.current) { setNotice("当前模型未开放局部重绘，请使用参考图创作或切换模型。"); return; }
     if (previousImage && referenceSpec.disabled) {
       setNotice("当前模型仅支持文生图，请切换到 AI 创作或选择支持参考图的模型。"); return;
@@ -534,7 +541,8 @@ export default function App() {
         ...(size ? { size } : {}),
         ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
         quality: "auto", ...(previousImage ? { canvas_workflow: "iterative" } : {}), ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
-        ...(apimartSpec && !apimartSpec.automaticResolution ? { resolution: imageResolution } : {}) };
+        ...(apimartSpec && !apimartSpec.automaticResolution ? { resolution: imageResolution } : {}),
+        ...(apimartSpec?.outputFormats ? {output_format: imageOutputFormat} : {}) };
       if (!previousImage && !referenceSpec.disabled && referenceFiles.length) {
         paths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders });
         body.reference_storage_paths = paths;
@@ -571,7 +579,7 @@ export default function App() {
       await cleanupReferencePaths(paths, referenceUploadHeaders);
     }
   }, [activeImageModel, apimartSpec, authHeaders, billingMode, count, customSize.height, customSize.width,
-    imageResolution, imageTaskStore, platformModel, providerConfigured, providerHeaders, referenceFiles,
+    imageResolution, imageOutputFormat, gifMode, imageTaskStore, platformModel, providerConfigured, providerHeaders, referenceFiles,
     referenceSpec.disabled, referenceSpec.limit, referenceUploadHeaders, refreshAccount, requireGenerationAccess, session?.user?.id, size]);
 
   const handleGenerate = useCallback(() => runImageTask(prompt,
@@ -878,6 +886,8 @@ export default function App() {
                 billingMode={billingMode}
                 apimartSpec={apimartSpec}
                 resolution={imageResolution}
+                outputFormat={imageOutputFormat}
+                onOutputFormatChange={setImageOutputFormat}
                 onResolutionChange={setImageResolution}
                 size={size}
                 onSizeChange={setSize}

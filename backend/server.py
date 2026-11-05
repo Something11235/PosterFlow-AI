@@ -1324,10 +1324,14 @@ def provider_edit_endpoint(provider):
     return edit_endpoint
 
 
+def stored_image_mime(filename):
+    return "image/gif" if filename.lower().endswith(".gif") and not filename.startswith("_thumb_") else "image/png"
+
+
 def store_generated_image(filename, image_bytes):
     backend = _storage_backend()
     if backend == "supabase":
-        _supabase_put(_image_blob_path(filename), image_bytes, "image/png")
+        _supabase_put(_image_blob_path(filename), image_bytes, stored_image_mime(filename))
     else:
         image_folder = SAVE_FOLDER if storage_scope_name() == "local-user" else os.path.join(SAVE_FOLDER, storage_scope_name())
         os.makedirs(image_folder, exist_ok=True)
@@ -2459,7 +2463,7 @@ def serve_image(filename):
     path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
-    return send_file(path, mimetype="image/png")
+    return send_file(path, mimetype=stored_image_mime(safe_name))
 
 
 def redirect_to_stored_image(filename, *, download=False):
@@ -2561,7 +2565,7 @@ def download_image(filename):
     path = os.path.join(image_folder, safe_name)
     if not os.path.exists(path):
         return jsonify({"error": "图片不存在"}), 404
-    return send_file(path, mimetype="image/png", as_attachment=True, download_name=safe_name)
+    return send_file(path, mimetype=stored_image_mime(safe_name), as_attachment=True, download_name=safe_name)
 
 
 @app.route("/api/download-batch", methods=["POST"])

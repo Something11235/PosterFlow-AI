@@ -59,7 +59,7 @@ export default function Gallery({
     const currentFilenames = new Set(images.map((image) => image.filename));
     setAssetUrls((previous) => Object.fromEntries(Object.entries(previous).filter(([filename]) => currentFilenames.has(filename))));
     Promise.all(
-      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders, variant: "thumbnail" })]),
+      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders, variant: image.filename.toLowerCase().endsWith(".gif") ? "original" : "thumbnail" })]),
     ).then((entries) => {
       if (alive) setAssetUrls((previous) => ({ ...previous, ...Object.fromEntries(entries) }));
     });

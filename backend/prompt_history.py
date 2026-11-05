@@ -28,7 +28,7 @@ def history_preview_metadata(row, now=None):
     if not expires or not isinstance(names, list):
         return None
     names = list(dict.fromkeys(name for name in names if isinstance(name, str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.png", name)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,180}\.(?:png|gif)", name)
         and not name.startswith("_thumb_")))[:4]
     return {"filenames": names, "expires_at": expires} if names else None
 
