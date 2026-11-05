@@ -31,7 +31,7 @@ export async function createMaterialGroup(owner,name,builtinNames){
     await request(store.add(group));return group;
   });
 }
-async function imageRecord(file){
+export async function preparePersonalImage(file){
   if(!file.size || file.size>MAX_BYTES)throw new Error(`${file.name}：每张图片最多 16 MB。`);
   const bytes=new Uint8Array(await file.arrayBuffer());
   const type=bytes[0]===0xff && bytes[1]===0xd8 && bytes[2]===0xff?'image/jpeg':bytes.slice(0,8).join(',')==='137,80,78,71,13,10,26,10'?'image/png':String.fromCharCode(...bytes.slice(0,6)).match(/^GIF8[79]a$/)?'image/gif':String.fromCharCode(...bytes.slice(0,4))==='RIFF' && String.fromCharCode(...bytes.slice(8,12))==='WEBP'?'image/webp':'';
@@ -45,7 +45,7 @@ async function imageRecord(file){
 }
 export async function addPersonalImages(owner,groupId,files,builtinIds){
   if(!files.length || files.length>20)throw new Error('每次请选择 1–20 张图片。');
-  const prepared=[];for(const file of files)prepared.push(await imageRecord(file));
+  const prepared=[];for(const file of files)prepared.push(await preparePersonalImage(file));
   return access('readwrite',async tx=>{
     const groups=await request(tx.objectStore('groups').index('owner').getAll(owner));
     if(!builtinIds.includes(groupId) && !groups.some(g=>g.id===groupId))throw new Error('分类已变化，请重新选择。');

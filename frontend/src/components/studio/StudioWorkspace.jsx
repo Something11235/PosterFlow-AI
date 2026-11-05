@@ -54,7 +54,7 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
 
       <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} />
 
-      {area === "materials" && <CreativeMaterials identity={identity} presetLibrary={presetLibrary} onImportCompanion={onImportCompanion} />}
+      {area === "materials" && <CreativeMaterials identity={identity} presetLibrary={presetLibrary} onImportCompanion={onImportCompanion} onUseStylePrompt={onStartImage} />}
 
       {area === "models" && <div className="studio-page">
         <div className="studio-page-title"><div><p className="studio-eyebrow">A CURATED STARTING POINT</p><h1>选对工具，让灵感更进一步。</h1><p>图像、音乐与视频，按创作类型查看。预览模型尚未接通生成。</p></div><span className="studio-outline-badge">{MODEL_CATALOG.length} 个模型 · 分阶段接入</span></div>
