@@ -46,15 +46,49 @@ class VideoRouteTests(unittest.TestCase):
     def tearDown(self):
         for p in reversed(self.stack):p.stop()
 
-    def test_seedance25_video_auto_is_rejected_before_credit_reservation_and_provider_post(self):
+    def test_seedance25_legacy_fixed_duration_auto_is_rejected_before_reservation_and_provider_post(self):
         self.ref.update(kind='video',width=854,height=480,duration_ms=8000,fps=30,codec='avc1',audio_codecs=[])
         self.input['parameters'].update(model='seedance-2.5',duration=8,omni_reference_task_type='auto')
         self.input['references']=[{'receipt':'synthetic-proof'}]
         with patch.object(r,'submit_video') as submit:
-            response=self.client.post('/api/video/generations',json=self.input)
-            self.assertEqual(response.json['code'],'VIDEO_TASK_TYPE_REQUIRED')
+            with self.assertLogs(level='WARNING') as logs:
+                response=self.client.post('/api/video/generations',json=self.input)
+            self.assertEqual(response.json['code'],'VIDEO_TASK_CONSTRAINT')
+            self.assertEqual(response.json['submission_phase'],'validation')
+            self.assertFalse(response.json['submission_unknown'])
             self.assertEqual(self.store.begin_calls,[])
+            self.assertEqual(self.store.rows,{})
             submit.assert_not_called()
+            diagnostic='\n'.join(logs.output)
+            self.assertIn('request_id='+RID,diagnostic)
+            self.assertIn('code=VIDEO_TASK_CONSTRAINT phase=validation status=400',diagnostic)
+            for private in ['synthetic-proof','fixture','offline-key',UID]:self.assertNotIn(private,diagnostic)
+
+    def test_seedance25_native_auto_video_submits_once_with_matching_reserved_and_provider_parameters(self):
+        self.ref.update(kind='video',width=854,height=480,duration_ms=8000,fps=30,codec='avc1',audio_codecs=[])
+        self.input['parameters'].update(model='seedance-2.5',duration=-1,size='adaptive',omni_reference_task_type='auto')
+        self.input['references']=[{'receipt':'synthetic-proof'}]
+        self.store.apply25=lambda owner,rid,event,**kw:self.store.apply(owner,rid,event,**kw)
+        with patch.object(r,'submit_video',return_value=TASK) as submit:
+            response=self.client.post('/api/video/generations',json=self.input)
+            self.assertEqual(response.status_code,202,response.json)
+            reserve=self.store.begin_calls[0]['p_parameters'];upstream=submit.call_args.args[1]
+            for body in [reserve,upstream]:
+                self.assertEqual(body['omni_reference_task_type'],'auto')
+                self.assertEqual(body['duration'],-1);self.assertEqual(body['size'],'adaptive')
+                self.assertEqual(body['prompt'],'fixture')
+            self.assertEqual(self.client.post('/api/video/generations',json=self.input).status_code,200)
+            submit.assert_called_once()
+
+    def test_reservation_database_error_keeps_uncertainty_and_never_posts_upstream(self):
+        self.store.rpc=Mock(side_effect=r.SupabaseError('SUPABASE_UNAVAILABLE','private database detail',503))
+        with patch.object(r,'submit_video') as submit,self.assertLogs(level='WARNING'):
+            response=self.client.post('/api/video/generations',json=self.input)
+        self.assertEqual(response.status_code,503)
+        self.assertEqual(response.json['submission_phase'],'reservation')
+        self.assertNotIn('submission_unknown',response.json)
+        self.assertNotIn('private database detail',response.get_data(as_text=True))
+        submit.assert_not_called()
 
     def test_reservation_and_single_post_are_idempotent_across_refresh_and_expiry(self):
         self.input['references']=[{'receipt':'proof'}]
@@ -75,7 +109,11 @@ class VideoRouteTests(unittest.TestCase):
 
     def test_unknown_submission_holds_and_does_not_replay(self):
         with patch.object(r,'submit_video',side_effect=VideoError('VIDEO_SUBMISSION_UNKNOWN','fixture',503,True)) as submit:
-            self.assertEqual(self.client.post('/api/video/generations',json=self.input).status_code,503)
+            with self.assertLogs(level='WARNING'):
+                response=self.client.post('/api/video/generations',json=self.input)
+            self.assertEqual(response.status_code,503)
+            self.assertEqual(response.json['submission_phase'],'provider_submission')
+            self.assertTrue(response.json['submission_unknown'])
             response=self.client.post('/api/video/generations',json=self.input)
             self.assertTrue(response.json['idempotent']);self.assertEqual(self.store.events,['submission_unknown']);submit.assert_called_once()
 

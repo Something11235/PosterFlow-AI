@@ -2,11 +2,12 @@
 import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from functools import partial
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 try:
     from backend.music_provider import MusicError
@@ -108,23 +109,36 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
 
     @bp.errorhandler(VideoError)
     def video_error(error):
-        return jsonify(code=error.code,error=error.message,submission_unknown=error.uncertain),error.status
+        return error_response(error.code,error.message,error.status,error.uncertain)
+
+    def error_response(code,message,status,uncertain=None):
+        data={'code':code,'error':message}
+        phase=getattr(g,'video_submission_phase',None)
+        if phase:
+            data['submission_phase']=phase
+            # No reservation or upstream request has occurred during validation.
+            if phase=='validation':uncertain=False
+            safe_code=code if isinstance(code,str) and re.fullmatch(r'[A-Za-z0-9_]{1,80}',code) else 'VIDEO_SERVICE_UNAVAILABLE'
+            current_app.logger.warning('video_submission_error request_id=%s code=%s phase=%s status=%s',
+                getattr(g,'video_request_id','unavailable'),safe_code,phase,status)
+        if uncertain is not None:data['submission_unknown']=uncertain
+        return jsonify(data),status
 
     @bp.errorhandler(MusicError)
     def storage_error(_error):
-        return jsonify(code='VIDEO_REFERENCE_STORAGE',error='素材暂未完成处理，请重新添加或稍后重试。'),503
+        return error_response('VIDEO_REFERENCE_STORAGE','素材暂未完成处理，请重新添加或稍后重试。',503)
 
     @bp.errorhandler(SupabaseError)
     def db_error(_error):
         if _error.status in {401,403}:
-            return jsonify(code=_error.code,error='请重新登录后使用视频创作。'),_error.status
-        return jsonify(code='VIDEO_DATABASE_UNAVAILABLE',error='视频数据库暂未就绪，请保留原任务编号。'),503
+            return error_response(_error.code,'请重新登录后使用视频创作。',_error.status)
+        return error_response('VIDEO_DATABASE_UNAVAILABLE','视频数据库暂未就绪，请保留原任务编号。',503)
 
     @bp.errorhandler(Exception)
     def unexpected(error):
         if hasattr(error,'message') and hasattr(error,'status'):
-            return jsonify(code=error.code,error=error.message),error.status
-        return jsonify(code='VIDEO_SERVICE_UNAVAILABLE',error='视频请求暂未确认，请查询原任务，勿重复生成。'),503
+            return error_response(error.code,error.message,error.status)
+        return error_response('VIDEO_SERVICE_UNAVAILABLE','视频请求暂未确认，请查询原任务，勿重复生成。',503)
 
     def origin():
         value=request.headers.get('Origin')
@@ -190,8 +204,10 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         return [v['asset_url'] if 'asset_url' in v else reference_service.urls([v])[0] for v in values]
 
     def submit(operation):
+        g.video_submission_phase='validation'
         origin();user_id,mode,key,owner=context();rate_limit('video-submit',owner,8,60)
         raw=body(['request_id','parameters','references']);rid=request_id(raw['request_id']);store=VideoStore()
+        g.video_request_id=rid
         provider=provider_options()
         if provider and operation=='asset_review':raise VideoError('VIDEO_OPERATION_UNSUPPORTED','当前自定义服务未配置素材审核接口，可直接上传素材进行创作。')
         params=normalized_video_parameters(raw['parameters']) if operation=='generate' else {}
@@ -246,10 +262,12 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
             'asset_type':values[0]['kind'].title(),'assets':[{'url':media_urls[0],'name':'素材 '+values[0]['id'][:20]}]}
         reservation_params=params if operation=='generate' or not cost_based else {'model':model}
         begin_rpc='begin_flux3_job' if flux else 'begin_wan30_job' if wan else 'begin_minimax_h3_max_job' if model==minimax_h3.MAX_MODEL else 'begin_minimax_h3_job' if h3 else 'begin_omni_flash_job' if omni else 'begin_seedance25_job_v2' if newer else 'begin_seedance20_fast_job' if model==seedance20.FAST_MODEL else 'begin_seedance20_job' if standard else 'begin_video_job'
+        g.video_submission_phase='reservation'
         reserved=store.rpc(begin_rpc,{'p_owner':owner,'p_user_id':user_id,'p_request_id':rid,'p_mode':mode,
             'p_operation':operation,'p_fingerprint':fingerprint,'p_parameters':reservation_params,'p_references':metadata(values,model)})
         apply=store.apply_flux if flux else store.apply_wan if wan else store.apply_h3_max if model==minimax_h3.MAX_MODEL else store.apply_h3 if h3 else store.apply_omni if omni else store.apply25 if newer else partial(store.apply20,model=model) if standard else store.apply
         if reserved.get('existing'):return jsonify(success=True,job=public_job(reserved['job']),idempotent=True)
+        g.video_submission_phase='provider_submission'
         try:
             if operation=='generate':task=submit_video(key,payload,**provider)
             else:
@@ -260,6 +278,7 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         except VideoError as error:
             apply(owner,rid,'submission_unknown' if error.uncertain else 'rejected',error_code=error.code)
             raise
+        g.video_submission_phase='recording_submission'
         applied=apply(owner,rid,'submitted',task_id=task)
         return jsonify(success=True,job=public_job(applied['job']),credit_balance=applied.get('balance')),202
 

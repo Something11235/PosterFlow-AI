@@ -6,8 +6,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Film, LoaderCircle, Paperclip, Plus, RefreshCw, Settings2, ShieldCheck, Trash2 } from 'lucide-react';
 import { setVideoFrameRole, buildVideoParameters, uploadVideoReference, videoApi, videoFile, videoQuote, videoReferenceInput, videoShouldPoll, videoStatus } from '../../lib/video';
 import { VIDEO_MODELS } from '../../lib/studioCatalog';
+import { mergeVideoJobs as merge, videoJobTitle, videoSubmissionFailure } from '../../lib/videoJobs';
 import { defaultVideo } from '../../lib/video';
-import { SEEDANCE25, defaultSeedance25, seedance25DraftAvailable } from '../../lib/seedance25';
+import { SEEDANCE25, defaultSeedance25, seedance25DraftAvailable, seedance25AutoVideo, seedance25EffectiveValues } from '../../lib/seedance25';
 import { SEEDANCE20, SEEDANCE20_FAST, isSeedance20, defaultSeedance20 } from '../../lib/seedance20';
 import { creditText } from '../../lib/credits';
 import { remapVideoMentions,videoMentionError,videoMentions } from '../../lib/videoMentions';
@@ -17,7 +18,6 @@ import { OMNI_FLASH, defaultOmniFlash } from '../../lib/omniFlash';
 import OmniFlashControls, { OmniTaskControls } from './OmniFlashControls';
 import './video.css';
 
-const merge=(previous,next)=>[...new Map([...previous,...next].map(j=>[j.request_id,j])).values()].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,50);
 function Field({label,children,hint}) { return <label className="studio-field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label})}{hint && <small>{hint}</small>}</label>; }
 function Check({label,value,onChange}) { return <label className="music-check"><input type="checkbox" checked={value} onChange={e=>onChange(e.target.checked)} />{label}</label>; }
 
@@ -44,21 +44,23 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
   const drafts=jobs.filter(j=>seedance25DraftAvailable(j));
   const current=jobs.find(j=>j.request_id===selected),result=results[selected];
   const hasJobs=jobs.length>0;
-  const activeCount=jobs.filter(j=>j.operation==='generate' && !['completed','failed'].includes(j.status)).length;
+  const activeCount=jobs.filter(j=>j.operation==='generate' && !['completed','failed','not_submitted'].includes(j.status)).length;
   const uploading=items.some(i=>i.state==='uploading');
   const canUse=Boolean(session && account?.email_verified && account.profile?.status==='active');
   const update=patch=>onChange(previous=>({...previous,...patch}));
   const mixedMedia=items.some(i=>['video','audio'].includes(i.kind));
+  const hasVideo=items.some(i=>i.kind==='video');
+  const autoVideo=seedance25AutoVideo(values,hasVideo),effectiveValues=seedance25EffectiveValues(values,hasVideo);
   const mentionLabels=new Map(videoMentions(items).map(i=>[i.id,newer||wan?i.token:i.token.slice(1)]));
   const hasFrames=items.some(i=>i.kind==='image' && ['first_frame','last_frame'].includes(i.role));
-  const ratioReason=final?'正式片画幅继承样片。':newer && ['edit','extend'].includes(values.omni_reference_task_type)?'视频编辑与延长需要自适应画幅。':wan && hasFrames?'Wan 首尾帧画幅跟随上传图片，使用自适应。':h3 && hasFrames?'H3 首尾帧画幅跟随上传图片，使用自适应。':newer && hasFrames && !mixedMedia?'首尾帧画幅跟随上传图片，使用自适应。':'';
-  useEffect(()=>{if(ratioReason && !final && values.size!=='adaptive')onChange(v=>({...v,size:'adaptive'}));},[ratioReason,final,values.size,onChange]);
+  const ratioReason=final?'正式片画幅继承样片。':autoVideo?'带视频的自动判断使用自适应画幅，兼容参考创作、编辑与延长。':newer && ['edit','extend'].includes(values.omni_reference_task_type)?'视频编辑与延长需要自适应画幅。':wan && hasFrames?'Wan 首尾帧画幅跟随上传图片，使用自适应。':h3 && hasFrames?'H3 首尾帧画幅跟随上传图片，使用自适应。':newer && hasFrames && !mixedMedia?'首尾帧画幅跟随上传图片，使用自适应。':'';
+  useEffect(()=>{if(ratioReason && !final && !autoVideo && values.size!=='adaptive')onChange(v=>({...v,size:'adaptive'}));},[ratioReason,final,autoVideo,values.size,onChange]);
   useEffect(()=>{
     const before=previousItems.current;previousItems.current={scope,items};
     if((newer||wan) && before.scope===scope && before.items!==items){const prompt=remapVideoMentions(values.prompt,before.items,items);if(prompt!==values.prompt)onChange(v=>({...v,prompt:remapVideoMentions(v.prompt,before.items,items)}));}
   },[items,scope,newer,wan,values.prompt,onChange]);
   let quote,validation='';
-  try {quote=videoQuote(values,final?[]:items.map(i=>i.reference).filter(Boolean),source);if(h3)buildVideoParameters(values);if(!final){videoReferenceInput(items,'unified',values.model,values);if(newer||wan)validation=videoMentionError(values.prompt,items);}} catch(error) {validation=error.message;}
+  try {quote=videoQuote(effectiveValues,final?[]:items.map(i=>i.reference).filter(Boolean),source);if(h3)buildVideoParameters(effectiveValues);if(!final){videoReferenceInput(items,'unified',values.model,effectiveValues);if(newer||wan)validation=videoMentionError(values.prompt,items);}} catch(error) {validation=error.message;}
   useEffect(()=>{onTaskActivity?.(activeCount);},[activeCount,onTaskActivity]);
   useEffect(()=>()=>onTaskActivity?.(0),[onTaskActivity]);
 
@@ -152,13 +154,15 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
     if(busy)return;
     let parameters,refs;
     try {
-      parameters=reference?{}:buildVideoParameters(values);refs=reference?[{receipt:reference.receipt}]:final?[]:videoReferenceInput(items,'unified',values.model,values);
+      parameters=reference?{}:buildVideoParameters(effectiveValues);refs=reference?[{receipt:reference.receipt}]:final?[]:videoReferenceInput(items,'unified',values.model,effectiveValues);
       if(!reference && !final && (newer||wan)){const issue=videoMentionError(parameters.prompt,items);if(issue)throw new Error(issue);}
       if(!reference && !final && !parameters.prompt && !refs.length && !parameters.continue_request_id && !parameters.link_url)throw new Error('文生视频需要提示词，也可以先添加参考素材。');
       if(!reference && activeCount>=3)throw new Error('最多同时处理 3 个视频生成任务。');
     }catch(e){setMessage(e.message);return;}
     const rid=crypto.randomUUID(),controller=new AbortController(),started=scope;
-    const placeholder={request_id:rid,billing_mode:mode,operation:reference?'asset_review':'generate',status:'submitting',created_at:new Date().toISOString(),estimated_credits:quote?.text || '0'};
+    const placeholder={request_id:rid,billing_mode:mode,operation:reference?'asset_review':'generate',status:'submitting',local_attempt:true,
+      model:values.model,resolution:parameters.resolution,is_draft:parameters.draft===true,requested_duration:parameters.duration,
+      created_at:new Date().toISOString(),estimated_credits:quote?.text || '0'};
     pending.current.set(rid,controller);setJobs(p=>merge(p,[placeholder]));setSelected(rid);setBusy(true);setMessage('');
     try {
       const data=await videoApi(reference?'/assets/reviews':'/generations',{...options,signal:controller.signal,body:{request_id:rid,parameters,references:refs}});
@@ -166,8 +170,8 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
       setJobs(p=>merge(p,[data.job]));onAccountRefresh();
     }catch(e){
       if(controller.signal.aborted || started!==scopeRef.current)return;
-      const unknown=e.submission_unknown ?? (!e.status || e.status>=500);
-      setJobs(p=>merge(p,[{...placeholder,status:unknown?'submission_unknown':'failed',error_code:e.code}]));
+      const failed=videoSubmissionFailure(placeholder,e),unknown=failed.status==='submission_unknown';
+      setJobs(p=>merge(p,[failed]));
       setMessage(`${e.message} 请求编号：${rid}${unknown?'。请保留编号，勿重复提交。':''}`);onAccountRefresh();setRevision(p=>p+1);
     }finally{pending.current.delete(rid);if(started===scopeRef.current)setBusy(false);}
   }
@@ -180,7 +184,7 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
         {mode==='own_key'?<div className="music-key-box"><Field label="视频 API Key" hint="配置仅在当前页面内存中使用，刷新或切换账户后清空。"><input type="password" value={keyInput} autoComplete="off" onChange={e=>{setKeyInput(e.target.value);setConfigNotice('');}} /></Field><Field label="视频生成接口地址" hint="填写完整 HTTPS 地址，需兼容当前模型的异步视频生成协议。"><input type="url" value={endpointInput} onChange={e=>{setEndpointInput(e.target.value);setConfigNotice('');}} spellCheck={false} /></Field><Field label="任务查询地址（可选）" hint="用 {task_id} 表示任务编号，留空按生成接口推导；生成与查询须使用同一域名。"><input value={queryInput} onChange={e=>{setQueryInput(e.target.value);setConfigNotice('');}} spellCheck={false} placeholder="填写任务查询地址模板，使用 {task_id} 表示任务编号" /></Field><button type="button" className="studio-secondary" onClick={()=>{try{const url=new URL(endpointInput.trim());if(url.protocol!=='https:' || url.username || url.password || url.search || url.hash || !keyInput.trim())throw new Error('请填写 API Key 和有效的完整 HTTPS 接口地址。');setKey(keyInput.trim());setEndpoint(endpointInput.trim());setQueryTemplate(queryInput.trim());setConfigNotice('视频服务配置已应用，仅当前页面有效。');}catch{setConfigNotice("请填写 API Key 和有效的完整 HTTPS 接口地址。");}}}>应用视频服务配置</button>{configNotice && <p className="music-reference-note" role="status">{configNotice}</p>}</div>:<div className="music-service-note"><span>网站积分<strong>{account?.credits?.balance!=null?creditText(account.credits.balance):'—'}</strong></span><p>{costBased?<>先预留积分，成功后按实际用量结算，最终扣分以 0.5 积分为档，多退少补。{flux?'普通生成与视频续写使用不同秒价，只按请求生成秒数预估；草稿转正式片再次按正式价格收费，草稿费用不抵扣。':wan?'只按参考视频时长加生成时长计费；图片、参考音频、文档和网页不增加计费时长，关闭声音也不改变单价。':h3Max?'参考视频按独立秒价计费；前 2 张参考图免费，超过部分按张计费；参考音频免费。':h3?'参考视频时长计费；前 5 张参考图免费，超过部分按张计费；参考音频不另计时长。':omni?'图片、视频和提示词的输入用量均可能影响最终费用。':'参考音频与图片不额外计算时长。'}</>:'480P 每秒 0.5 积分，720P 每秒 1 积分。只计算参考视频总时长与生成时长，图片和音频不增加时长。'}</p>{config && !config.platform_configured && <p>平台视频服务尚未配置。</p>}</div>}
         <section className="video-composer" aria-label="视频创作编辑器">
         <section className="video-model-settings video-composer-card" aria-label="模型与创作方式"><h2 className="video-section-title"><Settings2 size={18} aria-hidden="true" />模型与创作方式</h2><div className="video-model-fields"><Field label="视频模型"><select value={values.model} onChange={e=>{forms.current[values.model]={...values};onChange({...forms.current[e.target.value]});}}>{VIDEO_MODELS.filter(m=>m.available).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-        {newer && <><Field label="制作流程"><select value={values.workflow || 'generate'} onChange={e=>update({workflow:e.target.value,resolution:e.target.value==='final'?'1080p':e.target.value==='draft'?'480p':values.resolution,draft_request_id:''})}><option value="generate">直接生成</option><option value="draft">先生成 480P 样片</option><option value="final">用样片生成 1080P 正式片</option></select></Field>{final?<Field label="选择已完成样片" hint="样片自创建起 3 天内有效；正式片单独计费，并沿用原参考视频输入时长，样片成片本身不计入输入。"><select value={values.draft_request_id || ''} onChange={e=>update({draft_request_id:e.target.value})}><option value="">请选择本人已完成并结算的样片</option>{drafts.map(d=><option key={d.request_id} value={d.request_id}>{new Date(d.created_at).toLocaleString('zh-CN',{hour12:false})} · {d.requested_duration===-1?'自动时长':d.requested_duration+' 秒'}</option>)}</select></Field>:<Field label="视频创作方式" hint="上传视频后须明确选择创作方式。参考创作避免写编辑、替换、删除或续写；编辑须用自动时长、自适应画幅和 4–30 秒源视频。"><select value={values.omni_reference_task_type || 'auto'} onChange={e=>update({omni_reference_task_type:e.target.value,...['edit','extend'].includes(e.target.value)?{size:'adaptive'}:{},...e.target.value==='edit'?{duration:-1}:{}})}><option value="auto" disabled={items.some(i=>i.kind==='video')}>自动判断{items.some(i=>i.kind==='video')?' · 请选择具体方式':''}</option><option value="reference">参考素材创作</option><option value="edit">视频编辑 · 替换、删除或修改画面</option><option value="extend">视频延长 · 向前或向后续写</option></select></Field>}</>}
+        {newer && <><Field label="制作流程"><select value={values.workflow || 'generate'} onChange={e=>update({workflow:e.target.value,resolution:e.target.value==='final'?'1080p':e.target.value==='draft'?'480p':values.resolution,draft_request_id:''})}><option value="generate">直接生成</option><option value="draft">先生成 480P 样片</option><option value="final">用样片生成 1080P 正式片</option></select></Field>{final?<Field label="选择已完成样片" hint="样片自创建起 3 天内有效；正式片单独计费，并沿用原参考视频输入时长，样片成片本身不计入输入。"><select value={values.draft_request_id || ''} onChange={e=>update({draft_request_id:e.target.value})}><option value="">请选择本人已完成并结算的样片</option>{drafts.map(d=><option key={d.request_id} value={d.request_id}>{new Date(d.created_at).toLocaleString('zh-CN',{hour12:false})} · {d.requested_duration===-1?'自动时长':d.requested_duration+' 秒'}</option>)}</select></Field>:<Field label="视频创作方式" hint="自动判断由模型根据素材与描述决定。参考创作借用动作、运镜或风格生成新片；视频编辑修改原片的人物、字幕或物体，时长跟随原片。"><select value={values.omni_reference_task_type || 'auto'} onChange={e=>update({omni_reference_task_type:e.target.value,...['edit','extend'].includes(e.target.value)?{size:'adaptive'}:{},...e.target.value==='edit'?{duration:-1}:{}})}><option value="auto">自动判断 · 根据素材与描述</option><option value="reference">参考素材创作 · 借用动作、运镜或风格生成新片</option><option value="edit">视频编辑 · 修改原片的人物、字幕或物体</option><option value="extend">视频延长 · 向前或向后续写</option></select></Field>}</>}
         {flux && <Flux3Workflow values={values} onChange={update} drafts={fluxDrafts} />}
         {omni && <OmniTaskControls values={values} onChange={update} jobs={omniSources} />}
         </div></section>
@@ -206,7 +210,7 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
           </section>
         </>}
         {wan && <section className="video-composer-card"><Field label="参考网页（可选）" hint="填写无需登录的公开 HTTPS 网页；不能与文档或首尾帧混用。网页地址不保存到提示词历史。"><input type="url" value={values.link_url || ''} onChange={e=>update({link_url:e.target.value})} /></Field></section>}
-        {flux?<Flux3Controls values={values} onChange={update} final={final} source={source}/>:omni?<OmniFlashControls values={values} onChange={update} />:<VideoGenerationControls values={values} onChange={update} newer={newer} final={final} source={source} ratioReason={ratioReason} />}
+        {flux?<Flux3Controls values={values} onChange={update} final={final} source={source}/>:omni?<OmniFlashControls values={values} onChange={update} />:<VideoGenerationControls values={effectiveValues} onChange={update} newer={newer} final={final} source={source} ratioReason={ratioReason} autoVideo={autoVideo} />}
         </section>
         {wan && <details className="music-advanced"><summary>更多创作选项</summary><div className="music-advanced-body"><Field label="随机种子" hint="留空随机；同种子不保证结果完全一致。"><input type="number" min={0} max={2147483647} step="1" value={values.seed} onChange={e=>update({seed:e.target.value})} /></Field><Check label="生成声音" value={values.audio} onChange={v=>update({audio:v})} /><Check label="添加 AI 生成水印" value={values.watermark} onChange={v=>update({watermark:v})} /><Check label="内容预检查" value={values.nsfw_check} onChange={v=>update({nsfw_check:v})} /><p className="music-reference-note">关闭声音不改变价格；开启内容预检查可能增加费用，计入最终用量。</p></div></details>}
         {h3 && <details className="music-advanced"><summary>更多创作选项</summary><div className="music-advanced-body">{h3Max && values.resolution==='1080p'?<p className="music-reference-note">1080P 不提供水印选项。</p>:<Check label="添加 AI 生成水印" value={Boolean(values.watermark)} onChange={v=>update({watermark:v})} />}{!h3Max && <Check label="内容预检查" value={Boolean(values.nsfw_check)} onChange={v=>update({nsfw_check:v})} />}<p className="music-reference-note">H3 原生生成声音，可在提示词中描述对白、音效与配乐。{!h3Max && '开启内容预检查可能增加费用，计入最终实际用量。'}</p></div></details>}
@@ -219,14 +223,17 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
           {newer && <><Field label="视频输出格式"><select value={values.output_format || 'mp4'} onChange={e=>update({output_format:e.target.value})}><option value="mp4">MP4</option><option value="mov">MOV · 适合编辑与延长</option></select></Field><Check label="添加 AI 生成水印" value={Boolean(values.watermark)} onChange={v=>update({watermark:v})} /></>}
           <p className="music-reference-note">预检查不覆盖视频与音频，预检查服务不可用时仍可能继续提交；最终以生成服务审核为准。</p>
         </div></details>}
-        <div className="music-service-note"><span>本次预估<strong>{mode==='own_key'?'0':quote?.text || '—'} 积分</strong></span><p>{costBased?`预计约 ${quote?.text || '—'} 积分，提交先预留 ${quote?.reservedText || '—'} 积分，完成按实际用量核算，多退少补。${flux?'续写按独立秒价预估；正式片费用不抵扣草稿费用。':wan?(Number(values.duration)===-1?'自动时长按最多 30 秒总计费时长预估，完成按实际费用结算。':'预估按参考视频时长与生成时长之和计算。'):h3Max?'预估分别计算生成时长、参考视频时长及超过 2 张的参考图费用；最终按实际费用结算。':h3?'预估包含参考视频时长及超过 5 张的参考图费用；最终按实际费用结算。':omni?'预估基于最多 10 秒输出，参考素材和提示词的输入用量也会计入实际费用。':newer?(final?`正式片预估包含原参考视频 ${quote?.referenceSeconds ?? 0} 秒与${source?.requested_duration===-1?'最多 30 秒':`${source?.requested_duration || 0} 秒`}输出，不计入样片成片时长。`:Number(values.duration)===-1?'自动时长按最多 30 秒输出加参考视频输入预留。':'预估包含参考视频输入与生成时长。'):''}`:`参考视频 ${quote?.referenceSeconds || 0} 秒 ＋ 生成 ${values.duration} 秒。`}平台先预留，成功扣除，明确失败退回；提交结果未知时保留原任务核对。{omni||h3||wan||flux?'自带 Key 由对应服务计费。':'素材审核不扣网站积分，自带 Key 由对应服务计费。'}</p></div>
+        <div className="music-service-note"><span>本次预估<strong>{mode==='own_key'?'0':quote?.text || '—'} 积分</strong></span><p>{costBased?`预计约 ${quote?.text || '—'} 积分，提交先预留 ${quote?.reservedText || '—'} 积分，完成按实际用量核算，多退少补。${flux?'续写按独立秒价预估；正式片费用不抵扣草稿费用。':wan?(Number(values.duration)===-1?'自动时长按最多 30 秒总计费时长预估，完成按实际费用结算。':'预估按参考视频时长与生成时长之和计算。'):h3Max?'预估分别计算生成时长、参考视频时长及超过 2 张的参考图费用；最终按实际费用结算。':h3?'预估包含参考视频时长及超过 5 张的参考图费用；最终按实际费用结算。':omni?'预估基于最多 10 秒输出，参考素材和提示词的输入用量也会计入实际费用。':newer?(final?`正式片预估包含原参考视频 ${quote?.referenceSeconds ?? 0} 秒与${source?.requested_duration===-1?'最多 30 秒':`${source?.requested_duration || 0} 秒`}输出，不计入样片成片时长。`:Number(effectiveValues.duration)===-1?'自动时长按最多 30 秒输出加参考视频输入预留。':'预估包含参考视频输入与生成时长。'):''}`:`参考视频 ${quote?.referenceSeconds || 0} 秒 ＋ 生成 ${values.duration} 秒。`}平台先预留，成功扣除，明确失败退回；提交结果未知时保留原任务核对。{omni||h3||wan||flux?'自带 Key 由对应服务计费。':'素材审核不扣网站积分，自带 Key 由对应服务计费。'}</p></div>
+        {autoVideo && <p role="status" className="music-reference-note">自动模式：由模型判断参考创作、视频编辑或延长。当前使用自动时长和自适应画幅，按最多 30 秒输出加参考视频输入预留积分；若判为编辑，成片时长跟随原视频。需要固定时长时，可切换参考素材创作或视频延长。</p>}
         {message && <p role="status" className="music-query-error">{message}</p>}
       </div><footer className="music-submit studio-form-footer"><button type="button" className="studio-primary" disabled={busy || uploading || Boolean(validation) || (mode==='platform'?!config?.platform_configured:!key)} onClick={()=>submit()}>{busy?<LoaderCircle size={17} className="music-spin" />:<Film size={17} />}生成视频 · {mode==='own_key'?'0':quote?.text || '—'} 积分</button></footer></section>
       <section className="music-output" aria-label="我的视频任务"><header className="studio-panel-heading"><span><Film size={18} />我的视频任务</span><button type="button" onClick={()=>setRevision(p=>p+1)}><RefreshCw size={15} />刷新列表</button></header><p className="music-retention-note">{newer||h3||wan||flux?'视频链接有效期以返回结果为准，请及时下载备份。':'生成视频临时保留约 72 小时，请及时下载。'}提示词保留 7 天；上传参考素材临时保留 12 小时。可同时提交最多 3 个视频任务。</p>
-        {jobs.length?<><div className="music-task-tabs">{jobs.map(j=><button key={j.request_id} type="button" aria-pressed={selected===j.request_id} onClick={()=>setSelected(j.request_id)}><strong>{j.operation==='asset_review'?'素材审核':`${(VIDEO_MODELS.find(m=>m.id===j.model)?.name || j.model)+(j.is_draft?' 样片':'')} · ${String(j.resolution || '').toUpperCase()}`}</strong><span>{videoStatus[j.status] || '状态待确认'}</span><small>{new Date(j.created_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}</small></button>)}</div>{current && <div className="music-task-detail"><div className="music-task-status"><strong>{videoStatus[current.status] || '状态待确认'}</strong><button type="button" disabled={querying || !current.provider_task_id} className="studio-secondary" onClick={()=>refresh(selected)}><RefreshCw size={15} />刷新状态</button></div><p className="music-task-id">请求编号：{selected}</p>{current.provider_task_id && <p className="music-task-id">服务任务：{current.provider_task_id}</p>}
+        {jobs.length?<><div className="music-task-tabs">{jobs.map(j=><button key={j.request_id} type="button" aria-pressed={selected===j.request_id} onClick={()=>setSelected(j.request_id)}><strong>{videoJobTitle(j,VIDEO_MODELS)}</strong><span>{videoStatus[j.status] || '状态待确认'}</span><small>{new Date(j.created_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}</small></button>)}</div>{current && <div className="music-task-detail"><div className="music-task-status"><strong>{videoStatus[current.status] || '状态待确认'}</strong><button type="button" disabled={querying || current.status==='submitting'} className="studio-secondary" onClick={()=>refresh(selected)}><RefreshCw size={15} />刷新状态</button></div><p className="music-task-id">请求编号：{selected}</p>{current.provider_task_id && <p className="music-task-id">服务任务：{current.provider_task_id}</p>}
           {videoShouldPoll(current) && <><progress max="100" value={result?.progress || 0} aria-label="视频任务进度" /><p className="music-waiting">处理中 {result?.progress || 0}% · 可以继续提交其他任务或切换到音乐、图像创作。</p></>}
           {result?.queryError && <p role="alert" className="music-query-error">{result.queryError}</p>}
-          {current.status==='submission_unknown' && <p className="music-query-error">提交结果待确认，请保留原请求编号联系站主核对，勿重复生成。</p>}
+          {current.status==='submission_unknown' && <p className="music-query-error">{current.failure_reason && <>{current.failure_reason} </>}提交结果待确认，请刷新原请求核对；没有查到记录也不要重复生成，请保留原请求编号联系站主。</p>}
+          {current.status==='not_submitted' && <p className="music-query-error">{current.failure_reason} {current.submission_phase==='validation'?'本次在提交校验时被拦截，尚未创建生成任务，也未预留网站积分。':'本次未进入上游生成，请按提示处理。'}</p>}
+          {current.local_attempt && current.error_code && <p className="music-task-id">错误代码：{current.error_code}</p>}
           {current.status==='failed' && <p className="music-query-error">{result?.failure_reason || current.failure_reason || '任务未完成，请保留任务编号核对。'}{current.billing_status==='refunded'?' 预留的网站积分已退回。':''}</p>}
           {current.status==='completed' && current.billing_status!=='awaiting_balance' && <p className="music-settled">{current.operation==='asset_review'?'素材审核通过，可在已审核素材中选用。':`已完成 · 本次使用 ${creditText(current.charged_credits || 0)} 积分`}</p>}
           {result?.warning && <p className="music-query-error">{result.warning}</p>}

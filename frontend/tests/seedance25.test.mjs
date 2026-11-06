@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildVideoParameters,videoQuote,videoReferenceInput,restoreVideoHistory,setVideoFrameRole} from '../src/lib/video.js';
-import {defaultSeedance25,seedance25DraftAvailable,SEEDANCE25_DRAFT_TTL_MS} from '../src/lib/seedance25.js';
+import {defaultSeedance25,seedance25DraftAvailable,SEEDANCE25_DRAFT_TTL_MS,seedance25EffectiveValues,seedance25AutoVideo} from '../src/lib/seedance25.js';
 import {VIDEO_MODELS} from '../src/lib/studioCatalog.js';
 const draftSource=extra=>({model:'seedance-2.5',is_draft:true,status:'completed',billing_status:'settled',provider_task_id:'task_draft_fixture',created_at:new Date().toISOString(),requested_duration:5,reference_duration_ms:0,...extra});
 
@@ -19,11 +19,18 @@ test('final Seedance quote includes original input video and three-day source el
  assert.equal(videoQuote(nonFinal,[]).text,'11');
 });
 
-test('2.5 uploaded videos require explicit intent before submission and editing preserves source constraints',()=>{
+test('2.5 native auto with video uses compatible constraints and manual editing preserves source constraints',()=>{
  const values={...defaultSeedance25(),prompt:'fixture',duration:8};
  const items=[{id:'v',kind:'video',state:'ready',reference:{id:'v',kind:'video',duration_ms:8000,receipt:'proof-v'}}];
- assert.throws(()=>videoReferenceInput(items,'unified','seedance-2.5',values),/明确选择/);
+ assert.throws(()=>videoReferenceInput(items,'unified','seedance-2.5',values),/自动时长/);
  assert.equal(values.duration,8);
+ const automatic=seedance25EffectiveValues(values,true);
+ assert.equal(automatic.duration,-1);assert.equal(automatic.size,'adaptive');assert.equal(automatic.omni_reference_task_type,'auto');
+ assert.equal(videoReferenceInput(items,'unified','seedance-2.5',automatic).length,1);
+ assert.equal(buildVideoParameters(automatic).duration,-1);
+ assert.equal(videoQuote(automatic,items.map(i=>i.reference)).text,'48.5');
+ assert.equal(videoQuote(automatic,items.map(i=>i.reference)).reservedText,'77.5');
+ assert.throws(()=>videoReferenceInput([{...items[0],reference:{...items[0].reference,duration_ms:3000}}],'unified','seedance-2.5',automatic),/4–30/);
  assert.equal(videoReferenceInput(items,'unified','seedance-2.5',{...values,omni_reference_task_type:'reference'}).length,1);
  assert.throws(()=>videoReferenceInput(items,'unified','seedance-2.5',{...values,omni_reference_task_type:'edit'}),/自动时长/);
  const edit={...values,omni_reference_task_type:'edit',duration:-1};
@@ -32,6 +39,18 @@ test('2.5 uploaded videos require explicit intent before submission and editing 
  assert.throws(()=>videoReferenceInput([{...items[0],reference:{...items[0].reference,duration_ms:3000}}],'unified','seedance-2.5',edit),/4–30/);
  assert.throws(()=>videoReferenceInput([],'unified','seedance-2.5',edit),/至少需要/);
  assert.deepEqual(videoReferenceInput([],'unified','seedance-2.5',values),[]);
+});
+
+test('automatic video constraints preserve the original fixed settings and never rewrite other workflows or models',()=>{
+ const original={...defaultSeedance25(),prompt:'Replace a person in the source video',duration:8,size:'16:9'};
+ const effective=seedance25EffectiveValues(original,true);
+ assert.equal(effective.prompt,original.prompt);assert.equal(effective.omni_reference_task_type,'auto');
+ assert.equal(original.duration,8);assert.equal(original.size,'16:9');
+ for(const values of [{...original,omni_reference_task_type:'reference'},{...original,omni_reference_task_type:'edit'},{...original,omni_reference_task_type:'extend'},{...original,workflow:'final'}, {...original,model:'seedance-2.0-mini'}]){
+   assert.equal(seedance25EffectiveValues(values,true),values);assert.equal(seedance25AutoVideo(values,true),false);
+ }
+ assert.equal(seedance25EffectiveValues(original,false),original);
+ assert.equal(seedance25AutoVideo({...original,workflow:'generate',draft_request_id:'stale-choice'},true),true);
 });
 
 test('model order matches the roadmap and Mini, standard and 2.5 are available',()=>{

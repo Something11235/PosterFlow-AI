@@ -65,11 +65,20 @@ class Seedance25Tests(unittest.TestCase):
                 submit.assert_called_once()
         finally:fx.tearDown()
 
-    def test_video_auto_requires_explicit_intent_without_changing_duration_or_upload_validation(self):
+    def test_video_auto_uses_common_constraints_without_guessing_prompt_or_changing_manual_settings(self):
         body=s.normalized_parameters({'model':s.MODEL,'prompt':'fixture','duration':8})
         with self.assertRaises(p.VideoError) as caught:s.validate_references([video(duration_ms=8000)],body)
-        self.assertEqual(caught.exception.code,'VIDEO_TASK_TYPE_REQUIRED')
+        self.assertEqual(caught.exception.code,'VIDEO_TASK_CONSTRAINT')
         self.assertEqual(body['duration'],8)
+        automatic=s.normalized_parameters({'model':s.MODEL,'prompt':'替换人物，并修改字幕','duration':-1,'size':'adaptive','resolution':'480p'})
+        self.assertEqual(s.validate_references([video(duration_ms=8000)],automatic),8000)
+        quote=s.estimate(automatic,[video(duration_ms=8000)])
+        self.assertEqual((quote['estimated'],quote['reserved']),(Decimal('48.5'),Decimal('77.5')))
+        self.assertEqual(automatic['omni_reference_task_type'],'auto')
+        self.assertEqual(automatic['prompt'],'替换人物，并修改字幕')
+        for invalid in [automatic|{'duration':8},automatic|{'size':'16:9'}]:
+            with self.assertRaises(p.VideoError):s.validate_references([video(duration_ms=8000)],invalid)
+        with self.assertRaises(p.VideoError):s.validate_references([video(duration_ms=3000)],automatic)
         self.assertEqual(s.validate_references([video()],{'size':'adaptive'}),3000)
         self.assertEqual(s.validate_references([video()],body|{'omni_reference_task_type':'reference'}),3000)
         edit=s.normalized_parameters({'model':s.MODEL,'prompt':'编辑视频','omni_reference_task_type':'edit'})

@@ -9,7 +9,7 @@ import { OMNI_FLASH, buildOmniFlash, defaultOmniFlash, omniFlashQuote, validateO
 export const VIDEO_MODEL = 'seedance-2.0-mini';
 export const VIDEO_SIZES = ['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'];
 export const defaultVideo = () => ({ model: VIDEO_MODEL, prompt: '', resolution: '480p', duration: 5, size: '16:9', seed: '', generate_audio: true, return_last_frame: false, web_search: false, nsfw_check: false });
-export const videoStatus = { submitting:'正在提交', submitted:'已受理', pending:'等待生成', processing:'生成中', completed:'已完成', failed:'未完成', unknown:'状态待确认', submission_unknown:'提交结果待确认' };
+export const videoStatus = { submitting:'正在提交', submitted:'已受理', pending:'等待生成', processing:'生成中', completed:'已完成', failed:'生成失败', not_submitted:'提交未受理', unknown:'状态待确认', submission_unknown:'提交结果待确认' };
 
 export function buildVideoParameters(values) {
   if(values.model===FLUX3)return buildFlux3(values);
@@ -71,7 +71,8 @@ export function videoReferenceInput(items,imageMode,model=VIDEO_MODEL,parameters
   if(model===OMNI_FLASH){validateOmniReferences(refs,parameters);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
   if(newer && videos.length){
     const kind=parameters.omni_reference_task_type || 'auto';
-    if(kind==='auto')throw new Error('已添加视频，请明确选择参考素材创作、视频编辑或视频延长；自动判断可能将固定时长任务识别为编辑而失败。');
+    if(kind==='auto' && (Number(parameters.duration)!==-1 || parameters.size!=='adaptive'))throw new Error('带视频的自动判断需使用自动时长和自适应画幅，以兼容视频编辑。请核对预估；需要固定时长可选择参考素材创作或视频延长。');
+    if(kind==='auto' && videos.some(r=>r.duration_ms<4000))throw new Error('自动判断可能采用视频编辑，参考视频须为 4–30 秒；2–4 秒素材请明确选择参考素材创作或视频延长。');
     if(kind==='edit' && (Number(parameters.duration)!==-1 || parameters.size!=='adaptive'))throw new Error('视频编辑须使用自动时长和自适应画幅，输出时长跟随源视频。');
     if(kind==='edit' && videos.some(r=>r.duration_ms<4000 || r.duration_ms>30000))throw new Error('待编辑视频须为 4–30 秒。');
     if(kind==='extend' && parameters.size!=='adaptive')throw new Error('视频延长须使用自适应画幅。');
@@ -130,7 +131,7 @@ export async function videoApi(path,{body,mode='platform',key='',model=VIDEO_MOD
     try { data=await response.json(); } catch { throw new Error('视频响应暂未确认，请查询原任务，勿重复提交。'); }
     if (!response.ok || data.error) {
       const error=new Error(data.error || '视频请求暂未完成。');
-      Object.assign(error,{code:data.code,status:response.status,...typeof data.submission_unknown==='boolean'?{submission_unknown:data.submission_unknown}:{}});throw error;
+      Object.assign(error,{code:data.code,status:response.status,submission_phase:data.submission_phase,...typeof data.submission_unknown==='boolean'?{submission_unknown:data.submission_unknown}:{}});throw error;
     }
     return data;
   } finally { clearTimeout(timer);signal?.removeEventListener('abort',abort); }

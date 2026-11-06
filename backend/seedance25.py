@@ -107,7 +107,10 @@ def validate_references(refs,body):
         if len(frames)!=len(set(frames)):raise VideoError('VIDEO_REFERENCE_ROLE','首帧和尾帧各只能选择一张。')
     kind=body.get('omni_reference_task_type','auto')
     if body.get('model')==MODEL and groups['video'] and kind=='auto':
-        raise VideoError('VIDEO_TASK_TYPE_REQUIRED','已添加视频，请明确选择参考素材创作、视频编辑或视频延长；自动判断可能将固定时长任务识别为编辑而失败。')
+        if body.get('duration')!=-1 or body.get('size')!='adaptive':
+            raise VideoError('VIDEO_TASK_CONSTRAINT','带视频的自动判断需使用自动时长和自适应画幅，以兼容视频编辑。请刷新页面核对新预估；需要固定时长可选择参考素材创作或视频延长。')
+        if any(r['duration_ms']<4000 for r in groups['video']):
+            raise VideoError('VIDEO_TASK_CONSTRAINT','自动判断可能采用视频编辑，参考视频须为 4–30 秒；2–4 秒素材请明确选择参考素材创作或视频延长。')
     if kind in {'edit','extend'} and not groups['video']:raise VideoError('VIDEO_TASK_CONSTRAINT','视频编辑或延长至少需要一段视频。')
     if kind=='edit' and any(r['duration_ms']<4000 for r in groups['video']):raise VideoError('VIDEO_TASK_CONSTRAINT','待编辑视频须为 4–30 秒。')
     return video_ms

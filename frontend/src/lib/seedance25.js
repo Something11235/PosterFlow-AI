@@ -6,6 +6,16 @@ export function seedance25DraftAvailable(source,now=Date.now()){
 }
 export const defaultSeedance25=()=>({model:SEEDANCE25,workflow:'generate',prompt:'',resolution:'480p',duration:5,size:'adaptive',seed:'',generate_audio:true,return_last_frame:false,web_search:false,nsfw_check:false,watermark:false,output_format:'mp4',omni_reference_task_type:'auto',draft_request_id:''});
 
+// Preserve the user's manual settings; only the effective auto-video request
+// uses the common constraints of reference, editing and extension tasks.
+export function seedance25AutoVideo(values,hasVideo){
+  const final=values.workflow?values.workflow==='final':Boolean(values.draft_request_id);
+  return values.model===SEEDANCE25 && !final && hasVideo && (values.omni_reference_task_type || 'auto')==='auto';
+}
+export function seedance25EffectiveValues(values,hasVideo){
+  return seedance25AutoVideo(values,hasVideo)?{...values,duration:-1,size:'adaptive'}:values;
+}
+
 export function buildSeedance25(values){
   const final=values.workflow ? values.workflow==='final' : Boolean(values.draft_request_id);
   const output=values.output_format || 'mp4';
