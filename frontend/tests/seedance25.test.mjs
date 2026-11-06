@@ -1,8 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildVideoParameters,videoQuote,videoReferenceInput,restoreVideoHistory,setVideoFrameRole} from '../src/lib/video.js';
-import {defaultSeedance25} from '../src/lib/seedance25.js';
+import {defaultSeedance25,seedance25DraftAvailable,SEEDANCE25_DRAFT_TTL_MS} from '../src/lib/seedance25.js';
 import {VIDEO_MODELS} from '../src/lib/studioCatalog.js';
+const draftSource=extra=>({model:'seedance-2.5',is_draft:true,status:'completed',billing_status:'settled',provider_task_id:'task_draft_fixture',created_at:new Date().toISOString(),requested_duration:5,reference_duration_ms:0,...extra});
+
+test('final Seedance quote includes original input video and three-day source eligibility',()=>{
+ const values={...defaultSeedance25(),workflow:'final',draft_request_id:'11111111-1111-4111-8111-111111111111'};
+ const source=draftSource({requested_duration:11,reference_duration_ms:22000});
+ const q=videoQuote(values,[],source);assert.equal(q.text,'233');assert.equal(q.reservedText,'373');assert.equal(q.referenceSeconds,22);
+ const auto=videoQuote(values,[],{...source,requested_duration:-1});assert.equal(auto.text,'367');assert.equal(auto.reservedText,'587.5');
+ const now=Date.now(),limit=now-SEEDANCE25_DRAFT_TTL_MS;
+ assert.ok(seedance25DraftAvailable({...source,created_at:new Date(limit+1).toISOString()},now));
+ assert.equal(seedance25DraftAvailable({...source,created_at:new Date(limit).toISOString()},now),false);
+ for(const bad of [{created_at:'invalid'},{created_at:new Date(now-4*86400000).toISOString()},{model:'flux-3-video'},{is_draft:false},{billing_status:'awaiting_balance'},{reference_duration_ms:null},{reference_duration_ms:30001},{provider_task_id:null}])assert.equal(seedance25DraftAvailable({...source,...bad},now),false);
+ assert.throws(()=>videoQuote(values,[],{...source,created_at:new Date(now-4*86400000).toISOString()}),/3 天/);
+ const nonFinal={...values,workflow:'generate',prompt:'fixture',duration:5,resolution:'480p'};
+ assert.equal(videoQuote(nonFinal,[]).text,'11');
+});
 
 test('2.5 uploaded videos require explicit intent before submission and editing preserves source constraints',()=>{
  const values={...defaultSeedance25(),prompt:'fixture',duration:8};
@@ -28,7 +43,7 @@ test('2.5 quote uses half-credit units with a separate reservation and excludes 
  assert.equal(videoQuote(v).text,'11');assert.equal(videoQuote(v).reservedText,'17');
  assert.equal(videoQuote(v,[{kind:'audio',duration_ms:3000}]).text,'11');
  assert.equal(videoQuote(v,[{kind:'video',duration_ms:3000}]).reservedText,'16.5');
- assert.equal(videoQuote({...v,workflow:'final',draft_request_id:'11111111-1111-4111-8111-111111111111'},[{kind:'video',duration_ms:3000}],{requested_duration:5}).reservedText,'95');
+ assert.equal(videoQuote({...v,workflow:'final',draft_request_id:'11111111-1111-4111-8111-111111111111'},[{kind:'video',duration_ms:3000}],draftSource()).reservedText,'95');
 });
 test('draft final inherits fields and restores safely without resending the prompt or files',()=>{
  const values={...defaultSeedance25(),prompt:'clip',workflow:'final',resolution:'1080p',seed:'0',draft_request_id:'11111111-1111-4111-8111-111111111111',watermark:true,output_format:'mov',api_key:'secret'};

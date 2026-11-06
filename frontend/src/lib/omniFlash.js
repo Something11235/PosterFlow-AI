@@ -13,7 +13,7 @@ export function omniFlashQuote(values){
   const halves=Math.ceil(microUsd*1680/(38*1e6)),reserve=Math.ceil(microUsd*1680*16/(38*1e6*10));
   return {units:halves*5000,text:String(halves/2),reservedUnits:reserve*5000,reservedText:String(reserve/2),generatedSeconds:10};
 }
-export function validateOmniReferences(refs){
+export function validateOmniReferences(refs,values={}){
   const images=refs.filter(r=>r.kind==='image'),videos=refs.filter(r=>r.kind==='video');
   if(images.length+videos.length!==refs.length||images.length>10||videos.length>1)throw new Error('Omni 最多 10 张图片和 1 段视频，不支持参考音频。');
   if(refs.some(r=>r.asset_url))throw new Error('Omni 不支持 Seedance 审核素材，请重新上传图片或视频。');
@@ -22,4 +22,11 @@ export function validateOmniReferences(refs){
   if(roles.some(r=>!['first_frame','last_frame'].includes(r))||new Set(roles).size!==roles.length||roles.includes('last_frame')&&!roles.includes('first_frame'))throw new Error('尾帧必须同时配有首帧，首帧和尾帧各一张。');
   if(videos.some(r=>!Number.isInteger(r.duration_ms)||r.duration_ms<=0||r.duration_ms>10000))throw new Error('Omni 参考视频最多 10 秒，请截短后重新添加。');
   for(const r of images)if(!Number.isInteger(r.width)||!Number.isInteger(r.height)||Math.min(r.width,r.height)<1||r.width*r.height>32000000)throw new Error('图片无法识别或超出本站 3200 万像素限制。');
+  if(videos.some(r=>r.role))throw new Error('首尾帧角色仅用于图片。');
+  const continued=Boolean(values.continue_request_id),task=values.task || 'auto';
+  if(continued&&videos.length)throw new Error('继续已有任务和上传参考视频只能选择一种。');
+  if(task==='text_to_video'&&(refs.length||continued))throw new Error('文生视频方式只使用提示词，请选择自动判断或其他创作方式。');
+  if(['image_to_video','reference_to_video'].includes(task)&&!images.length)throw new Error('图像或参考创作需要添加图片。');
+  if(['edit','extend'].includes(task)&&!videos.length&&!continued)throw new Error('编辑或续写需要上传一段视频，或选择本人已完成的 Omni 任务。');
+  if('prompt' in values&&!String(values.prompt || '').trim()&&!refs.length&&!continued)throw new Error('请填写提示词或添加图片、视频素材。');
 }

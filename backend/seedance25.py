@@ -1,11 +1,12 @@
 """Seedance 2.5 contract and cost-based half-credit billing (USD/CNY = 7)."""
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from datetime import datetime, timedelta, timezone
 import uuid
 
 try:
-    from backend.video_provider import VideoError, SIZES, ASSET_URL, video_text
+    from backend.video_provider import VideoError, SIZES, ASSET_URL, TASK_ID, video_text
 except ModuleNotFoundError:
-    from video_provider import VideoError, SIZES, ASSET_URL, video_text
+    from video_provider import VideoError, SIZES, ASSET_URL, TASK_ID, video_text
 
 MODEL='seedance-2.5'
 USD_CNY=Decimal('7')
@@ -15,7 +16,7 @@ MARGIN=Decimal('1.2')
 RATES={'480p':(Decimal('0.09608'),Decimal('0.0576')),
        '720p':(Decimal('0.216'),Decimal('0.1296')),
        '1080p':(Decimal('0.5346'),Decimal('0.3192'))}
-PROFILE={'version':'seedance25-usd7-cny038-markup20-half-v2','usd_cny':'7','credit_cny':'0.38','markup':'1.2'}
+PROFILE={'version':'seedance25-draft3d-original-input-half-v3','usd_cny':'7','credit_cny':'0.38','markup':'1.2'}
 FINAL_FIELDS={'model','draft_request_id','resolution','output_format','return_last_frame','watermark'}
 FIELDS={'model','prompt','duration','size','resolution','seed','generate_audio','return_last_frame','tools','nsfw_check',
         'draft','draft_request_id','output_format','watermark','omni_reference_task_type'}
@@ -112,11 +113,26 @@ def validate_references(refs,body):
     return video_ms
 
 
+def validate_draft_source(source,now=None):
+    message='请选择创建未满 3 天、本人已完成并结算的 Seedance 2.5 样片。'
+    if not isinstance(source,dict) or source.get('model')!=MODEL or source.get('is_draft') is not True or source.get('status')!='completed' or source.get('billing_status') not in {'settled','not_applicable'} or not isinstance(source.get('provider_task_id'),str) or not TASK_ID.fullmatch(source['provider_task_id']):
+        raise VideoError('VIDEO_DRAFT_INVALID',message)
+    try:
+        created=datetime.fromisoformat(source['created_at'].replace('Z','+00:00'))
+        if created.tzinfo is None or created<=(now or datetime.now(timezone.utc))-timedelta(days=3):raise ValueError()
+    except (ValueError,TypeError,KeyError,AttributeError):
+        raise VideoError('VIDEO_DRAFT_INVALID',message) from None
+    requested,ref_ms=source.get('requested_duration'),source.get('reference_duration_ms')
+    if type(requested) is not int or not(requested==-1 or 4<=requested<=30) or type(ref_ms) is not int or not 0<=ref_ms<=30000:
+        raise VideoError('VIDEO_DRAFT_INVALID','样片原始时长信息不完整，请选择有效样片。')
+    return requested,ref_ms
+
+
 def estimate(body,refs,source=None):
     final='draft_request_id' in body
     if final:
-        if not source:raise VideoError('VIDEO_DRAFT_INVALID','请先选择已完成的样片。')
-        requested=source['requested_duration'];ref_ms=0
+        if refs:raise VideoError('VIDEO_DRAFT_INHERITED','正式片沿用样片素材，请勿再次添加。')
+        requested,ref_ms=validate_draft_source(source)
     else:requested=body['duration'];ref_ms=validate_references(refs,body)
     seconds=30 if requested==-1 else requested
     rate=RATES[body['resolution']][1 if ref_ms else 0]

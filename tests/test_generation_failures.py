@@ -20,6 +20,28 @@ TIMEOUT = 'all channels failed. Last error: HTTP 504: '+json.dumps({
 
 
 class FailureClassificationTests(unittest.TestCase):
+    def test_generic_video_parameter_errors_do_not_prescribe_seedance_edit_rules(self):
+        for raw in ['duration is invalid', '请求中指定的参数 `duration` 无效。已扣额度已自动退还。', 'InvalidParameter.Resolution', 'invalid_aspect_ratio']:
+            code,message=video_failure(raw)
+            self.assertEqual(code,'VIDEO_PARAMETER_INVALID')
+            self.assertNotIn('自动时长',message)
+            self.assertNotIn('4–30',message)
+            self.assertNotIn('额度不足',message)
+            self.assertEqual(video_failure(code)[1],message)
+        code,message=video_failure('InvalidParameter.TaskTypeMismatch')
+        self.assertEqual(code,'VIDEO_TASK_CONSTRAINT')
+        self.assertNotIn('自动时长',message)
+
+    def test_unknown_music_failures_do_not_invent_copyright_or_balance_reasons(self):
+        for error in [None,{},'Unknown failure','生成失败。已扣额度已自动退还。']:
+            code=failure_code(error)
+            self.assertEqual(code,'MUSIC_TASK_FAILED')
+            self.assertNotIn('版权',failure_reason(code))
+            self.assertNotIn('额度不足',failure_reason(code))
+            self.assertIn('具体原因',failure_reason(code))
+        self.assertEqual(failure_code('lyrics contain copyrighted material'),'MUSIC_LYRICS_COPYRIGHT')
+        self.assertEqual(failure_code('insufficient_quota'),'MUSIC_PROVIDER_BALANCE')
+
     def test_catalog_match_is_not_claimed_to_be_lyrics_copyright(self):
         for error in (MATCH, {'error':{'message':MATCH}}, {'message':json.dumps({'error':{'detail':MATCH}})}):
             code=failure_code(error)

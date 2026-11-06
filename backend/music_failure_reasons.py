@@ -21,7 +21,7 @@ REASONS = {
     "MUSIC_PROVIDER_BALANCE": "音乐服务的可用额度不足，请联系站主；自带 Key 用户请检查服务余额。",
     "MUSIC_PROVIDER_PERMISSION": "音乐服务的密钥或模型权限不可用，请联系站主；自带 Key 用户请检查配置。",
     "MUSIC_PROVIDER_TIMEOUT": "音乐服务未能在规定时间内完成生成，请稍后重试。",
-    "MUSIC_TASK_FAILED": "一般为任务涉及版权问题触发审核机制拒绝导致。",
+    "MUSIC_TASK_FAILED": "音乐生成未完成，服务未提供可识别的具体原因。请保留任务编号核对。",
 }
 PATTERNS = (
     ("MUSIC_PARAMETER_TYPE_MISMATCH", r"request\s+parameter\s+type\s+mismatch|(?:parameter|field|argument).{0,60}type\s*(?:mismatch|does\s+not\s+match)|cannot\s+unmarshal.{0,160}(?:into|type)|参数.{0,20}类型.{0,20}(?:不匹配|错误|不符)"),

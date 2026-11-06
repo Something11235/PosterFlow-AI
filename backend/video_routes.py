@@ -245,7 +245,7 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
             'group':{'name':'PosterFlow '+hashlib.sha256(owner.encode()).hexdigest()[:16],'description':'本人创作素材'},
             'asset_type':values[0]['kind'].title(),'assets':[{'url':media_urls[0],'name':'素材 '+values[0]['id'][:20]}]}
         reservation_params=params if operation=='generate' or not cost_based else {'model':model}
-        begin_rpc='begin_flux3_job' if flux else 'begin_wan30_job' if wan else 'begin_minimax_h3_max_job' if model==minimax_h3.MAX_MODEL else 'begin_minimax_h3_job' if h3 else 'begin_omni_flash_job' if omni else 'begin_seedance25_job' if newer else 'begin_seedance20_fast_job' if model==seedance20.FAST_MODEL else 'begin_seedance20_job' if standard else 'begin_video_job'
+        begin_rpc='begin_flux3_job' if flux else 'begin_wan30_job' if wan else 'begin_minimax_h3_max_job' if model==minimax_h3.MAX_MODEL else 'begin_minimax_h3_job' if h3 else 'begin_omni_flash_job' if omni else 'begin_seedance25_job_v2' if newer else 'begin_seedance20_fast_job' if model==seedance20.FAST_MODEL else 'begin_seedance20_job' if standard else 'begin_video_job'
         reserved=store.rpc(begin_rpc,{'p_owner':owner,'p_user_id':user_id,'p_request_id':rid,'p_mode':mode,
             'p_operation':operation,'p_fingerprint':fingerprint,'p_parameters':reservation_params,'p_references':metadata(values,model)})
         apply=store.apply_flux if flux else store.apply_wan if wan else store.apply_h3_max if model==minimax_h3.MAX_MODEL else store.apply_h3 if h3 else store.apply_omni if omni else store.apply25 if newer else partial(store.apply20,model=model) if standard else store.apply

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -10,9 +11,60 @@ from backend.video_references import reference_metadata
 def image(id='i',**extra):return {'id':id,'kind':'image','width':854,'height':480,'size':1000,**extra}
 def video(id='v',**extra):return {'id':id,'kind':'video','width':854,'height':480,'size':3000,'duration_ms':3000,'fps':30,'codec':'avc1','audio_codecs':[],**extra}
 def audio(id='a',**extra):return {'id':id,'kind':'audio','size':1000,'duration_ms':3000,**extra}
+def draft_source(**extra):return {'model':s.MODEL,'is_draft':True,'status':'completed','billing_status':'settled','provider_task_id':'task_draft_fixture','created_at':datetime.now(timezone.utc).isoformat(),'requested_duration':5,'reference_duration_ms':0,**extra}
 
 
 class Seedance25Tests(unittest.TestCase):
+    def test_final_quote_inherits_original_inputs_and_uses_input_rate(self):
+        body=s.normalized_parameters({'model':s.MODEL,'draft_request_id':'11111111-1111-4111-8111-111111111111'})
+        source=draft_source(requested_duration=11,reference_duration_ms=22000)
+        quote=s.estimate(body,[],source)
+        self.assertEqual((quote['reference_ms'],quote['estimated_usd'],quote['estimated'],quote['reserved']),(22000,Decimal('10.5336'),Decimal('233'),Decimal('373')))
+        auto=s.estimate(body,[],draft_source(requested_duration=-1,reference_duration_ms=22000))
+        self.assertEqual((auto['estimated'],auto['reserved']),(Decimal('367'),Decimal('587.5')))
+        with self.assertRaises(p.VideoError):s.estimate(body,[video()],source)
+
+    def test_draft_three_day_boundary_and_metadata_are_validated(self):
+        now=datetime(2026,11,6,12,tzinfo=timezone.utc)
+        source=draft_source(created_at=(now-timedelta(days=3)+timedelta(milliseconds=1)).isoformat())
+        self.assertEqual(s.validate_draft_source(source,now),(5,0))
+        for patch_value in [dict(created_at=(now-timedelta(days=3)).isoformat()),dict(created_at='invalid'),dict(created_at='2026-11-06T00:00:00'),dict(model='flux-3-video'),dict(status='processing'),dict(billing_status='awaiting_balance'),dict(is_draft=False),dict(provider_task_id=None),dict(reference_duration_ms=-1),dict(reference_duration_ms=30001),dict(reference_duration_ms=None),dict(requested_duration=True),dict(requested_duration=31)]:
+            with self.subTest(patch_value=patch_value),self.assertRaises(p.VideoError):s.validate_draft_source(source|patch_value,now)
+
+    def test_expired_draft_is_rejected_by_route_before_credit_reservation_or_paid_post(self):
+        from test_video_routes import VideoRouteTests,UID
+        from backend import video_routes as routes
+        fx=VideoRouteTests();fx.setUp()
+        try:
+            rid='33333333-3333-4333-8333-333333333333'
+            fx.store.rows[('user-'+UID,rid)]=draft_source(request_id=rid,created_at=(datetime.now(timezone.utc)-timedelta(days=4)).isoformat())
+            fx.input['parameters']={'model':s.MODEL,'resolution':'1080p','draft_request_id':rid}
+            with patch.object(routes,'submit_video') as submit:
+                response=fx.client.post('/api/video/generations',json=fx.input)
+                self.assertEqual(response.json['code'],'VIDEO_DRAFT_INVALID')
+                self.assertEqual(fx.store.begin_calls,[]);submit.assert_not_called()
+        finally:fx.tearDown()
+
+    def test_final_route_uses_new_reservation_rpc_without_resending_original_inputs(self):
+        from test_video_routes import VideoRouteTests,UID,TASK
+        from backend import video_routes as routes
+        fx=VideoRouteTests();fx.setUp()
+        try:
+            rid='33333333-3333-4333-8333-333333333333'
+            source=draft_source(request_id=rid,requested_duration=11,reference_duration_ms=22000)
+            fx.store.rows[('user-'+UID,rid)]=source
+            fx.input['parameters']={'model':s.MODEL,'resolution':'1080p','draft_request_id':rid,'output_format':'mp4','watermark':False,'return_last_frame':False}
+            with patch.object(fx.store,'rpc',wraps=fx.store.rpc) as rpc,patch.object(fx.store,'apply25',create=True,return_value={'job':{'request_id':fx.input['request_id'],'status':'submitted'}}),patch.object(routes,'submit_video',return_value=TASK) as submit:
+                response=fx.client.post('/api/video/generations',json=fx.input)
+                self.assertEqual(response.status_code,202,response.json)
+                self.assertEqual(rpc.call_args.args[0],'begin_seedance25_job_v2')
+                self.assertEqual(rpc.call_args.args[1]['p_references'],[])
+                payload=submit.call_args.args[1]
+                self.assertEqual(payload['draft_task_id'],source['provider_task_id'])
+                for field in ['prompt','duration','size','video_urls','image_urls','audio_urls']:self.assertNotIn(field,payload)
+                submit.assert_called_once()
+        finally:fx.tearDown()
+
     def test_video_auto_requires_explicit_intent_without_changing_duration_or_upload_validation(self):
         body=s.normalized_parameters({'model':s.MODEL,'prompt':'fixture','duration':8})
         with self.assertRaises(p.VideoError) as caught:s.validate_references([video(duration_ms=8000)],body)
@@ -53,7 +105,7 @@ class Seedance25Tests(unittest.TestCase):
         self.assertEqual(s.estimate(body,[audio()])['estimated'],Decimal('11'))
         self.assertEqual(s.estimate(body,[video(),audio()])['reserved'],Decimal('16.5'))
         final=s.normalized_parameters({'model':s.MODEL,'draft_request_id':'11111111-1111-4111-8111-111111111111'})
-        quote=s.estimate(final,[],{'requested_duration':5});self.assertEqual(quote['reference_ms'],0);self.assertEqual(quote['reserved'],95)
+        quote=s.estimate(final,[],draft_source());self.assertEqual(quote['reference_ms'],0);self.assertEqual(quote['reserved'],95)
 
     def test_draft_final_whitelist_and_task_constraints_are_not_mini_rules(self):
         draft=s.normalized_parameters({'model':s.MODEL,'prompt':'clip','draft':True});self.assertEqual(draft['resolution'],'480p')

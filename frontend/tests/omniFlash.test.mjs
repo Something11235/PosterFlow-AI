@@ -4,6 +4,29 @@ import {OMNI_FLASH,defaultOmniFlash} from '../src/lib/omniFlash.js';
 import {buildVideoParameters,videoQuote,videoReferenceInput,restoreVideoHistory,videoFile,validateVideoReferenceDuration} from '../src/lib/video.js';
 import {VIDEO_MODELS} from '../src/lib/studioCatalog.js';
 
+test('Omni creation modes reject incompatible or missing sources before API submission',()=>{
+ const base={...defaultOmniFlash(),prompt:'synthetic'};
+ const image={id:'i',kind:'image',state:'ready',reference:{id:'i',kind:'image',width:128,height:256,receipt:'image-proof'}};
+ const video={id:'v',kind:'video',state:'ready',reference:{id:'v',kind:'video',duration_ms:5000,receipt:'video-proof'}};
+ const rid='11111111-1111-4111-8111-111111111111';
+ const input=(items,patch)=>videoReferenceInput(items,'unified',OMNI_FLASH,{...base,...patch});
+ for(const task of ['edit','extend']){
+  assert.throws(()=>input([],{task}),/需要上传/);
+  assert.equal(input([video],{task}).length,1);
+  assert.deepEqual(input([],{task,continue_request_id:rid}),[]);
+ }
+ for(const task of ['image_to_video','reference_to_video']){
+  assert.throws(()=>input([],{task}),/需要添加图片/);
+  assert.equal(input([image],{task}).length,1);
+ }
+ assert.throws(()=>input([video],{continue_request_id:rid}),/只能选择一种/);
+ assert.throws(()=>input([image],{task:'text_to_video'}),/只使用提示词/);
+ assert.throws(()=>input([],{task:'text_to_video',continue_request_id:rid}),/只使用提示词/);
+ assert.throws(()=>input([],{prompt:''}),/提示词或添加/);
+ assert.equal(input([image],{prompt:''}).length,1);
+ assert.equal(video.reference.duration_ms,5000);
+});
+
 test('Omni has its own payload/history whitelist and exact maximum-output estimates',()=>{
  const base=defaultOmniFlash();
  for(const [resolution,estimated,reserved] of [['360p','7','10.5'],['720p','19.5','31.5'],['1080p','29.5','47'],['4k','58.5','93.5']]){

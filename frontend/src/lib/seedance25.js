@@ -1,4 +1,9 @@
 export const SEEDANCE25='seedance-2.5';
+export const SEEDANCE25_DRAFT_TTL_MS=3*86400000;
+export function seedance25DraftAvailable(source,now=Date.now()){
+  const created=Date.parse(source?.created_at);
+  return Boolean(source?.model===SEEDANCE25 && source.is_draft===true && source.status==='completed' && ['settled','not_applicable'].includes(source.billing_status) && /^[A-Za-z0-9_-]{8,160}$/.test(source.provider_task_id || '') && Number.isFinite(created) && created>now-SEEDANCE25_DRAFT_TTL_MS && Number.isInteger(source.requested_duration) && (source.requested_duration===-1 || source.requested_duration>=4 && source.requested_duration<=30) && Number.isInteger(source.reference_duration_ms) && source.reference_duration_ms>=0 && source.reference_duration_ms<=30000);
+}
 export const defaultSeedance25=()=>({model:SEEDANCE25,workflow:'generate',prompt:'',resolution:'480p',duration:5,size:'adaptive',seed:'',generate_audio:true,return_last_frame:false,web_search:false,nsfw_check:false,watermark:false,output_format:'mp4',omni_reference_task_type:'auto',draft_request_id:''});
 
 export function buildSeedance25(values){
@@ -25,11 +30,12 @@ export function buildSeedance25(values){
 }
 
 export function seedance25Quote(values,references=[],source){
-  const final=values.workflow==='final' || Boolean(values.draft_request_id);
+  const final=values.workflow?values.workflow==='final':Boolean(values.draft_request_id);
+  if(final&&!seedance25DraftAvailable(source))throw new Error('请选择创建未满 3 天、本人已完成并结算的 Seedance 2.5 样片。');
   const requested=final?source?.requested_duration:Number(values.duration);
   if(!Number.isInteger(requested))throw new Error('请选择已完成的样片。');
   const seconds=requested===-1?30:requested;
-  const refMs=final?0:references.filter(r=>r.kind==='video').reduce((n,r)=>n+(r.duration_ms || 0),0);
+  const refMs=final?source.reference_duration_ms:references.filter(r=>r.kind==='video').reduce((n,r)=>n+(r.duration_ms || 0),0);
   const rates={"480p":[96080,57600],"720p":[216000,129600],"1080p":[534600,319200]};
   const rate=rates[final?'1080p':values.resolution]?.[refMs?1:0];
   if(!rate)throw new Error('请选择有效的清晰度。');

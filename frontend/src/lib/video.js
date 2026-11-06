@@ -68,7 +68,7 @@ export function videoReferenceInput(items,imageMode,model=VIDEO_MODEL,parameters
   if(model===FLUX3){validateFluxReferences(refs,parameters);return refs.map(r=>({receipt:r.receipt}));}
   if(model===WAN30){validateWanReferences(refs,parameters);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
   if(isMinimaxH3(model)){validateH3References(refs,model);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
-  if(model===OMNI_FLASH){validateOmniReferences(refs);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
+  if(model===OMNI_FLASH){validateOmniReferences(refs,parameters);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
   if(newer && videos.length){
     const kind=parameters.omni_reference_task_type || 'auto';
     if(kind==='auto')throw new Error('已添加视频，请明确选择参考素材创作、视频编辑或视频延长；自动判断可能将固定时长任务识别为编辑而失败。');
