@@ -4,6 +4,21 @@ import {buildVideoParameters,videoQuote,videoReferenceInput,restoreVideoHistory,
 import {defaultSeedance25} from '../src/lib/seedance25.js';
 import {VIDEO_MODELS} from '../src/lib/studioCatalog.js';
 
+test('2.5 uploaded videos require explicit intent before submission and editing preserves source constraints',()=>{
+ const values={...defaultSeedance25(),prompt:'fixture',duration:8};
+ const items=[{id:'v',kind:'video',state:'ready',reference:{id:'v',kind:'video',duration_ms:8000,receipt:'proof-v'}}];
+ assert.throws(()=>videoReferenceInput(items,'unified','seedance-2.5',values),/明确选择/);
+ assert.equal(values.duration,8);
+ assert.equal(videoReferenceInput(items,'unified','seedance-2.5',{...values,omni_reference_task_type:'reference'}).length,1);
+ assert.throws(()=>videoReferenceInput(items,'unified','seedance-2.5',{...values,omni_reference_task_type:'edit'}),/自动时长/);
+ const edit={...values,omni_reference_task_type:'edit',duration:-1};
+ assert.equal(buildVideoParameters(edit).duration,-1);
+ assert.equal(videoReferenceInput(items,'unified','seedance-2.5',edit).length,1);
+ assert.throws(()=>videoReferenceInput([{...items[0],reference:{...items[0].reference,duration_ms:3000}}],'unified','seedance-2.5',edit),/4–30/);
+ assert.throws(()=>videoReferenceInput([],'unified','seedance-2.5',edit),/至少需要/);
+ assert.deepEqual(videoReferenceInput([],'unified','seedance-2.5',values),[]);
+});
+
 test('model order matches the roadmap and Mini, standard and 2.5 are available',()=>{
  assert.deepEqual(VIDEO_MODELS.map(m=>m.name),['Seedance 2.5','Seedance 2.0','Seedance 2.0 Fast','Seedance 2.0 Mini','Gemini Omni 1.1 Flash','MiniMax H3','MiniMax H3 Max','Wan 3.0','FLUX 3 Video']);
  assert.deepEqual(VIDEO_MODELS.filter(m=>m.available).map(m=>m.id),['seedance-2.5','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video']);
@@ -44,7 +59,7 @@ test('unified references preserve individual image roles and prevent incompatibl
  const mixed=[...items,{id:'v',kind:'video',state:'ready',reference:{id:'v',kind:'video',receipt:'proof-v',duration_ms:5000}}];
  assert.throws(()=>videoReferenceInput(mixed,'unified'),/2.0 系列/);
  assert.equal(mixed.length,3);
- assert.deepEqual(videoReferenceInput(mixed,'unified','seedance-2.5').map(r=>r.role),['first_frame','last_frame',undefined]);
+ assert.deepEqual(videoReferenceInput(mixed,'unified','seedance-2.5',{omni_reference_task_type:'reference'}).map(r=>r.role),['first_frame','last_frame',undefined]);
  assert.throws(()=>videoReferenceInput([image('a','reference_image')],'unified'),/审核/);
  assert.equal(videoReferenceInput([image('a','reference_image',{asset_url:'asset://owned'})],'unified')[0].asset_url,'asset://owned');
  assert.throws(()=>videoReferenceInput([image('a','reference_image',{asset_url:'asset://owned'}),image('b','')],'unified'),/不能与普通/);

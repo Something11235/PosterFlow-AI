@@ -13,10 +13,21 @@ def audio(id='a',**extra):return {'id':id,'kind':'audio','size':1000,'duration_m
 
 
 class Seedance25Tests(unittest.TestCase):
+    def test_video_auto_requires_explicit_intent_without_changing_duration_or_upload_validation(self):
+        body=s.normalized_parameters({'model':s.MODEL,'prompt':'fixture','duration':8})
+        with self.assertRaises(p.VideoError) as caught:s.validate_references([video(duration_ms=8000)],body)
+        self.assertEqual(caught.exception.code,'VIDEO_TASK_TYPE_REQUIRED')
+        self.assertEqual(body['duration'],8)
+        self.assertEqual(s.validate_references([video()],{'size':'adaptive'}),3000)
+        self.assertEqual(s.validate_references([video()],body|{'omni_reference_task_type':'reference'}),3000)
+        edit=s.normalized_parameters({'model':s.MODEL,'prompt':'编辑视频','omni_reference_task_type':'edit'})
+        self.assertEqual(s.validate_references([video(duration_ms=8000)],edit),8000)
+        with self.assertRaises(p.VideoError):s.validate_references([video(duration_ms=3000)],edit)
+
     def test_mixed_image_roles_keep_one_array_in_prompt_reference_order(self):
         refs=[image('ordinary'),video(),image('first',role='first_frame'),audio(),image('ordinary2')]
         urls=['https://cdn.example.com/one.png','https://cdn.example.com/ref.mp4','https://cdn.example.com/two.png','https://cdn.example.com/ref.wav','https://cdn.example.com/three.png']
-        body=p.video_payload(s.normalized_parameters({'model':s.MODEL,'prompt':'@图片1 参考 @图片3','size':'16:9'}),refs,urls)
+        body=p.video_payload(s.normalized_parameters({'model':s.MODEL,'prompt':'@图片1 参考 @图片3','size':'16:9','omni_reference_task_type':'reference'}),refs,urls)
         self.assertNotIn('image_urls',body)
         self.assertEqual(body['image_with_roles'],[{'url':urls[0],'role':'reference_image'},{'url':urls[2],'role':'first_frame'},{'url':urls[4],'role':'reference_image'}])
         self.assertEqual(body['video_urls'],[urls[1]]);self.assertEqual(body['audio_urls'],[urls[3]])
@@ -37,7 +48,7 @@ class Seedance25Tests(unittest.TestCase):
             self.assertGreaterEqual(charge*Decimal('.38'),Decimal(cost)*7*Decimal('1.2'))
 
     def test_reservations_are_distinct_from_estimates_and_actual_settlement(self):
-        body=s.normalized_parameters({'model':s.MODEL,'prompt':'clip','resolution':'480p','duration':5})
+        body=s.normalized_parameters({'model':s.MODEL,'prompt':'clip','resolution':'480p','duration':5,'omni_reference_task_type':'reference'})
         quote=s.estimate(body,[]);self.assertEqual((quote['estimated'],quote['reserved']),(Decimal('11'),Decimal('17')))
         self.assertEqual(s.estimate(body,[audio()])['estimated'],Decimal('11'))
         self.assertEqual(s.estimate(body,[video(),audio()])['reserved'],Decimal('16.5'))
@@ -56,7 +67,7 @@ class Seedance25Tests(unittest.TestCase):
             with self.subTest(params=params),self.assertRaises(p.VideoError):s.normalized_parameters(params)
 
     def test_references_obey_25_size_count_fps_and_audio_only_support(self):
-        body=s.normalized_parameters({'model':s.MODEL,'prompt':'clip'})
+        body=s.normalized_parameters({'model':s.MODEL,'prompt':'clip','omni_reference_task_type':'reference'})
         self.assertEqual(s.validate_references([audio()],body),0)
         self.assertEqual(s.validate_references([image(role='reference_image'),video(),audio()],body),3000)
         for refs in [[image(str(i)) for i in range(31)],[audio(str(i)) for i in range(11)], [audio(duration_ms=1000)],
@@ -72,7 +83,7 @@ class Seedance25Tests(unittest.TestCase):
         self.assertEqual(s.actual_cost({'cost':.3104,'credits_cost':3.104}),Decimal('.3104'))
 
     def test_video_audio_track_codec_is_checked_before_any_paid_generation(self):
-        body=s.normalized_parameters({'model':s.MODEL,'prompt':'fixture'})
+        body=s.normalized_parameters({'model':s.MODEL,'prompt':'fixture','omni_reference_task_type':'reference'})
         for codecs in [[],['mp4a'],['.mp3']]:
             self.assertEqual(s.validate_references([video(audio_codecs=codecs)],body),3000)
         for codecs in [None,['Opus'],['unknown']]:

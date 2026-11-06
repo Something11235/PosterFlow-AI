@@ -46,6 +46,16 @@ class VideoRouteTests(unittest.TestCase):
     def tearDown(self):
         for p in reversed(self.stack):p.stop()
 
+    def test_seedance25_video_auto_is_rejected_before_credit_reservation_and_provider_post(self):
+        self.ref.update(kind='video',width=854,height=480,duration_ms=8000,fps=30,codec='avc1',audio_codecs=[])
+        self.input['parameters'].update(model='seedance-2.5',duration=8,omni_reference_task_type='auto')
+        self.input['references']=[{'receipt':'synthetic-proof'}]
+        with patch.object(r,'submit_video') as submit:
+            response=self.client.post('/api/video/generations',json=self.input)
+            self.assertEqual(response.json['code'],'VIDEO_TASK_TYPE_REQUIRED')
+            self.assertEqual(self.store.begin_calls,[])
+            submit.assert_not_called()
+
     def test_reservation_and_single_post_are_idempotent_across_refresh_and_expiry(self):
         self.input['references']=[{'receipt':'proof'}]
         with patch.object(r,'submit_video',return_value=TASK) as submit:

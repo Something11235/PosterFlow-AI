@@ -11,6 +11,13 @@ def video(id='video-fixture',duration_ms=5000,**extra):return {'id':id,'kind':'v
 def audio(id='audio-fixture',duration_ms=3000):return {'id':id,'kind':'audio','duration_ms':duration_ms,'sha256':'c'*64}
 
 class SeedanceProtocolTests(unittest.TestCase):
+    def test_duration_failure_refund_note_is_not_insufficient_balance(self):
+        message="请求中指定的参数 `duration` 无效。系统已将您的任务识别为视频编辑，输出比例和持续时间遵循输入视频；问题：[0] `duration` 必须为 -1。已扣额度已自动退还。"
+        self.assertEqual(p.video_failure({'code':'InvalidParameter','message':message})[0],'VIDEO_TASK_CONSTRAINT')
+        self.assertEqual(p.video_failure('任务生成失败。已扣额度已自动退还。')[0],'VIDEO_TASK_FAILED')
+        for message in ['insufficient_quota','quota exceeded','balance is insufficient','视频服务额度不足','余额已耗尽']:
+            self.assertEqual(p.video_failure(message)[0],'VIDEO_PROVIDER_BALANCE')
+
     def test_prices_include_only_video_reference_duration(self):
         body=p.normalized_video_parameters({'duration':10,'resolution':'480p'})
         self.assertEqual(p.video_price(body,[video(),audio()]),Decimal('7.5'))

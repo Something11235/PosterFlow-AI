@@ -69,6 +69,14 @@ export function videoReferenceInput(items,imageMode,model=VIDEO_MODEL,parameters
   if(model===WAN30){validateWanReferences(refs,parameters);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
   if(isMinimaxH3(model)){validateH3References(refs,model);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
   if(model===OMNI_FLASH){validateOmniReferences(refs);return refs.map(r=>({receipt:r.receipt,...r.role?{role:r.role}:{}}));}
+  if(newer && videos.length){
+    const kind=parameters.omni_reference_task_type || 'auto';
+    if(kind==='auto')throw new Error('已添加视频，请明确选择参考素材创作、视频编辑或视频延长；自动判断可能将固定时长任务识别为编辑而失败。');
+    if(kind==='edit' && (Number(parameters.duration)!==-1 || parameters.size!=='adaptive'))throw new Error('视频编辑须使用自动时长和自适应画幅，输出时长跟随源视频。');
+    if(kind==='edit' && videos.some(r=>r.duration_ms<4000 || r.duration_ms>30000))throw new Error('待编辑视频须为 4–30 秒。');
+    if(kind==='extend' && parameters.size!=='adaptive')throw new Error('视频延长须使用自适应画幅。');
+  }
+  if(newer && ['edit','extend'].includes(parameters.omni_reference_task_type) && !videos.length)throw new Error('视频编辑或延长至少需要一段视频。');
   for (const image of images) if (!image.asset_url) validateVideoImageDimensions(image.width,image.height);
   if (images.length>(newer?30:9) || videos.length>(newer?10:3) || audios.length>(newer?10:3)) throw new Error(newer?'2.5 最多 30 张图片、10 段视频、10 段音频。':'最多 9 张图片、3 段视频、3 段音频。');
   if (new Set(refs.map(r=>r.asset_url || r.id)).size!==refs.length) throw new Error('同一素材不能重复添加。');

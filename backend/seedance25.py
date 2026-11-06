@@ -105,6 +105,8 @@ def validate_references(refs,body):
         if body.get('size')!='adaptive':raise VideoError('VIDEO_TASK_CONSTRAINT','2.5 首尾帧须选择自适应画幅。')
         if len(frames)!=len(set(frames)):raise VideoError('VIDEO_REFERENCE_ROLE','首帧和尾帧各只能选择一张。')
     kind=body.get('omni_reference_task_type','auto')
+    if body.get('model')==MODEL and groups['video'] and kind=='auto':
+        raise VideoError('VIDEO_TASK_TYPE_REQUIRED','已添加视频，请明确选择参考素材创作、视频编辑或视频延长；自动判断可能将固定时长任务识别为编辑而失败。')
     if kind in {'edit','extend'} and not groups['video']:raise VideoError('VIDEO_TASK_CONSTRAINT','视频编辑或延长至少需要一段视频。')
     if kind=='edit' and any(r['duration_ms']<4000 for r in groups['video']):raise VideoError('VIDEO_TASK_CONSTRAINT','待编辑视频须为 4–30 秒。')
     return video_ms
