@@ -3,6 +3,7 @@ import base64
 import io
 import ipaddress
 import json
+import logging
 import math
 import re
 import socket
@@ -34,9 +35,26 @@ REFERENCE_UPLOAD_HOSTS = frozenset({"upload.apimart.ai", "getapib.org"})
 
 
 class ImageTaskError(Exception):
-    def __init__(self, code, message, status=400, uncertain=False):
+    def __init__(self, code, message, status=400, uncertain=False, *, upstream_status=None, upstream_type=None, failure_stage=None):
         super().__init__(message)
         self.code, self.message, self.status, self.uncertain = code, message, status, uncertain
+        self.upstream_status,self.upstream_type,self.failure_stage=upstream_status,upstream_type,failure_stage
+
+
+def _upstream_type(payload):
+    value=(payload.get('error') or {}).get('type') if isinstance(payload,dict) and isinstance(payload.get('error'),dict) else None
+    return value if isinstance(value,str) and value in {'invalid_request_error','insufficient_user_quota','rate_limit_exceeded','rate_limit_error','server_error','authentication_error','permission_error'} else 'other'
+
+
+def _log_upload_failure(error,request_id,index,size,width,height,mime):
+    # Closed vocabularies only: never log error text, URLs, names, media or keys.
+    rid=request_id if isinstance(request_id,str) and re.fullmatch(r'[a-f0-9-]{36}',request_id) else 'unavailable'
+    number=index if type(index) is int and 1<=index<=8 else 0
+    status=error.upstream_status if type(error.upstream_status) is int and 100<=error.upstream_status<=599 else 'unknown'
+    stage=error.failure_stage if isinstance(error.failure_stage,str) and error.failure_stage in {'connection','upstream_http','response_read','response_format','upstream_payload','url_validation'} else 'unknown'
+    kind=error.upstream_type if isinstance(error.upstream_type,str) and error.upstream_type in {'invalid_request_error','insufficient_user_quota','rate_limit_exceeded','rate_limit_error','server_error','authentication_error','permission_error'} else 'other'
+    media=mime if mime in {'image/png','image/jpeg','image/gif','image/webp'} else 'other'
+    logging.getLogger(__name__).warning('image_reference_upload_failed request_id=%s reference_index=%s stage=%s upstream_status=%s upstream_type=%s bytes=%s width=%s height=%s mime=%s',rid,number,stage,status,kind,size,width,height,media)
 
 
 def build_request(model, data, references=()):
@@ -207,7 +225,7 @@ def api_request(method, path, key, *, body=None, request_id=None, files=None, ti
     try:
         response = requests.request(method, BASE + path, headers=headers, json=body, files=files, timeout=timeout, allow_redirects=False, stream=True)
     except requests.RequestException:
-        raise ImageTaskError("APIMART_CONNECTION_FAILED", "图片服务连接未完成，请保留任务记录并查询状态。", 503, uncertain=method == "POST") from None
+        raise ImageTaskError("APIMART_CONNECTION_FAILED", "图片服务连接未完成，请保留任务记录并查询状态。", 503, uncertain=method == "POST", failure_stage='connection') from None
     try:
         content = bytearray()
         for chunk in response.iter_content(65536):
@@ -224,15 +242,15 @@ def api_request(method, path, key, *, body=None, request_id=None, files=None, ti
             code = image_failure_code(payload, response.status_code)
             uncertain = method == 'POST' and (response.status_code >= 500 or response.status_code in (408, 409) or 300 <= response.status_code < 400 or code == 'IMAGE_PROVIDER_TIMEOUT')
             if code == 'IMAGE_PROVIDER_TIMEOUT':
-                raise ImageTaskError(code, IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=uncertain)
-            raise ImageTaskError("APIMART_REQUEST_REJECTED", "图片服务未接受本次请求，请检查提示词、参考图、余额或稍后重试。", 502, uncertain=uncertain)
+                raise ImageTaskError(code, IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http')
+            raise ImageTaskError("APIMART_REQUEST_REJECTED", "图片服务未接受本次请求，请检查提示词、参考图、余额或稍后重试。", 502, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http')
         if not isinstance(payload, dict) or payload.get("error") or payload.get("code", 200) not in (200, 201, 202):
             if image_failure_code(payload) == 'IMAGE_PROVIDER_TIMEOUT':
-                raise ImageTaskError('IMAGE_PROVIDER_TIMEOUT', IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=method == 'POST')
-            raise ValueError()
+                raise ImageTaskError('IMAGE_PROVIDER_TIMEOUT', IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=method == 'POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload')
+            raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。",503,uncertain=method=='POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload')
         return payload
-    except (ValueError, requests.RequestException):
-        raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。", 503, uncertain=method == "POST") from None
+    except (ValueError, requests.RequestException) as error:
+        raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。", 503, uncertain=method == "POST",upstream_status=response.status_code,failure_stage='response_read' if isinstance(error,requests.RequestException) else 'response_format') from None
     finally:
         response.close()
 
@@ -269,19 +287,21 @@ def query(key, task_id):
             "error_code": image_failure_code(row.get('error') or row) if status in ('failed', 'cancelled') else None}
 
 
-def upload_reference(key, encoded):
+def upload_reference(key, encoded, *, request_id=None, reference_index=None):
     try:
         raw = encoded.split(",", 1)[-1]
         data = base64.b64decode(raw, validate=True)
         image = Image.open(io.BytesIO(data))
         mime = Image.MIME.get(image.format, "image/png")
+        width,height=image.size
         image.verify()
     except Exception:
         raise ImageTaskError("REFERENCE_IMAGE_INVALID", "参考图无法读取，请更换图片。") from None
     try:
         payload = api_request("POST", "/uploads/images", key, files={"file": ("reference", data, mime)})
-    except ImageTaskError:
+    except ImageTaskError as error:
         # A failed upload never implies that the paid generation was submitted.
+        _log_upload_failure(error,request_id,reference_index,len(data),width,height,mime)
         raise ImageTaskError("REFERENCE_UPLOAD_FAILED", "参考图上传暂未完成，本次未提交生图，请稍后重试。", 502) from None
     url = payload.get("url")
     try:
@@ -291,6 +311,7 @@ def upload_reference(key, encoded):
         if parsed.scheme != "https" or parsed.hostname not in REFERENCE_UPLOAD_HOSTS or parsed.username is not None or parsed.password is not None or parsed.port not in (None, 443) or parsed.fragment or not parsed.path.strip("/"):
             raise ValueError()
     except ValueError:
+        _log_upload_failure(ImageTaskError('REFERENCE_UPLOAD_FAILED','',failure_stage='url_validation'),request_id,reference_index,len(data),width,height,mime)
         raise ImageTaskError("REFERENCE_UPLOAD_FAILED", "参考图上传结果无法识别，本次未提交生图，请稍后重试。", 502) from None
     return url
 

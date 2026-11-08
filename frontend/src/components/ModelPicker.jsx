@@ -3,7 +3,7 @@ import {createPortal} from 'react-dom';
 import {Check, ChevronDown} from 'lucide-react';
 import ModelBadge from './ModelBadge';
 
-export default function ModelPicker({id, options, value, onChange, disabled = false, className = ''}) {
+export default function ModelPicker({id, options, value, onChange, disabled = false, className = '', badges, 'aria-label':ariaLabel}) {
   const generated = useId();
   const listId = generated + '-options';
   const trigger = useRef(null), popup = useRef(null), search = useRef({text: '', time: 0});
@@ -64,13 +64,13 @@ export default function ModelPicker({id, options, value, onChange, disabled = fa
     }
   };
   return <>
-    <button ref={trigger} id={id} type="button" role="combobox" aria-haspopup="listbox" aria-controls={open ? listId : undefined} aria-expanded={open} aria-activedescendant={open ? listId + '-' + active : undefined} disabled={disabled} onClick={() => open ? close() : start()} onKeyDown={keyboard}
+    <button ref={trigger} id={id} type="button" role="combobox" aria-label={ariaLabel} aria-haspopup="listbox" aria-controls={open ? listId : undefined} aria-expanded={open} aria-activedescendant={open ? listId + '-' + active : undefined} disabled={disabled} onClick={() => open ? close() : start()} onKeyDown={keyboard}
       className={`flex min-h-11 w-full min-w-0 items-center gap-2 rounded-lg border border-border-default bg-bg-primary px-3 text-left text-base text-text-primary focus:border-accent/65 disabled:opacity-50 ${className}`}>
-      <span className="min-w-0 flex-1 break-words">{selected?.label || '请选择模型'}<ModelBadge model={value}/></span><ChevronDown size={16} className="shrink-0 text-text-muted"/>
+      <span className="min-w-0 flex-1 break-words">{selected?.label || '请选择模型'}<ModelBadge model={value} value={badges?.[value]}/></span><ChevronDown size={16} className="shrink-0 text-text-muted"/>
     </button>
-    {open && position && createPortal(<div ref={popup} id={listId} role="listbox" aria-label="可选图片模型" style={{position: 'fixed', zIndex: 10000, ...position}} className="overflow-y-auto rounded-lg border border-border-default bg-bg-secondary p-1 shadow-2xl">
+    {open && position && createPortal(<div ref={popup} id={listId} role="listbox" aria-label={ariaLabel?`可选${ariaLabel}`:'可选模型'} style={{position: 'fixed', zIndex: 10000, ...position}} className="overflow-y-auto rounded-lg border border-border-default bg-bg-secondary p-1 shadow-2xl">
       {options.map((option, index) => <div key={option.value} id={listId + '-' + index} data-model={option.value} role="option" aria-selected={value === option.value} aria-disabled={Boolean(option.disabled)} onPointerDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => choose(index)} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-text-primary ${active === index ? 'bg-accent/15' : ''} ${option.disabled ? 'opacity-40' : ''}`}>
-        <span className="min-w-0 flex-1 break-words">{option.label}<ModelBadge model={option.value}/></span>{value === option.value && <Check size={16} className="shrink-0 text-accent"/>}
+        <span className="min-w-0 flex-1 break-words">{option.label}<ModelBadge model={option.value} value={badges?.[option.value]}/></span>{value === option.value && <Check size={16} className="shrink-0 text-accent"/>}
       </div>)}
     </div>, document.body)}
   </>;

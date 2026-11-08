@@ -192,7 +192,7 @@ def create_image_blueprint(server):
                 return jsonify(result(begun["job"], begun.get("balance"), idempotent=True)), 200
             try:
                 if references:
-                    body["image_urls"] = [provider.upload_reference(key, ref) for ref in references]
+                    body["image_urls"] = [provider.upload_reference(key, ref, request_id=request_id, reference_index=index) for index,ref in enumerate(references,1)]
             except provider.ImageTaskError as error:
                 store.apply(owner, request_id, "failed", p_error=error.code)
                 raise
@@ -230,7 +230,7 @@ def create_image_blueprint(server):
             request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, owner + normalize_id(data.get("request_id")) + ":segment"))
             try:
                 reference = server.stored_reference_to_base64(paths[0])
-                url = provider.upload_reference(key, reference)
+                url = provider.upload_reference(key, reference, request_id=request_id, reference_index=1)
                 task = provider.submit(key, {"model": grok_region.MODEL, "operation": "segment", "image_urls": [url], "cache_only": True, "include_mask_rle": False}, request_id)
             finally:
                 server.cleanup_reference_storage_paths(paths)

@@ -68,6 +68,39 @@ class ImageProtocolTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "REFERENCE_IMAGE_INVALID")
             upload.assert_not_called()
 
+    def test_upload_diagnostics_keep_http_status_and_safe_specs_without_private_response(self):
+        encoded,raw=self.reference_data()
+        for status,kind in [(400,'invalid_request_error'),(401,'authentication_error'),(402,'insufficient_user_quota'),(413,'invalid_request_error'),(429,'rate_limit_exceeded'),(500,'server_error')]:
+            payload={'error':{'type':kind,'message':'private-response-and-key'}}
+            with self.subTest(status=status),patch.object(provider.requests,'request',return_value=response(payload,status)) as post,self.assertLogs(provider.__name__,level='WARNING') as logs:
+                with self.assertRaises(provider.ImageTaskError) as caught:
+                    provider.upload_reference('private-api-key',encoded,request_id=REQUEST,reference_index=2)
+            self.assertEqual(caught.exception.code,'REFERENCE_UPLOAD_FAILED')
+            self.assertFalse(caught.exception.uncertain);post.assert_called_once()
+            text='\n'.join(logs.output)
+            for value in ['request_id='+REQUEST,'reference_index=2','stage=upstream_http','upstream_status='+str(status),'upstream_type='+kind,'bytes='+str(len(raw)),'width=8 height=8 mime=image/png']:self.assertIn(value,text)
+            for value in ['private-response-and-key','private-api-key',encoded]:self.assertNotIn(value,text)
+
+    def test_upload_diagnostics_distinguish_connection_and_bad_response_and_url(self):
+        encoded,_=self.reference_data()
+        malformed=response({});malformed.iter_content.return_value=[b'private-not-json-response']
+        read_failure=response({});read_failure.iter_content.side_effect=requests.ConnectionError('private-body')
+        cases=[({'side_effect':requests.Timeout('private-url-and-key')},'connection','unknown'),({'return_value':malformed},'response_format','200'),({'return_value':read_failure},'response_read','200'),({'return_value':response({'error':{'type':'rate_limit_error','message':'private'}})},'upstream_payload','200'),({'return_value':response({'url':'https://user:private@evil.invalid/reference.png'})},'url_validation','unknown')]
+        for kwargs,stage,status in cases:
+            with self.subTest(stage=stage),patch.object(provider.requests,'request',**kwargs),self.assertLogs(provider.__name__,level='WARNING') as logs:
+                with self.assertRaises(provider.ImageTaskError) as caught:provider.upload_reference('private-key',encoded,request_id=REQUEST,reference_index=1)
+            self.assertFalse(caught.exception.uncertain)
+            text='\n'.join(logs.output);self.assertIn('stage='+stage,text);self.assertIn('upstream_status='+status,text)
+            self.assertNotIn('private',text);self.assertNotIn('evil.invalid',text)
+
+    def test_diagnostic_fields_cannot_inject_log_text(self):
+        encoded,_=self.reference_data()
+        error=provider.ImageTaskError('unsafe-code','private-exception',upstream_status='private',upstream_type='private\nforged',failure_stage='private\nforged')
+        with patch.object(provider,'api_request',side_effect=error),self.assertLogs(provider.__name__,level='WARNING') as logs:
+            with self.assertRaises(provider.ImageTaskError):provider.upload_reference('private-key',encoded,request_id='private\nforged',reference_index='private')
+        text='\n'.join(logs.output);self.assertIn('request_id=unavailable reference_index=0 stage=unknown upstream_status=unknown upstream_type=other',text)
+        self.assertNotIn('private',text);self.assertNotIn('forged',text)
+
     def test_documented_models_and_fields(self):
         for model in provider.MODELS:
             body = provider.build_request(model, {"prompt": "猫", "count": 1, "size": "landscape_16_9"})

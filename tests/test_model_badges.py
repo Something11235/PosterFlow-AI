@@ -20,6 +20,15 @@ class ModelBadgeTests(unittest.TestCase):
         self.assertEqual(response.json['badges'], badges.DEFAULTS)
         gateway.assert_not_called()
 
+    def test_music_video_and_legacy_image_reads_preserve_existing_tags(self):
+        self.assertEqual(len(badges.MODEL_IDS),21)
+        self.assertEqual(len(set(badges.MODEL_IDS)),21)
+        self.gateway.rpc.return_value={'revision':7,'badges':{model:('new' if model=='gpt-image-2.6-flare' else '') for model in badges.IMAGE_MODEL_IDS}}
+        with patch.object(badges,'is_supabase_configured',return_value=True),patch.object(badges,'SupabaseGateway',return_value=self.gateway):
+            response=self.client.get('/api/model-badges')
+        self.assertEqual(response.json['badges']['gpt-image-2.6-flare'],'new')
+        for model in (*badges.MUSIC_MODEL_IDS,*badges.VIDEO_MODEL_IDS):self.assertEqual(response.json['badges'][model],'')
+
     def test_public_read_sanitizes_metadata_and_cannot_write(self):
         self.gateway.rpc.return_value.update(updated_by='private-identifier', updated_at='private-date')
         with patch.object(badges, 'is_supabase_configured', return_value=True), patch.object(badges, 'SupabaseGateway', return_value=self.gateway):
@@ -65,12 +74,34 @@ class ModelBadgeTests(unittest.TestCase):
         self.assertFalse(response.json['success'])
 
     def test_admin_can_save_complete_map_with_revision(self):
-        modified = {**badges.DEFAULTS, 'seedream-5-0-pro': '', 'gemini-nano-banana-2.1': 'hot'}
+        modified = {**badges.DEFAULTS, 'seedream-5-0-pro': '', 'gemini-nano-banana-2.1': 'hot', 'suno':'hot', 'flowmusic':'new', 'seedance-2.5':'hot', 'MiniMax-H3-Max':'new'}
         self.gateway.rpc.return_value = {'ok': True, 'revision': 2, 'badges': modified}
         response = self.post({'revision': 1, 'badges': modified})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json['badges'], modified)
         self.gateway.rpc.assert_called_once_with('update_model_badges', {'p_admin': self.user.id, 'p_revision': 1, 'p_badges': modified})
+
+    def test_old_image_only_admin_save_cannot_erase_music_or_video_tags(self):
+        current={**badges.DEFAULTS,'suno':'new','MiniMax-H3-Max':'hot'}
+        image_edit={key:current[key] for key in badges.IMAGE_MODEL_IDS};image_edit['seedream-5-0-pro']=''
+        expected={**current,**image_edit}
+        self.gateway.rpc.side_effect=[{'revision':8,'badges':current},{'ok':True,'revision':9,'badges':expected}]
+        response=self.post({'revision':8,'badges':image_edit})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['badges'],expected)
+        self.assertEqual(self.gateway.rpc.call_args.args,('update_model_badges',{'p_admin':self.user.id,'p_revision':8,'p_badges':expected}))
+
+    def test_old_image_only_admin_save_still_requires_current_revision(self):
+        image_edit={key:badges.DEFAULTS[key] for key in badges.IMAGE_MODEL_IDS}
+        self.gateway.rpc.return_value={'revision':9,'badges':{**badges.DEFAULTS,'suno':'hot'}}
+        response=self.post({'revision':8,'badges':image_edit})
+        self.assertEqual(response.status_code,409)
+        self.gateway.rpc.assert_called_once_with('get_model_badges',{})
+
+    def test_partial_multimedia_map_and_bad_music_value_are_rejected_before_rpc(self):
+        for mapping in [{**{key:badges.DEFAULTS[key] for key in badges.IMAGE_MODEL_IDS},'suno':'hot'},{**badges.DEFAULTS,'suno':'<script>'},{key:value for key,value in badges.DEFAULTS.items() if key!='wan3.0-video'}]:
+            with self.subTest(mapping=mapping):self.assertEqual(self.post({'revision':1,'badges':mapping}).status_code,400)
+        self.gateway.rpc.assert_not_called()
 
     def test_read_failure_is_generic_and_not_cached(self):
         self.gateway.rpc.side_effect = RuntimeError('sensitive upstream details')
