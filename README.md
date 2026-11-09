@@ -54,9 +54,9 @@ PosterFlow AI 面向想做图、写歌、制作视频素材的创作者。打开
 - 从素材区直接加入角色图片，或将当前生成结果带入画布。
 - 支持撤销、重做、视图适配与 PNG 导出；画布自动保存在当前浏览器。
 
-![PosterFlow AI 无限画布与画布 AI 面板](docs/screenshots/showcase/infinite-canvas.png)
+![PosterFlow AI 无限画布标注修改与编辑前后对比](docs/screenshots/showcase/infinite-canvas.png)
 
-*图 3 · 在画布中导入角色参考，结合画布 AI 继续创作；图中素材来自内置角色库。*
+*图 3 · 把修改要求标在原图上，在同一画布中对照编辑结果。*
 
 不同模型的参考图、选区和动图能力不同，工作台会按模型显示可用功能。个人画布保存在本机浏览器，不自动跨设备同步。
 
