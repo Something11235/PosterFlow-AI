@@ -367,7 +367,8 @@ function ErrorState({ error, billingMode, onRetry }) {
   const platform = (errorInfo?.billing_mode || billingMode) === "platform";
   const referenceUploadFailed = ["REFERENCE_UPLOAD_FAILED", "REFERENCE_IMAGE_INVALID"].includes(errorInfo?.code);
   const timedOut = errorInfo?.code === 'IMAGE_PROVIDER_TIMEOUT';
-  const recovery = timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
+  const pricingChanged = errorInfo?.code === 'IMAGE_PRICING_CHANGED';
+  const recovery = pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"];
   const upstream = platform ? errorInfo?.upstream_error : null;
@@ -383,7 +384,7 @@ function ErrorState({ error, billingMode, onRetry }) {
           {errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
         <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
+          {pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
             "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。"}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">

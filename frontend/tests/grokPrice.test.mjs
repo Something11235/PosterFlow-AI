@@ -7,7 +7,7 @@ test("Grok uses one text credit or two reference credits with three reference li
   assert.equal(apimartImageModel("grok-imagine-image-2.0").maxReferences, 3);
   assert.equal(imageCreditCost("grok-imagine-image-2.0", 0), 1);
   for (const count of [1, 2, 3]) assert.equal(imageCreditCost("grok-imagine-image-2.0", count), 2);
-  for (const model of IMAGE_MODEL_OPTIONS.filter(m => m.value !== "grok-imagine-image-2.0" && !m.value.startsWith("seedream-"))) assert.equal(imageCreditCost(model.value, 1), 1);
+  for (const model of IMAGE_MODEL_OPTIONS.filter(m => m.value !== "grok-imagine-image-2.0" && !m.value.startsWith("seedream-") && !m.value.startsWith("gpt-image-2.6-"))) assert.equal(imageCreditCost(model.value, 1), 1);
 });
 test("Nano 4K costs two per output regardless of reference count; lower tiers stay one", () => {
   for (const refs of [0, 1, 8]) {

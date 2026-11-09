@@ -6,7 +6,7 @@ import {GPT26_IMAGE_MODELS, imageCreditCost} from '../src/lib/provider.js';
 test('GIF is offered only through the two GPT26 version configurations at the existing unit price', () => {
   for (const model of GPT26_IMAGE_MODELS) {
     assert.deepEqual(model.outputFormats, ['png', 'gif']);
-    assert.equal(model.maxCount, 1);
+    assert.equal(model.maxCount, 4);
     assert.equal(imageCreditCost(model.value), 1);
   }
 });

@@ -745,6 +745,8 @@ export default function FabricCanvasWorkspace({
   useEffect(() => {
     if (!canvasElementRef.current || !canvasHostRef.current) return undefined;
     const host = canvasHostRef.current;
+    const restoreController = new AbortController();
+    let disposed = false;
     const editor = new Canvas(canvasElementRef.current, {
       width: Math.max(320, host.clientWidth),
       height: Math.max(420, host.clientHeight),
@@ -1123,9 +1125,11 @@ export default function FabricCanvasWorkspace({
 
     readStoredScene()
       .then(async (stored) => {
+        if (disposed) return;
         if (stored?.canvas) {
           restoringRef.current = true;
-          await editor.loadFromJSON(stored.canvas);
+          await editor.loadFromJSON(stored.canvas, undefined, { signal: restoreController.signal });
+          if (disposed) return;
           if (stored.viewportTransform?.length === 6) editor.setViewportTransform(stored.viewportTransform);
           restoringRef.current = false;
           editor.requestRenderAll();
@@ -1140,6 +1144,7 @@ export default function FabricCanvasWorkspace({
         setStatus({ type: "saved", message: "已保存到当前浏览器" });
       })
       .catch((error) => {
+        if (disposed || restoreController.signal.aborted) return;
         console.error("Failed to restore Fabric canvas", error);
         restoringRef.current = false;
         const scene = snapshot();
@@ -1151,6 +1156,8 @@ export default function FabricCanvasWorkspace({
       });
 
     return () => {
+      disposed = true;
+      restoreController.abort();
       window.clearTimeout(commitTimer);
       window.clearTimeout(persistTimer);
       resizeObserver.disconnect();

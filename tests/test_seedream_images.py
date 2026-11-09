@@ -9,11 +9,12 @@ from backend import apimart_image_routes as routes, server
 
 
 class SeedreamImageTests(unittest.TestCase):
-    def test_nano_uses_ext_and_native_official_fallback_once(self):
+    def test_nano_uses_official_model_without_ext_or_fallback(self):
         for resolution in ("1K", "2K", "4K"):
-            body = provider.build_request("gemini-nano-banana-2.1", {"prompt":"fixture", "resolution":resolution, "official_fallback":False})
-            self.assertEqual(body["model"],"gemini-nano-banana-2.1-ext")
-            self.assertIs(body["official_fallback"],True)
+            body = provider.build_request("gemini-nano-banana-2.1", {"prompt":"fixture", "resolution":resolution, "model":"gemini-nano-banana-2.1-ext", "official_fallback":True})
+            self.assertEqual(body["model"],"gemini-nano-banana-2.1")
+            self.assertNotIn("official_fallback",body)
+            self.assertEqual(body["resolution"],resolution)
             self.assertEqual(body["n"],1)
         with self.assertRaises(provider.ImageTaskError):
             provider.build_request("gemini-nano-banana-2.1",{"prompt":"fixture","count":2})
@@ -77,7 +78,7 @@ class SeedreamImageTests(unittest.TestCase):
         store.assert_not_called()
         submit.assert_not_called()
 
-    def test_nano_logical_price_model_stays_stable_while_only_ext_is_submitted(self):
+    def test_nano_logical_price_model_stays_stable_while_official_is_submitted(self):
         store=Mock();job={'id':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','status':'submitting','request_id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}
         store.begin.return_value={'existing':False,'job':job};store.apply.return_value={'job':{**job,'status':'submitted'}}
         with patch.dict('os.environ',{'APIMART_IMAGE_API_KEY':'synthetic'}),patch.object(server,'require_authenticated_user',return_value=Mock(id='user-fixture')),patch.object(server,'enforce_rate_limit'),patch.object(routes,'ImageStore',return_value=store),patch.object(provider,'submit',return_value='task_synthetic_12345') as submit:
@@ -85,5 +86,5 @@ class SeedreamImageTests(unittest.TestCase):
         self.assertEqual(response.status_code,202)
         self.assertEqual(store.begin.call_args.args[4],'gemini-nano-banana-2.1')
         submit.assert_called_once()
-        self.assertEqual(submit.call_args.args[1]['model'],'gemini-nano-banana-2.1-ext')
-        self.assertIs(submit.call_args.args[1]['official_fallback'],True)
+        self.assertEqual(submit.call_args.args[1]['model'],'gemini-nano-banana-2.1')
+        self.assertNotIn('official_fallback',submit.call_args.args[1])

@@ -105,7 +105,10 @@ class ImageProtocolTests(unittest.TestCase):
         for model in provider.MODELS:
             body = provider.build_request(model, {"prompt": "猫", "count": 1, "size": "landscape_16_9"})
             self.assertEqual(body["n"], 1)
-            self.assertNotIn("quality", body)
+            if model.startswith("gpt-image-2.6-"):
+                self.assertEqual(body["quality"], "auto")
+            else:
+                self.assertNotIn("quality", body)
             self.assertNotIn("input_references", body)
             self.assertEqual(body.get("aspect_ratio") or body.get("size"), "16:9")
         self.assertEqual(provider.build_request("gemini-nano-banana-2.1", {"prompt": "@图1"}, ["one"])["image_urls"], ["one"])
@@ -135,7 +138,7 @@ class ImageProtocolTests(unittest.TestCase):
 
     def test_provider_body_whitelist_omits_secrets_and_callbacks(self):
         body = provider.build_request("gemini-nano-banana-2.1", {"prompt": "cat", "api_key": "sentinel", "webhook": "https://invalid.test", "quality": "high", "provider": "override"})
-        self.assertEqual(set(body), {"model", "prompt", "n", "size", "resolution", "official_fallback"})
+        self.assertEqual(set(body), {"model", "prompt", "n", "size", "resolution"})
         self.assertNotIn("sentinel", json.dumps(body))
 
     def test_both_submission_shapes_and_idempotency(self):

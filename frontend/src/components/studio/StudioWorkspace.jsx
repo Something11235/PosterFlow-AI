@@ -40,7 +40,11 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
     onAreaChange(kind);
   }
   return <div className="studio-workspace" data-studio-area={area}>
-    <header className="studio-topbar"><div><span className="studio-breadcrumb">{['materials','models'].includes(area)?'资料与工具':'工作空间'}</span><ChevronRight size={13} /><strong>{PAGE_TITLES[area]}</strong></div><div><span className="studio-local-badge"><span />本地新版预览</span><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div></header>
+    <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
+      <div><span className="studio-breadcrumb">{['materials','models'].includes(area)?'资料与工具':'工作空间'}</span><ChevronRight size={13} /><strong>{PAGE_TITLES[area]}</strong></div>
+      {area === "home" && <a className="studio-github-support" href="https://github.com/Something11235/PosterFlow-AI" target="_blank" rel="noopener noreferrer"><span>已开源至GitHub，求您一颗小小的Star支持一下个人开发者，非常感谢</span><ArrowUpRight size={16} aria-hidden="true" /></a>}
+      <div><span className="studio-local-badge"><span />本地新版预览</span><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div>
+    </header>
     <div ref={scrollRef} className="studio-scroll">
       {area === "home" && <div className="studio-page studio-home">
         <section className="studio-intro"><div><p className="studio-eyebrow">YOUR NEXT IDEA STARTS HERE <span>↗</span></p><h1>让想象，<span>拥有更多表达。</span></h1><p className="studio-intro-copy">{username ? `${username}，欢迎回来。` : "欢迎来到你的创作空间。"}从一段文字出发，探索图像、音乐与视频。</p></div><div className="studio-edition"><span>POSTERFLOW STUDIO</span><strong>One idea.<br /><em>More possibilities.</em></strong><small>创作，由你定义。 / 2026</small></div></section>

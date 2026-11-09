@@ -1,33 +1,37 @@
-# GPT Image 2.6 Ext 双版本
+# GPT Image 2.6 官方双版本与画布编辑
 
-2026-11-05：本文描述接入实现；发布状态与生产迁移映射见本地交接和发布证据。
+2026-11-09：已从本地工作树部署正式站，尚未提交或推送 GitHub。新增计费迁移已应用，正式版本与迁移映射以本地 HANDOFF.md 顶部和发布证据为准。Nano 官方路由保留。
 
-| 网站名称 | 网站逻辑 ID | 上游 model | 上游 version | 网站积分／张 |
-| --- | --- | --- | --- | --- |
-| GPT Image 2.6 Flare | gpt-image-2.6-flare | gpt-image-2.6-ext | flare | 1 |
-| GPT Image 2.6 Sunburst | gpt-image-2.6-sunburst | gpt-image-2.6-ext | sunburst | 1 |
+| 网站名称 | 上游 model | 无图片输入／张 | 有图片输入／张 |
+| --- | --- | --- | --- |
+| GPT Image 2.6 Flare | gpt-image-2.6-flare | 1积分 | 1.5积分 |
+| GPT Image 2.6 Sunburst | gpt-image-2.6-sunburst | 1积分 | 1.5积分 |
 
-按 Flare → Sunburst 排在所有图片模型最前，平台默认 Flare，仅这两项默认显示红色“热”；Seedream 三款保留“新”。当前共十款图片模型。GPT Image 2（旧 ID gpt-image-2，用户称 2.0）退出新建任务与模型一览，平台和自带 Key 新请求均阻止使用；保留旧任务、图片、记录、旧 RPC 与既有结算能力。旧个人配置加载时清空已下线模型的选择，保留其他配置并要求重新选择，不自动换服务商或重发收费请求。
+两个版本全部使用官方模型，不再调用 gpt-image-2.6-ext 或发送 version。网站模型顺序、逻辑 ID、管理员角标与旧记录保持。网站仍限1K、最多8参考图；普通生成与迭代重绘可选1–4张，默认1张，PNG与GIF一致。画布每个目标的独立操作仍生成1张，不扩展2K/4K或精确像素入口。所有请求的 quality 由服务器固定为 auto，没有画质选择器，浏览器不能提高画质档位。
 
-## 官方契约与网站能力
+## 编辑与输入
 
-来源：[APIMart GPT Image 2.6 Ext 官方文档](https://docs.apimart.ai/cn/api-reference/images/gpt-image-2.6-ext/generation)。原文留存本地 artifacts/gpt26-20261105/gpt26.md。
+支持普通参考图生图、迭代重绘、无限画布图片框生成与画布图片编辑。矩形、圆形、画笔导出透明PNG蒙版；文字与箭头作为说明或标注参考图。蒙版不混入参考图列表、不参与 @图N 编号，不能单独作为计费原图。
 
-- 当前仅 1K、n=1。界面与服务器同步限制，2K／4K、批量、不合法尺寸在预留前拒绝。上游 resolution 为 1k，账务快照为 1K。
-- 两个逻辑 ID 映射到同一上游 model 和不同 version；请求指纹包含版本，不允许浏览器覆盖所选版本。只提交一次收费 POST，随后查询原任务，不回退其他收费模型。
-- 官方最多 16 张参考图、每张 20MB；本站沿用更严格的 8 张与共享上传上限，额外校验每张不超过 20MB。参考图编辑仍每张成功结果 1 网站积分，自带 Key 不扣网站积分。
-- 尺寸只使用 auto 或支持的比例，禁用精确像素入口，切换模型时清除旧自定义尺寸。质量接受文档枚举，网站现有默认 auto。
-- 官方明确不支持 markup／markup_url 标注局部编辑，未声明蒙版契约。按用户要求禁用两款的局部重绘及无限画布 AI，普通参考图创作保留；后端也拒绝 mask、markup 和 canvas_workflow。
-- PNG 为默认格式，GIF 动图位于第二项；GIF 仅文字生成、自动尺寸、单个输出。动画保存与下载详 [GIF 实现](gpt26-gif.md)。SVG 等独立输出流程尚未接入。
+所有图片输入均按每张成功结果1.5网站积分：包括普通参考、previous_image迭代、画布编辑原图及说明图；多张参考不按输入张数重复乘价。无图片输入的普通生图、画布图片框生成均为每张成功结果1积分。批量按所选数量预留，按实际保存结果数量结算；例如4张带图预留6积分，只成功2张收3积分并退3积分。自带Key仍不扣网站积分。
 
-## 管理员角标
+服务器先读取当前身份私有原图/蒙版并校验，后进行幂等预留与一次收费提交。蒙版小于4MB、PNG带Alpha、含完全透明编辑区域，像素尺寸须与第一张原图一致；原图和蒙版须独立上传。校验失败不预留、不上传上游、不提交生成；成功或失败均清理临时原图与蒙版。合格蒙版以PNG Data URL发送mask_url，参考原图通过既有安全上传转为image_urls。
 
-改为“模型下拉框＋角标选择”，下方显示预览和保存按钮。切换模型保留全部未保存草稿，保存完整配置。保留管理员校验、版本冲突保护及失败保留草稿。新增迁移一次性清除旧热门标记、移除旧模型角标，并添加两个 2.6 热门标记；保留其他新／空标记，之后仍可由管理员修改。
+请求指纹包括官方模型、参考图与蒙版；不接受浏览器指定任意mask_url/markup_url/上游model，未知提交状态只查询原任务，不重发收费请求。
 
-## 数据库与发布
+## PNG 与 GIF
 
-新增未应用迁移 supabase/migrations/20261105141914_gpt26_ext_image_model.sql，通过隔离目录 Supabase CLI 3 migration new 生成。新增 GPT26 专用预留、结算、退款、begin_gpt26_image_job，以及 apply_image_job_v3 分派；旧任务委托既有 apply_image_job_v2，旧函数定义和 ACL 保留。新私有 definer 固定空 search_path，公共包装 invoker，仅 service_role 可执行。价格按任务快照，每张成功保存结算 1 分；明确失败退款，未知状态保留预留，重复回调幂等。
+PNG默认排第一；GIF排第二，支持文生及参考图生成。GIF仍为自动单帧尺寸、单次1–4个动图，不支持局部蒙版或画布重绘；迭代编辑切为PNG。GIF无图1积分、有参考图1.5积分。原始帧、时长、循环、私有存储与备用下载保持，详见[gpt26-gif.md](gpt26-gif.md)。SVG等独立输出流程未开放。
 
-以后获得明确推送部署授权后，先核对正式迁移清单，再依次仅应用尚未执行的三份新增迁移：20261105040811_seedream_image_models.sql、20261105043134_model_badge_settings.sql、20261105141914_gpt26_ext_image_model.sql，之后发布依赖新 RPC 的代码。不得 db push 重放历史或修改已执行文件。
+## 数据库与发布边界
 
-本轮验证为模拟请求、合成素材和隔离 PGlite；没有真实收费出图、上游账号权限或正式持久化验收。证据、截图、交接只留本地 artifacts，不提交。
+本次新增迁移为supabase/migrations/20261109023710_gpt26_official_reference_pricing.sql，通过隔离目录的Supabase CLI migration new生成，已应用到正式环境，对应远端记录20261109032458_gpt26_official_reference_pricing。本地与远端版本映射不同，禁止为统一编号修改文件名或再次执行。它仅增加版本化的private.reserve_gpt26_credits_v2、private/public.begin_gpt26_image_job_v2；固定search_path，public包装invoker、private实现definer，执行权仅service_role。计费由服务端计算的参考图数决定，不接受浏览器价格。
+
+旧begin/reserve、apply、结算、退款及权限完全保留。新预留把1/1.5单价保存到任务与流水；沿用按预留快照结算的既有apply_image_job_v3，旧1积分带图任务不会补扣。在尚未准备该RPC的独立开发环境，新代码请求会在begin阶段失败，不能回退旧RPC按1积分低扣。新环境须先核对自身迁移记录和依赖，再准备匹配的RPC；正式环境已完成迁移，不重放。
+
+20261105141914等旧迁移已执行，禁止修改或重放；不重置角标、不改变其他模型或账户余额。所有开发验证使用合成素材与内存数据库，不代表真实官方API出图成功；本次未执行收费生成或用户请求重放。
+
+## 官方依据
+
+- [GPT Image 2.6官方文档](https://docs.apimart.ai/cn/api-reference/images/gpt-image-2.6/generation)
+- [模型与价格页面](https://apimart.ai/zh/model/gpt-image-2-6)

@@ -37,7 +37,6 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
         <div className="studio-credit-card"><span>平台积分 <Aperture size={14} /></span><strong>{session ? (accountLoading ? "同步中…" : displayCredits(account?.credits?.balance)) : "从灵感开始"}</strong><button type="button" onClick={onOpenRecharge}>购买积分 <ArrowUpRight size={15} /></button></div>
         {session && account?.is_admin && <button type="button" title="管理员控制台" aria-label="管理员控制台" className="studio-admin-link" onClick={onOpenMetrics}><ChartNoAxesCombined size={17} />管理员控制台<ChevronRight size={14} /></button>}
         <button type="button" className="studio-account-link" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><span className="studio-avatar">{session ? accountName.slice(0, 1).toUpperCase() : <UserRound size={16} />}</span><span>{accountName}<small>{session ? "管理你的账户" : "继续你的创作"}</small></span><ChevronRight size={15} /></button>
-        <a className="studio-source-link" href="https://github.com/Something11235/PosterFlow-AI" target="_blank" rel="noreferrer">PosterFlow AI <ArrowUpRight size={12} /><span>本地新版</span></a>
       </div>
     </aside>
   );

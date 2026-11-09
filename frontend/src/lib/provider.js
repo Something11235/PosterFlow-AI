@@ -1,6 +1,6 @@
 export const PROVIDER_STORAGE_KEY = "posterflow.provider.session.v1";
 export const MAX_REFERENCE_IMAGES = 8;
-export const GPT26_IMAGE_MODELS = ["flare", "sunburst"].map(version => ({ value: `gpt-image-2.6-${version}`, label: `GPT Image 2.6 ${version === "flare" ? "Flare" : "Sunburst"}`, upstreamVersion: version, outputFormats: ["png", "gif"], creditCost: 1, maxCount: 1, maxReferences: 8, resolutions: ["1K"], canvasEdit: false, customSize: false }));
+export const GPT26_IMAGE_MODELS = ["flare", "sunburst"].map(version => ({ value: `gpt-image-2.6-${version}`, label: `GPT Image 2.6 ${version === "flare" ? "Flare" : "Sunburst"}`, upstreamVersion: version, outputFormats: ["png", "gif"], gifReferences: true, creditCost: 1, referenceCreditCost: 1.5, maxCount: 4, maxReferences: 8, resolutions: ["1K"], canvasEdit: true, maskEdit: true, customSize: false }));
 
 export const APIMART_IMAGE_MODELS = [
   ...GPT26_IMAGE_MODELS,

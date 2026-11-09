@@ -354,7 +354,7 @@ export default function App() {
   canvasAllowedRef.current = canvasAllowed;
   const apimartSpec = apimartImageModel(activeImageModel);
   const gifMode = apimartSpec?.outputFormats?.includes("gif") && imageOutputFormat === "gif";
-  const referenceSpec = referenceCapability(gifMode ? {...apimartSpec, maxReferences: 0} : apimartSpec);
+  const referenceSpec = referenceCapability(gifMode && !apimartSpec.gifReferences ? {...apimartSpec, maxReferences: 0} : apimartSpec);
   const materialReferenceSpec = useRef(referenceSpec);
   materialReferenceSpec.current = referenceSpec;
   const platformReady = Boolean((apimartSpec ? apimartConfigured : serverProvider.platformConfigured) && session);
@@ -367,11 +367,12 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!apimartSpec?.outputFormats?.includes("gif")) setImageOutputFormat("png");
+    if (mode === "iterative" && gifMode) setImageOutputFormat("png");
     if (gifMode) setSize("");
-  }, [apimartSpec, gifMode]);
+  }, [apimartSpec, gifMode, mode]);
   useEffect(() => {
     if (!apimartSpec) return;
-    setCount(previous => Math.min(previous, apimartSpec.maxCount));
+    setCount(previous => apimartSpec.value.startsWith('gpt-image-2.6-') ? 1 : Math.min(previous, apimartSpec.maxCount));
     if (apimartSpec.value === "seedream-5-0-lite" || apimartSpec.customSize === false) setSize(previous => previous === "custom" ? "" : previous);
     if (!apimartSpec.automaticResolution) setImageResolution(previous => apimartSpec.resolutions.includes(previous) ? previous : apimartSpec.resolutions[0]);
   }, [apimartSpec]);
@@ -504,7 +505,8 @@ export default function App() {
     }
     if (!requireGenerationAccess()) return;
     if (!providerConfigured) { setShowProviderSettings(true); return; }
-    if (gifMode && referenceFiles.length) { setNotice("GIF 动图仅支持文字生成，请移除参考图或切回 PNG。"); return; }
+    if (gifMode && !apimartSpec?.gifReferences && referenceFiles.length) { setNotice("当前模型的 GIF 不支持参考图，请移除参考图或切回 PNG。"); return; }
+    if (gifMode && previousImage) { setNotice("局部重绘请使用 PNG 输出格式。"); return; }
     if (previousImage && !canvasAllowedRef.current) { setNotice("当前模型未开放局部重绘，请使用参考图创作或切换模型。"); return; }
     if (previousImage && referenceSpec.disabled) {
       setNotice("当前模型仅支持文生图，请切换到 AI 创作或选择支持参考图的模型。"); return;
@@ -537,7 +539,7 @@ export default function App() {
     let paths = [], started = false;
     try {
       const body = { prompt: taskPrompt.trim(), request_id: requestId,
-        ...(previousImage ? { previous_image: previousImage } : { count }),
+        ...(previousImage ? { previous_image: previousImage, ...(apimartSpec?.value.startsWith('gpt-image-2.6-') ? {count} : {}) } : { count }),
         ...(size ? { size } : {}),
         ...(size === "custom" ? { custom_width: customSize.width, custom_height: customSize.height } : {}),
         quality: "auto", ...(previousImage ? { canvas_workflow: "iterative" } : {}), ...(billingMode === "platform" ? { platform_model: platformModel } : {}),
@@ -887,6 +889,7 @@ export default function App() {
                 apimartSpec={apimartSpec}
                 resolution={imageResolution}
                 outputFormat={imageOutputFormat}
+                referenceCount={mode === "iterative" && images.length ? 1 : referenceFiles.length}
                 onOutputFormatChange={setImageOutputFormat}
                 onResolutionChange={setImageResolution}
                 size={size}

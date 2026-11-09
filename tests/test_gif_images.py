@@ -14,12 +14,13 @@ def animated_fixture():
 
 
 class GifImagesTests(unittest.TestCase):
-    def test_both_ext_versions_accept_only_text_single_auto_gif(self):
+    def test_both_official_versions_accept_text_or_reference_gif_without_masks(self):
         for version in ('flare', 'sunburst'):
             model = 'gpt-image-2.6-' + version
             body = provider.build_request(model, {'prompt': 'A waving cat, seamless loop', 'output_format': 'gif'})
-            self.assertEqual((body['version'], body['output_format'], body['size'], body['n']), (version, 'gif', 'auto', 1))
-            for extra, refs in [({'size': 'square_1_1'}, []), ({'count': 2}, []), ({}, ['reference'])]:
+            self.assertEqual((body['model'], body['output_format'], body['size'], body['n']), (model, 'gif', 'auto', 1))
+            self.assertEqual(provider.build_request(model, {'prompt': 'fixture', 'output_format': 'gif'}, ['reference'])['image_urls'], ['reference'])
+            for extra, refs in [({'size': 'square_1_1'}, []), ({'count': 5}, []), ({'canvas_workflow': 'redraw'}, ['reference'])]:
                 with self.assertRaises(provider.ImageTaskError):
                     provider.build_request(model, {'prompt': 'fixture', 'output_format': 'gif', **extra}, refs)
 

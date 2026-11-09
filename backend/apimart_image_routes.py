@@ -44,7 +44,7 @@ class ImageStore:
 
     def begin(self, owner, user, request_id, mode, model, body, prompt):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        rpc_name = "begin_gpt26_image_job" if model.startswith("gpt-image-2.6-") else "begin_seedream_image_job" if model.startswith("seedream-") else "begin_apimart_image_job_v3"
+        rpc_name = "begin_gpt26_image_job_v2" if model.startswith("gpt-image-2.6-") else "begin_seedream_image_job" if model.startswith("seedream-") else "begin_apimart_image_job_v3"
         return self.rpc(rpc_name, {"p_owner": owner, "p_user": user, "p_request": request_id, "p_mode": mode, "p_model": model, "p_count": body["n"], "p_fingerprint": fingerprint, "p_prompt": prompt, "p_reference_count": len(body.get("image_urls") or []), "p_resolution": body.get("resolution", "").upper() or None})
 
     def apply(self, owner, request_id, event, **kwargs):
@@ -68,6 +68,10 @@ def create_image_blueprint(server):
 
     @bp.errorhandler(provider.ImageTaskError)
     def image_error(error):
+        if error.code == "IMAGE_PRICING_CHANGED":
+            return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=False, generation_submitted=False, phase="validation", recovery=["刷新页面，核对当前积分后再生成"]), error.status
+        if error.code == "IMAGE_MASK_INVALID":
+            return jsonify(error=error.message, code=error.code, detail=error.message + " 蒙版校验未通过，尚未提交生图任务。", submission_unknown=False, generation_submitted=False, phase="validation", recovery=["重新选择原图与编辑区域", "确认蒙版尺寸与原图一致"]), error.status
         if error.code in ("REFERENCE_UPLOAD_FAILED", "REFERENCE_IMAGE_INVALID"):
             return jsonify(error=error.message, code=error.code, detail="参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。", submission_unknown=False, generation_submitted=False, phase="reference_upload", recovery=["稍后重试上传", "持续失败请联系站主"]), error.status
         return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=error.uncertain, recovery=["查询原任务", "请勿重复生成"]), error.status
@@ -168,7 +172,14 @@ def create_image_blueprint(server):
         request_id = normalize_id(data.get("request_id"))
         server.enforce_rate_limit("apimart-image-submit", owner, 8, 60)
         paths = server.validate_reference_storage_paths(data.get("reference_storage_paths"))
+        temporary_paths = list(paths)
         try:
+            mask_path = server.validate_reference_storage_path(data.get("mask_storage_path"))
+            if mask_path:
+                if mask_path not in temporary_paths:
+                    temporary_paths.append(mask_path)
+                if mask_path in paths or data.get("mask_b64"):
+                    raise provider.ImageTaskError("IMAGE_MASK_INVALID", "原图与蒙版须分别上传，请重新选择编辑区域。")
             references = [server.stored_reference_to_base64(path) for path in paths] if paths else server.validate_reference_images_b64(data.get("reference_images_b64"))
             if not references:
                 single = server.validate_reference_image_b64(data.get("reference_b64"))
@@ -180,12 +191,21 @@ def create_image_blueprint(server):
                     raise provider.ImageTaskError("PREVIOUS_IMAGE_MISSING", "原图已过期或暂时无法读取，请更换参考图。")
                 references = [server.validate_reference_image_b64(previous)]
             references = provider.normalize_model_references(model, references)
+            if model.startswith("gpt-image-2.6-") and mode == "platform" and references and (type(data.get("pricing_version")) is not int or data["pricing_version"] != 2):
+                raise provider.ImageTaskError("IMAGE_PRICING_CHANGED", "图片编辑价格已更新为每张1.5积分，纯文字生图仍为1积分。请刷新页面核对后再提交；本次尚未预留积分或提交生图。", 409)
             region_edit = model == grok_region.MODEL and data.get("operation") == "region_edit"
             if data.get("operation") and not region_edit:
                 raise provider.ImageTaskError("IMAGE_REGION_INVALID", "当前模型不支持此编辑方式。")
             if region_edit and (references or data.get("mask_b64") or data.get("mask_storage_path")):
                 raise provider.ImageTaskError("IMAGE_REGION_INVALID", "选区编辑须先完成原图准备，请重新选择原图。")
-            body = grok_region.build_request(data, key, owner) if region_edit else provider.build_request(model, data, references)
+            mask = None
+            if model.startswith("gpt-image-2.6-") and (mask_path or data.get("mask_b64")):
+                mask = server.stored_reference_to_base64(mask_path) if mask_path else server.validate_reference_image_b64(data.get("mask_b64"))
+                try:
+                    server.validate_edit_mask(mask, references[0] if references else None)
+                except ValueError as error:
+                    raise provider.ImageTaskError("IMAGE_MASK_INVALID", str(error)) from None
+            body = grok_region.build_request(data, key, owner) if region_edit else provider.build_request(model, data, references, **({"mask": mask} if mask else {}))
             store = ImageStore()
             begun = store.begin(owner, user_id, request_id, mode, model, body, str(data.get("prompt", "")).strip())
             if begun.get("existing"):
@@ -204,7 +224,7 @@ def create_image_blueprint(server):
             applied = store.apply(owner, request_id, "submitted", p_task=task)
             return jsonify(result(applied["job"], applied.get("balance"))), 202
         finally:
-            server.cleanup_reference_storage_paths(paths)
+            server.cleanup_reference_storage_paths(temporary_paths)
 
     @bp.post("/segments")
     @bp.post("/segments/status")

@@ -19,8 +19,8 @@ except ModuleNotFoundError:
 
 BASE = "https://api.apimart.ai/v1"
 MODELS = {
-    "gpt-image-2.6-flare": {"name": "GPT Image 2.6 Flare", "version": "flare", "references": 8, "count": 1, "resolutions": ("1K",), "credit_cost": 1, "canvas_edit": False},
-    "gpt-image-2.6-sunburst": {"name": "GPT Image 2.6 Sunburst", "version": "sunburst", "references": 8, "count": 1, "resolutions": ("1K",), "credit_cost": 1, "canvas_edit": False},
+    "gpt-image-2.6-flare": {"name": "GPT Image 2.6 Flare", "version": "flare", "references": 8, "count": 4, "resolutions": ("1K",), "credit_cost": 1, "reference_credit_cost": 1.5, "canvas_edit": True},
+    "gpt-image-2.6-sunburst": {"name": "GPT Image 2.6 Sunburst", "version": "sunburst", "references": 8, "count": 4, "resolutions": ("1K",), "credit_cost": 1, "reference_credit_cost": 1.5, "canvas_edit": True},
     "gemini-nano-banana-2.1": {"name": "Nano Banana 2.1", "references": 8, "count": 1, "resolutions": ("1K", "2K", "4K"), "resolution_credit_costs": {"4K": 2}},
     "grok-imagine-image-2.0": {"name": "Grok Imagine Image 2.0", "references": 3, "count": 4, "resolutions": ("1K", "2K"), "reference_credit_cost": 2, "automatic_resolution": True},
     "grok-imagine-2.0-ext": {"name": "grok-imagine-2.0-ext", "references": 0, "count": 4, "resolutions": ("quality",), "automatic_resolution": True},
@@ -57,12 +57,12 @@ def _log_upload_failure(error,request_id,index,size,width,height,mime):
     logging.getLogger(__name__).warning('image_reference_upload_failed request_id=%s reference_index=%s stage=%s upstream_status=%s upstream_type=%s bytes=%s width=%s height=%s mime=%s',rid,number,stage,status,kind,size,width,height,media)
 
 
-def build_request(model, data, references=()):
+def build_request(model, data, references=(), *, mask=None):
     if model not in MODELS:
         raise ImageTaskError("MODEL_NOT_ALLOWED", "请选择已接入的图片模型。")
     spec = MODELS[model]
     if model.startswith("gpt-image-2.6-"):
-        return build_gpt26_request(model, data, references)
+        return build_gpt26_request(model, data, references, mask=mask)
     if model.startswith("seedream-"):
         return build_seedream_request(model, data, references)
     prompt = data.get("prompt", "")
@@ -96,8 +96,6 @@ def build_request(model, data, references=()):
     if ratio not in allowed:
         raise ImageTaskError("IMAGE_SIZE_INVALID", "此模型不支持所选比例，请选择其他画面比例。")
     body = {"model": model, "prompt": prompt.strip(), "n": count}
-    if model == "gemini-nano-banana-2.1":
-        body.update(model="gemini-nano-banana-2.1-ext", official_fallback=True)
     if not spec.get("automatic_resolution"):
         resolution = data.get("resolution", spec["resolutions"][0])
         if resolution not in spec["resolutions"]:
@@ -142,36 +140,40 @@ def normalize_model_references(model, references):
     return result
 
 
-def build_gpt26_request(model, data, references):
+def build_gpt26_request(model, data, references, *, mask=None):
     version = MODELS[model]["version"]
     prompt, count = data.get("prompt"), data.get("count", 1)
     if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 6000:
         raise ImageTaskError("PROMPT_INVALID", "提示词须为 1–6000 个字符。")
-    if type(count) is not int or count != 1:
-        raise ImageTaskError("IMAGE_COUNT_INVALID", "GPT Image 2.6 Ext 当前仅支持单次生成 1 张。")
+    if type(count) is not int or not 1 <= count <= 4:
+        raise ImageTaskError("IMAGE_COUNT_INVALID", "GPT Image 2.6 单次可生成 1–4 张。")
     if len(references) > 8:
         raise ImageTaskError("REFERENCE_MODEL_LIMIT", "本站 GPT Image 2.6 最多支持 8 张参考图。")
     if str(data.get("resolution", "1K")).lower() != "1k":
-        raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "GPT Image 2.6 Ext 当前仅开放 1K。")
-    if data.get("canvas_workflow") or any(data.get(key) for key in ("mask_b64", "mask_storage_path", "markup", "markup_url", "selection_regions")):
-        raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "GPT Image 2.6 Ext 尚未支持蒙版或标注局部编辑，请使用普通参考图创作。")
+        raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "本站 GPT Image 2.6 当前开放 1K。")
+    workflow = data.get("canvas_workflow")
+    if workflow not in (None, "", "frame", "redraw", "iterative"):
+        raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "请选择有效的画布创作方式。")
+    if any(data.get(key) for key in ("markup", "markup_url", "mask_url", "selection_regions", "background", "tools", "stream")):
+        raise ImageTaskError("IMAGE_EDIT_UNSUPPORTED", "请通过本站参考图及蒙版上传入口编辑图片。")
+    if (data.get("mask_b64") or data.get("mask_storage_path")) and not mask:
+        raise ImageTaskError("IMAGE_MASK_INVALID", "蒙版须先完成校验，请重新选择编辑区域。")
+    if (mask or workflow in ("redraw", "iterative")) and not references:
+        raise ImageTaskError("IMAGE_MASK_INVALID", "图片编辑需要先选择原图。")
     output_format = data.get("output_format", "png")
     if data.get("version", version) != version or output_format not in ("png", "gif"):
-        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口支持 PNG 或 GIF，请勿覆盖所选 Ext 版本。")
-    if output_format == "gif" and (references or data.get("size") not in (None, "", "auto")):
-        raise ImageTaskError("IMAGE_GIF_INVALID", "GIF 动图仅支持文字生成，不能带参考图或指定比例。")
+        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口支持 PNG 或 GIF，请勿覆盖所选模型版本。")
+    if output_format == "gif" and (mask or workflow in ("redraw", "iterative") or data.get("size") not in (None, "", "auto")):
+        raise ImageTaskError("IMAGE_GIF_INVALID", "GIF 可使用参考图，但不支持蒙版、局部重绘或指定比例。")
     size = data.get("size", "")
     ratio = "auto" if size in ("", "auto") else RATIOS.get(size)
     if ratio not in {"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5", "16:9", "9:16", "21:9"}:
-        raise ImageTaskError("IMAGE_SIZE_INVALID", "GPT Image 2.6 Ext 仅支持画面比例，不能指定像素尺寸。")
-    quality = data.get("quality", "auto")
-    if quality not in ("auto", "low", "medium", "high", "xhigh", "max"):
-        raise ImageTaskError("IMAGE_QUALITY_INVALID", "请选择有效的图片质量。")
-    body = {"model": "gpt-image-2.6-ext", "version": version, "prompt": prompt.strip(), "resolution": "1k", "size": ratio, "output_format": output_format, "n": 1}
-    if "quality" in data:
-        body["quality"] = quality
+        raise ImageTaskError("IMAGE_SIZE_INVALID", "当前入口使用画面比例，请选择有效比例。")
+    body = {"model": model, "prompt": prompt.strip(), "resolution": "1k", "size": ratio, "output_format": output_format, "quality": "auto", "n": count}
     if references:
         body["image_urls"] = list(references)
+    if mask:
+        body["mask_url"] = "data:image/png;base64," + mask
     return body
 
 

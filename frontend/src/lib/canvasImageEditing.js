@@ -7,7 +7,7 @@ export function canvasEditCapability(model) {
   if (spec?.interactiveEdit) return { referenceLimit: spec.maxReferences, mask: false, kind: "interactive" };
   const known = IMAGE_MODEL_OPTIONS.some(option => option.value === model);
   return { referenceLimit: spec?.maxReferences ?? MAX_REFERENCE_IMAGES,
-    mask: known && !spec, kind: spec?.maxReferences === 0 ? "text" : spec ? "reference" : known ? "mask" : "custom" };
+    mask: Boolean(spec?.maskEdit) || known && !spec, kind: spec?.maskEdit ? "mask" : spec?.maxReferences === 0 ? "text" : spec ? "reference" : known ? "mask" : "custom" };
 }
 
 export function interactiveEditInstructions(target, annotations) {

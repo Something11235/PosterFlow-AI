@@ -34,6 +34,7 @@ export default function ParameterPanel({
   resolution,
   onResolutionChange,
   outputFormat = "png",
+  referenceCount = 0,
   onOutputFormatChange,
 }) {
   const sizeMap = Object.keys(sizes || {}).length ? sizes : FALLBACK_SIZES;
@@ -57,7 +58,7 @@ export default function ParameterPanel({
         </span>
       </div>
 
-      {apimartSpec?.outputFormats && <label className="mb-4 block text-xs text-text-secondary">输出格式<select aria-label="图片输出格式" value={outputFormat} onChange={event => onOutputFormatChange?.(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary"><option value="png">PNG 静态图</option><option value="gif">GIF 动图</option></select>{gifMode && <span className="mt-2 block leading-5 text-text-muted">GIF 仅支持文字生成，尺寸自动决定，单次 1 个，仍为 1 积分。请在提示词中描述动作和循环方式。</span>}</label>}
+      {apimartSpec?.outputFormats && <label className="mb-4 block text-xs text-text-secondary">输出格式<select aria-label="图片输出格式" value={outputFormat} onChange={event => onOutputFormatChange?.(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary"><option value="png">PNG 静态图</option><option value="gif" disabled={mode === "iterative"}>GIF 动图</option></select>{gifMode && <span className="mt-2 block leading-5 text-text-muted">GIF 支持文字及参考图生成，不支持蒙版局部重绘；尺寸自动决定，可选 1–4 个。请在提示词中描述动作和循环方式。</span>}</label>}
       <fieldset className="mb-4 disabled:opacity-50" disabled={gifMode}>
         <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
           <LayoutTemplate size={16} />
@@ -182,8 +183,8 @@ export default function ParameterPanel({
       </fieldset>
 
       {apimartSpec && <div className="mb-4 space-y-3 rounded-lg border border-accent/25 bg-accent/5 p-3">
-        {!apimartSpec.automaticResolution && <label className="block text-xs text-text-secondary">清晰度<select aria-label="图片清晰度" value={resolution} onChange={event => onResolutionChange(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary">{apimartSpec.resolutions.map(value => <option key={value} value={value}>{value === "quality" ? "质量模式" : value}</option>)}</select></label>}
-        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 模式不扣网站积分" : apimartSpec.resolutionCreditCosts ? `当前 ${resolution} 每张 ${imageCreditCost(apimartSpec.value, 0, resolution)} 积分（${count} 张共 ${count * imageCreditCost(apimartSpec.value, 0, resolution)} 积分）。${imagePricingLabel(apimartSpec.value)}` : apimartSpec.referenceCreditCost ? `纯文生图每张 ${apimartSpec.creditCost} 积分，参考图编辑每张 ${apimartSpec.referenceCreditCost} 积分` : `每张 ${apimartSpec.creditCost} 积分`} · 单次最多 {apimartSpec.maxCount} 张 · {gifMode ? "GIF 仅支持文生图，尺寸自动决定" : apimartSpec.maxReferences ? `最多 ${apimartSpec.maxReferences} 张参考图` : "仅支持文生图"}。{!gifMode && "画面采用比例控制，实际像素以生成结果为准。"}</p>
+        {!apimartSpec.automaticResolution && apimartSpec.resolutions.length > 1 && <label className="block text-xs text-text-secondary">清晰度<select aria-label="图片清晰度" value={resolution} onChange={event => onResolutionChange(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary">{apimartSpec.resolutions.map(value => <option key={value} value={value}>{value === "quality" ? "质量模式" : value}</option>)}</select></label>}
+        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 模式不扣网站积分" : apimartSpec.resolutionCreditCosts ? `当前 ${resolution} 每张 ${imageCreditCost(apimartSpec.value, referenceCount, resolution)} 积分（${count} 张共 ${count * imageCreditCost(apimartSpec.value, referenceCount, resolution)} 积分）。${imagePricingLabel(apimartSpec.value)}` : apimartSpec.referenceCreditCost ? `无图片输入每张 ${apimartSpec.creditCost} 积分，有图片输入每张 ${apimartSpec.referenceCreditCost} 积分；当前 ${imageCreditCost(apimartSpec.value, referenceCount)} 积分 / 张（${count} 张共 ${count * imageCreditCost(apimartSpec.value, referenceCount)} 积分）` : `每张 ${apimartSpec.creditCost} 积分`} · 单次最多 {apimartSpec.maxCount} 张 · {gifMode ? "GIF 支持文字及参考图，尺寸自动决定" : apimartSpec.maxReferences ? `最多 ${apimartSpec.maxReferences} 张参考图` : "仅支持文生图"}。{!gifMode && "画面采用比例控制，实际像素以生成结果为准。"}</p>
       </div>}
 
       <div className="rounded-lg border border-border-subtle bg-bg-primary/55 p-3">
