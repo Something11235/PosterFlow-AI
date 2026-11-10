@@ -39,7 +39,7 @@ PosterFlow AI 面向想做图、写歌、制作视频素材的创作者。打开
 - **多模型切换**：GPT Image、Nano Banana、Grok、即梦 Seedream，按任务选择。
 - **批量比较方案**：支持批量的模型可选择生成数量；GPT Image 2.6 可选 1–4 张，默认 1 张。
 - **参考与细节修改**：保留原图作为输入，描述需要调整的角色、背景、构图或细节。
-- **静态图与动图**：GPT Image 2.6 提供 PNG 与 GIF 输出入口，可在提示词中描述动作与循环。
+- **动图结果保留**：服务返回 GIF 时保留动画，支持播放与原文件下载；实际生成能力以所选服务为准。
 
 ![PosterFlow AI 图像创作工作区](docs/screenshots/showcase/image-workspace.png)
 
@@ -161,9 +161,15 @@ GPT Image 2.6 的平台价格为无图片输入 **1 积分 / 张**、有图片�
 
 # 启动后端 5001 与前端 3001
 .\start-dev.bat
+
+# 完整工作台的本地自带 Key 模式（无需正式账号或数据库）
+# 后端 5001，前端 http://127.0.0.1:3002/
+.\start-dev.bat --local-own-key
 ```
 
 账号、积分和持久化生成功能需要配置自己的 Supabase 与上游服务；未配置时不具备真实生成能力。数据库迁移须先核对目标环境和已执行记录，再按依赖准备，避免重复应用。
+
+`--local-own-key` 使用同一套完整工作台界面，隔离真实环境文件和 Supabase 配置，供手动填写 BuyToken Key 验收 GPT2.6。任务、参考素材和结果只保存到本机忽略目录 `artifacts/local-own-key/`；不扣网站积分，上游按实际调用计费。参考图、局部编辑和画布可通过实际上游验证，尚未实测的能力不作保证。该开发入口只允许本机访问，不作为正式部署入口。
 
 ```powershell
 npm --prefix frontend test

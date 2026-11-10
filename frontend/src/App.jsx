@@ -164,6 +164,7 @@ export default function App() {
   const [imageResolution, setImageResolution] = useState("1K");
   const [imageOutputFormat, setImageOutputFormat] = useState("png");
   const [apimartConfigured, setApimartConfigured] = useState(false);
+  const [buytokenConfigured, setBuytokenConfigured] = useState(false);
   const [customSize, setCustomSize] = useState({ width: "1024", height: "1024" });
   const [count, setCount] = useState(1);
   const [referenceFiles, setReferenceFiles] = useState([]);
@@ -353,16 +354,19 @@ export default function App() {
   const canvasAllowedRef = useRef(canvasAllowed);
   canvasAllowedRef.current = canvasAllowed;
   const apimartSpec = apimartImageModel(activeImageModel);
+  const routedImageConfigured = activeImageModel?.startsWith("gpt-image-2.6-") ? buytokenConfigured : apimartConfigured;
   const gifMode = apimartSpec?.outputFormats?.includes("gif") && imageOutputFormat === "gif";
   const referenceSpec = referenceCapability(gifMode && !apimartSpec.gifReferences ? {...apimartSpec, maxReferences: 0} : apimartSpec);
   const materialReferenceSpec = useRef(referenceSpec);
   materialReferenceSpec.current = referenceSpec;
-  const platformReady = Boolean((apimartSpec ? apimartConfigured : serverProvider.platformConfigured) && session);
+  const platformReady = Boolean((apimartSpec ? routedImageConfigured : serverProvider.platformConfigured) && session);
   const providerConfigured = billingMode === "platform" ? platformReady : hasBrowserProvider;
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/apimart-images/config", { headers: CLIENT_HEADERS, signal: controller.signal })
       .then(response => response.json()).then(data => { if (!controller.signal.aborted) setApimartConfigured(Boolean(data.platform_configured)); }).catch(() => {});
+    fetch("/api/buytoken-images/config", { headers: CLIENT_HEADERS, signal: controller.signal })
+      .then(response => response.json()).then(data => { if (!controller.signal.aborted) setBuytokenConfigured(Boolean(data.platform_configured)); }).catch(() => {});
     return () => controller.abort();
   }, []);
   useEffect(() => {
@@ -398,7 +402,7 @@ export default function App() {
       setNotice("请先登录，完成邮箱验证后即可领取注册赠送积分");
       return false;
     }
-    if (billingMode === "platform" && !(apimartSpec ? apimartConfigured : serverProvider.platformConfigured)) {
+    if (billingMode === "platform" && !(apimartSpec ? routedImageConfigured : serverProvider.platformConfigured)) {
       setShowProviderSettings(true);
       setError({
         message: "平台积分服务尚未配置",
@@ -419,7 +423,7 @@ export default function App() {
       return false;
     }
     return true;
-  }, [apimartSpec, apimartConfigured, billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
+  }, [apimartSpec, routedImageConfigured, billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
 
   const handleAddToCanvas = useCallback((filenames) => {
     if (!canvasAllowedRef.current) { setNotice("当前模型未开放无限画布，请先切换模型。"); return; }
@@ -528,7 +532,7 @@ export default function App() {
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
     };
     if (apimartSpec) store.registerRecovery(requestId, async () => {
-      const data = await readImageTask(requestId, providerHeaders);
+      const data = await readImageTask(requestId, providerHeaders, undefined, activeImageModel);
       if (!live()) return;
       if (data.job?.status === "completed") show(data);
       else if (data.job?.status === "failed") {

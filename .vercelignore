@@ -6,6 +6,15 @@
 .vercel_python_packages/
 artifacts/
 docs/
+scripts/
+tests/
+supabase/
+frontend/tests/
+HANDOFF.md
+PROJECT_LOCATION.md
+CONTINUE_PROMPT.md
+CODEX_CONTINUE_PROMPT.md
+CODEX_CONTINUE.md
 legacy/
 frontend/node_modules/
 frontend/dist/

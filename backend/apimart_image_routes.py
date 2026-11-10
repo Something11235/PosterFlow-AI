@@ -12,10 +12,12 @@ from flask import Blueprint, jsonify, request
 try:
     from backend import apimart_image_provider as provider
     from backend import grok_region
+    from backend import image_reference_delivery as delivery
     from backend.supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 except ModuleNotFoundError:
     import apimart_image_provider as provider
     import grok_region
+    import image_reference_delivery as delivery
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 
 PUBLIC_FIELDS = ("request_id", "model", "billing_mode", "status", "requested_count", "image_keys", "error_code", "created_at", "reference_count", "unit_credit_cost", "pricing_resolution")
@@ -68,6 +70,17 @@ def create_image_blueprint(server):
 
     @bp.errorhandler(provider.ImageTaskError)
     def image_error(error):
+        if error.code in {"REFERENCE_UPLOAD_QUOTA_EXCEEDED", "REFERENCE_UPLOAD_RATE_LIMITED", "REFERENCE_LINK_UNAVAILABLE"}:
+            payload = dict(error=error.message, code=error.code, detail=provider.image_failure_reason(error.code),
+                           submission_unknown=False, generation_submitted=False, phase="reference_upload",
+                           recovery=["稍后再试；持续失败请联系站主"])
+            # A shared platform provider account's quota is operational metadata.
+            # Only an own-key caller may receive their own bounded quota fields.
+            if getattr(server.g, "apimart_image_billing_mode", None) == "own_key" and getattr(error, "quota", None):
+                payload["upload_quota"] = error.quota
+            return jsonify(payload), error.status
+        if error.code == "IMAGE_PROVIDER_CHANGED":
+            return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=False, generation_submitted=False, phase="validation", recovery=["刷新页面后再提交"]), error.status
         if error.code == "IMAGE_PRICING_CHANGED":
             return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=False, generation_submitted=False, phase="validation", recovery=["刷新页面，核对当前积分后再生成"]), error.status
         if error.code == "IMAGE_MASK_INVALID":
@@ -168,7 +181,10 @@ def create_image_blueprint(server):
         if not isinstance(data, dict):
             raise provider.ImageTaskError("INVALID_IMAGE_TASK", "图片请求格式无效。")
         mode, key, owner, user_id = context()
+        server.g.apimart_image_billing_mode = mode
         model = data.get("platform_model") if mode == "platform" else request.headers.get("X-Provider-Model", "").strip()
+        if mode == "platform" and isinstance(model, str) and model.startswith("gpt-image-2.6-"):
+            raise provider.ImageTaskError("IMAGE_PROVIDER_CHANGED", "图片服务线路已更新，请刷新页面后再提交；本次尚未提交生图。", 409)
         request_id = normalize_id(data.get("request_id"))
         server.enforce_rate_limit("apimart-image-submit", owner, 8, 60)
         paths = server.validate_reference_storage_paths(data.get("reference_storage_paths"))
@@ -210,15 +226,22 @@ def create_image_blueprint(server):
             begun = store.begin(owner, user_id, request_id, mode, model, body, str(data.get("prompt", "")).strip())
             if begun.get("existing"):
                 return jsonify(result(begun["job"], begun.get("balance"), idempotent=True)), 200
+            copy_paths = []
             try:
                 if references:
-                    body["image_urls"] = [provider.upload_reference(key, ref, request_id=request_id, reference_index=index) for index,ref in enumerate(references,1)]
+                    if model in delivery.INLINE_MODELS or model in delivery.LINK_MODELS:
+                        body["image_urls"], copy_paths = delivery.prepare_references(server, model, references, owner)
+                    else:
+                        # Retain the original protocol for historical own-key GPT2.6.
+                        body["image_urls"] = [provider.upload_reference(key, ref, request_id=request_id, reference_index=index) for index,ref in enumerate(references,1)]
             except provider.ImageTaskError as error:
                 store.apply(owner, request_id, "failed", p_error=error.code)
                 raise
             try:
                 task = provider.submit(key, body, begun["job"]["id"])
             except provider.ImageTaskError as error:
+                if not error.uncertain:
+                    delivery.cleanup_copies(server, copy_paths)
                 store.apply(owner, request_id, "submission_unknown" if error.uncertain else "failed", p_error=error.code)
                 raise
             applied = store.apply(owner, request_id, "submitted", p_task=task)
@@ -236,6 +259,7 @@ def create_image_blueprint(server):
         if not isinstance(data, dict):
             raise provider.ImageTaskError("IMAGE_REGION_INVALID", "原图准备请求无效。")
         mode, key, owner, _user = context()
+        server.g.apimart_image_billing_mode = mode
         model = data.get("platform_model") if mode == "platform" else request.headers.get("X-Provider-Model", "").strip()
         if model != grok_region.MODEL:
             raise provider.ImageTaskError("IMAGE_REGION_INVALID", "当前模型不支持此编辑方式。")
@@ -248,10 +272,15 @@ def create_image_blueprint(server):
             if len(paths) != 1:
                 raise provider.ImageTaskError("IMAGE_REGION_INVALID", "选区编辑需要且只支持一张本人上传的原图。")
             request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, owner + normalize_id(data.get("request_id")) + ":segment"))
+            copy_paths = []
             try:
                 reference = server.stored_reference_to_base64(paths[0])
-                url = provider.upload_reference(key, reference, request_id=request_id, reference_index=1)
-                task = provider.submit(key, {"model": grok_region.MODEL, "operation": "segment", "image_urls": [url], "cache_only": True, "include_mask_rle": False}, request_id)
+                urls, copy_paths = delivery.prepare_references(server, model, [reference], owner)
+                task = provider.submit(key, {"model": grok_region.MODEL, "operation": "segment", "image_urls": urls, "cache_only": True, "include_mask_rle": False}, request_id)
+            except provider.ImageTaskError as error:
+                if not error.uncertain:
+                    delivery.cleanup_copies(server, copy_paths)
+                raise
             finally:
                 server.cleanup_reference_storage_paths(paths)
             return jsonify(success=True, status="pending", receipt=grok_region.proof(key, owner, "task", task))
@@ -272,14 +301,14 @@ def create_image_blueprint(server):
     @bp.get("/tasks")
     def tasks():
         _mode, _key, owner, _user = context()
-        return jsonify(success=True, jobs=[public_job(job) for job in ImageStore().jobs(owner)])
+        return jsonify(success=True, jobs=[public_job(job) for job in ImageStore().jobs(owner) if job.get("submission_provider", "apimart") == "apimart"])
 
     @bp.get("/tasks/<request_id>")
     def task(request_id):
         _mode, key, owner, _user = context()
         server.enforce_rate_limit("apimart-image-query", owner, 120, 60)
         rows = ImageStore().jobs(owner, normalize_id(request_id))
-        if not rows:
+        if not rows or rows[0].get("submission_provider", "apimart") != "apimart":
             raise provider.ImageTaskError("IMAGE_TASK_NOT_FOUND", "未找到本人的图片任务。", 404)
         return jsonify(reconcile(ImageStore(), owner, key, rows[0]))
 

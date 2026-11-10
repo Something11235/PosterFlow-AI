@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {readImageRelay, IMAGE_RELAY_CHUNK_BYTES} from '../src/lib/imageRelay.js';
 import {GPT26_IMAGE_MODELS, imageCreditCost} from '../src/lib/provider.js';
 
-test('GIF is offered only through the two GPT26 version configurations at the existing unit price', () => {
+test('BuyToken GPT26 exposes PNG until GIF parameters are verified; existing GIF downloads remain supported', () => {
   for (const model of GPT26_IMAGE_MODELS) {
-    assert.deepEqual(model.outputFormats, ['png', 'gif']);
+    assert.deepEqual(model.outputFormats, ['png']);
+    assert.equal(model.provider, 'buytoken');
     assert.equal(model.maxCount, 4);
     assert.equal(imageCreditCost(model.value), 1);
   }

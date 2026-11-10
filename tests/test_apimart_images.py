@@ -52,7 +52,7 @@ class ImageProtocolTests(unittest.TestCase):
             with self.subTest(status=status), patch.object(provider.requests, "request", return_value=response({}, status)) as request:
                 with self.assertRaises(provider.ImageTaskError) as error:
                     provider.upload_reference("synthetic-key", encoded)
-                self.assertEqual(error.exception.code, "REFERENCE_UPLOAD_FAILED")
+                self.assertEqual(error.exception.code, "REFERENCE_UPLOAD_RATE_LIMITED" if status == 429 else "REFERENCE_UPLOAD_FAILED")
                 self.assertFalse(error.exception.uncertain)
                 request.assert_called_once()
         with patch.object(provider.requests, "request", side_effect=requests.Timeout("private-url")):
@@ -75,7 +75,7 @@ class ImageProtocolTests(unittest.TestCase):
             with self.subTest(status=status),patch.object(provider.requests,'request',return_value=response(payload,status)) as post,self.assertLogs(provider.__name__,level='WARNING') as logs:
                 with self.assertRaises(provider.ImageTaskError) as caught:
                     provider.upload_reference('private-api-key',encoded,request_id=REQUEST,reference_index=2)
-            self.assertEqual(caught.exception.code,'REFERENCE_UPLOAD_FAILED')
+            self.assertEqual(caught.exception.code,'REFERENCE_UPLOAD_RATE_LIMITED' if status == 429 else 'REFERENCE_UPLOAD_FAILED')
             self.assertFalse(caught.exception.uncertain);post.assert_called_once()
             text='\n'.join(logs.output)
             for value in ['request_id='+REQUEST,'reference_index=2','stage=upstream_http','upstream_status='+str(status),'upstream_type='+kind,'bytes='+str(len(raw)),'width=8 height=8 mime=image/png']:self.assertIn(value,text)
@@ -209,7 +209,7 @@ class ImageRouteTests(unittest.TestCase):
         store = Mock()
         store.begin.return_value = {"existing": False, "job": self.job}
         store.apply.return_value = {"job": self.job}
-        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_storage_paths", return_value=["synthetic-source"]), patch.object(server, "stored_reference_to_base64", return_value="synthetic-image"), patch.object(server, "cleanup_reference_storage_paths"), patch.object(provider, "upload_reference", return_value="https://getapib.org/synthetic.png"), patch.object(provider, "submit", return_value=TASK) as submit, patch.object(provider, "api_request", return_value={"data": {"status": "completed", "result": {"image_id": "asset_synthetic"}}}):
+        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_storage_paths", return_value=["synthetic-source"]), patch.object(server, "stored_reference_to_base64", return_value="synthetic-image"), patch.object(server, "cleanup_reference_storage_paths"), patch.object(routes.delivery, "prepare_references", return_value=(["https://fixture.supabase.co/signed"], ["synthetic-copy"])), patch.object(provider, "submit", return_value=TASK) as submit, patch.object(provider, "api_request", return_value={"data": {"status": "completed", "result": {"image_id": "asset_synthetic"}}}):
             result = self.client.post("/api/apimart-images/segments", json=body, headers=self.headers)
             self.assertEqual(result.status_code, 200)
             store.begin.assert_not_called()
@@ -297,9 +297,9 @@ class ImageRouteTests(unittest.TestCase):
 
     def test_reference_upload_failure_refunds_without_submitting_generation(self):
         store = Mock();store.begin.return_value = {"existing": False, "job": self.job}
-        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=[base64.b64encode(b"synthetic").decode()]), patch.object(provider, "upload_reference", side_effect=provider.ImageTaskError("REFERENCE_UPLOAD_FAILED", "upload failed", 502)), patch.object(provider, "submit") as submit:
+        with patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=[base64.b64encode(b"synthetic").decode()]), patch.object(routes.delivery, "prepare_references", side_effect=provider.ImageTaskError("REFERENCE_LINK_UNAVAILABLE", "link failed", 503)), patch.object(provider, "submit") as submit:
             result = self.client.post("/api/apimart-images/generations", json=self.body, headers=self.headers)
-        self.assertEqual(result.status_code, 502)
+        self.assertEqual(result.status_code, 503)
         self.assertEqual(store.apply.call_args.args[2], "failed")
         self.assertEqual(result.json["phase"], "reference_upload")
         self.assertFalse(result.json["generation_submitted"])
@@ -307,21 +307,20 @@ class ImageRouteTests(unittest.TestCase):
         self.assertNotIn("提示词", result.json["detail"])
         submit.assert_not_called()
 
-    def test_reference_models_submit_actual_uploaded_url_after_success(self):
+    def test_nano_submits_inline_reference_without_upload(self):
         image = io.BytesIO(); Image.new("RGB", (8, 8), "blue").save(image, format="PNG")
         encoded = base64.b64encode(image.getvalue()).decode()
-        for model in ("gemini-nano-banana-2.1", "grok-imagine-image-2.0"):
+        for model in ("gemini-nano-banana-2.1",):
             store = Mock(); job = {**self.job, "model": model}
             store.begin.return_value = {"existing": False, "job": job}
             store.apply.return_value = {"job": job}
             media_url = "https://getapib.org/image/reference.png"
-            with self.subTest(model=model), patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=[encoded]), patch.object(provider.requests, "request", side_effect=[response({"url": media_url}), response({"code": 200, "data": [{"task_id": TASK}]})]) as request:
+            with self.subTest(model=model), patch.dict("os.environ", {"APIMART_IMAGE_API_KEY": "synthetic-key"}), patch.object(server, "require_authenticated_user", return_value=Mock(id=USER)), patch.object(server, "enforce_rate_limit"), patch.object(routes, "ImageStore", return_value=store), patch.object(server, "validate_reference_images_b64", return_value=[encoded]), patch.object(provider.requests, "request", return_value=response({"code": 200, "data": [{"task_id": TASK}]})) as request:
                 result = self.client.post("/api/apimart-images/generations", json={**self.body, "platform_model": model}, headers=self.headers)
             self.assertEqual(result.status_code, 202)
-            self.assertEqual(request.call_count, 2)
-            self.assertTrue(request.call_args_list[0].args[1].endswith("/uploads/images"))
-            self.assertTrue(request.call_args_list[1].args[1].endswith("/images/generations"))
-            self.assertEqual(request.call_args_list[1].kwargs["json"]["image_urls"], [media_url])
+            self.assertEqual(request.call_count, 1)
+            self.assertTrue(request.call_args.args[1].endswith("/images/generations"))
+            self.assertEqual(request.call_args.kwargs["json"]["image_urls"], ["data:image/png;base64," + encoded])
             self.assertEqual([call.args[2] for call in store.apply.call_args_list], ["submitted"])
 
     def test_expired_previous_image_is_rejected_before_reservation(self):

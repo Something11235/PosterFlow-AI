@@ -2660,10 +2660,13 @@ app.register_blueprint(create_credit_code_blueprint(require_authenticated_user, 
 
 try:
     from backend.apimart_image_routes import create_image_blueprint
+    from backend.buytoken_image_routes import create_buytoken_image_blueprint
 except ModuleNotFoundError:
     from apimart_image_routes import create_image_blueprint
+    from buytoken_image_routes import create_buytoken_image_blueprint
 import sys
 app.register_blueprint(create_image_blueprint(sys.modules[__name__]))
+app.register_blueprint(create_buytoken_image_blueprint(sys.modules[__name__]))
 try:
     from backend.model_badges import create_model_badge_blueprint
 except ModuleNotFoundError:

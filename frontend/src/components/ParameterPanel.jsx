@@ -58,7 +58,7 @@ export default function ParameterPanel({
         </span>
       </div>
 
-      {apimartSpec?.outputFormats && <label className="mb-4 block text-xs text-text-secondary">输出格式<select aria-label="图片输出格式" value={outputFormat} onChange={event => onOutputFormatChange?.(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary"><option value="png">PNG 静态图</option><option value="gif" disabled={mode === "iterative"}>GIF 动图</option></select>{gifMode && <span className="mt-2 block leading-5 text-text-muted">GIF 支持文字及参考图生成，不支持蒙版局部重绘；尺寸自动决定，可选 1–4 个。请在提示词中描述动作和循环方式。</span>}</label>}
+      {apimartSpec?.outputFormats?.length > 1 && <label className="mb-4 block text-xs text-text-secondary">输出格式<select aria-label="图片输出格式" value={outputFormat} onChange={event => onOutputFormatChange?.(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary"><option value="png">PNG 静态图</option><option value="gif" disabled={mode === "iterative"}>GIF 动图</option></select>{gifMode && <span className="mt-2 block leading-5 text-text-muted">GIF 支持文字及参考图生成，不支持蒙版局部重绘；尺寸自动决定，可选 1–4 个。请在提示词中描述动作和循环方式。</span>}</label>}
       <fieldset className="mb-4 disabled:opacity-50" disabled={gifMode}>
         <legend className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
           <LayoutTemplate size={16} />

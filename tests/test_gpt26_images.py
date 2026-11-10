@@ -37,7 +37,7 @@ class Gpt26ImageTests(unittest.TestCase):
     def test_stale_reference_price_is_rejected_before_any_reservation_or_upstream_call(self):
         for revision in (None, 1, True, '2'):
             with self.subTest(revision=revision), patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore') as store, patch.object(provider, 'upload_reference') as upload, patch.object(provider, 'submit') as submit:
-                response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'reference_images_b64': [self.image()], 'pricing_version': revision, 'unit_credit_cost': 0})
+                response = server.app.test_client().post('/api/buytoken-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'reference_images_b64': [self.image()], 'pricing_version': revision, 'unit_credit_cost': 0})
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json['code'], 'IMAGE_PRICING_CHANGED')
             self.assertFalse(response.json['generation_submitted'])
@@ -47,13 +47,13 @@ class Gpt26ImageTests(unittest.TestCase):
     def test_validated_canvas_masks_use_data_url_and_never_count_as_references(self):
         reference, mask = self.image(), self.image('RGBA')
         for version in ('flare', 'sunburst'):
-            for mode in ('platform', 'own_key'):
+            for mode in ('own_key',):
                 model = 'gpt-image-2.6-' + version
                 job = {'id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'status': 'submitting'}
                 store = Mock()
                 store.begin.return_value = {'existing': False, 'job': job}
                 store.apply.return_value = {'job': {**job, 'status': 'submitted'}}
-                headers = {'X-Billing-Mode': 'platform'} if mode == 'platform' else {'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': model, 'X-Provider-Endpoint': provider.BASE + '/images/generations'}
+                headers = {'X-Billing-Mode': 'own_key', 'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': 'gpt-image-2.6-flare', 'X-Provider-Endpoint': provider.BASE + '/images/generations'} if mode == 'platform' else {'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': model, 'X-Provider-Endpoint': provider.BASE + '/images/generations'}
                 data = {'platform_model': model, 'prompt': 'fixture', 'request_id': job['request_id'], 'reference_storage_paths': ['synthetic-source'], 'mask_storage_path': 'synthetic-mask', 'canvas_workflow': 'redraw', 'unit_credit_cost': 0, 'quality': 'high', 'pricing_version': 2}
                 with self.subTest(version=version, mode=mode), patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'set_optional_storage_scope', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore', return_value=store), patch.object(server, 'validate_reference_storage_paths', return_value=['synthetic-source']), patch.object(server, 'validate_reference_storage_path', return_value='synthetic-mask'), patch.object(server, 'stored_reference_to_base64', side_effect=lambda path: mask if path == 'synthetic-mask' else reference), patch.object(server, 'cleanup_reference_storage_paths') as cleanup, patch.object(provider, 'upload_reference', return_value='https://getapib.org/synthetic.png') as upload, patch.object(provider, 'submit', return_value='task_gpt26_fixture') as submit:
                     response = server.app.test_client().post('/api/apimart-images/generations', headers=headers, json=data)
@@ -72,7 +72,7 @@ class Gpt26ImageTests(unittest.TestCase):
     def test_invalid_masks_never_reserve_upload_or_submit_and_temp_files_are_cleaned(self):
         for mask in (self.image('RGBA', (16, 24)), self.image('RGB'), 'not-base64'):
             with self.subTest(mask=mask[:8]), patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore') as store, patch.object(server, 'validate_reference_storage_paths', return_value=['synthetic-source']), patch.object(server, 'validate_reference_storage_path', return_value='synthetic-mask'), patch.object(server, 'stored_reference_to_base64', side_effect=[self.image(), mask]), patch.object(server, 'cleanup_reference_storage_paths') as cleanup, patch.object(provider, 'upload_reference') as upload, patch.object(provider, 'submit') as submit:
-                response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'canvas_workflow': 'redraw', 'reference_storage_paths': ['synthetic-source'], 'mask_storage_path': 'synthetic-mask', 'pricing_version': 2})
+                response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'own_key', 'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': 'gpt-image-2.6-flare', 'X-Provider-Endpoint': provider.BASE + '/images/generations'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'canvas_workflow': 'redraw', 'reference_storage_paths': ['synthetic-source'], 'mask_storage_path': 'synthetic-mask', 'pricing_version': 2})
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.json['code'], 'IMAGE_MASK_INVALID')
             self.assertFalse(response.json['generation_submitted'])
@@ -84,7 +84,7 @@ class Gpt26ImageTests(unittest.TestCase):
         store = Mock()
         store.begin.return_value = {'existing': True, 'job': {'status': 'submitted'}}
         with patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore', return_value=store), patch.object(provider, 'upload_reference') as upload, patch.object(provider, 'submit') as submit:
-            response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'reference_images_b64': [self.image()], 'pricing_version': 2})
+            response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'own_key', 'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': 'gpt-image-2.6-flare', 'X-Provider-Endpoint': provider.BASE + '/images/generations'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'reference_images_b64': [self.image()], 'pricing_version': 2})
         self.assertEqual(response.status_code, 200)
         upload.assert_not_called(); submit.assert_not_called()
 
@@ -125,7 +125,7 @@ class Gpt26ImageTests(unittest.TestCase):
             store.begin.return_value = {'existing': False, 'job': job}
             store.apply.return_value = {'job': {**job, 'status': 'submitted'}}
             with patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore', return_value=store), patch.object(provider, 'submit', return_value='task_gpt26_fixture') as submit:
-                response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': model, 'prompt': 'fixture', 'request_id': job['request_id'], 'unit_credit_cost': 0, 'count': 4})
+                response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'own_key', 'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': model, 'X-Provider-Endpoint': provider.BASE + '/images/generations'}, json={'platform_model': model, 'prompt': 'fixture', 'request_id': job['request_id'], 'unit_credit_cost': 0, 'count': 4})
             self.assertEqual(response.status_code, 202)
             self.assertEqual(store.begin.call_args.args[4], model)
             submit.assert_called_once()
@@ -137,7 +137,7 @@ class Gpt26ImageTests(unittest.TestCase):
 
     def test_redraw_without_source_never_reserves_or_submits(self):
         with patch.dict('os.environ', {'APIMART_IMAGE_API_KEY': 'synthetic'}), patch.object(server, 'require_authenticated_user', return_value=Mock(id='fixture')), patch.object(server, 'enforce_rate_limit'), patch.object(routes, 'ImageStore') as store, patch.object(provider, 'submit') as submit:
-            response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'platform'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'canvas_workflow': 'redraw'})
+            response = server.app.test_client().post('/api/apimart-images/generations', headers={'X-Billing-Mode': 'own_key', 'X-Provider-Api-Key': 'synthetic', 'X-Provider-Model': 'gpt-image-2.6-flare', 'X-Provider-Endpoint': provider.BASE + '/images/generations'}, json={'platform_model': 'gpt-image-2.6-flare', 'prompt': 'fixture', 'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'canvas_workflow': 'redraw'})
         self.assertEqual(response.status_code, 400)
         store.assert_not_called()
         submit.assert_not_called()

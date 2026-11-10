@@ -1,5 +1,19 @@
 # APIMart 新增图像模型
 
+## 2026-11-10 参考图传输修复
+
+Nano Banana 2.1、Seedream 5.0 Pro／Lite／Flash 改用官方支持的完整 Base64 Data URI，保留真实 MIME、原有顺序、模型校验及计费参考张数；Lite 仍先将 WebP 等转为 PNG。普通参考、previous_image 迭代和画布指令编辑共用此路线，不调用 APIMart `/uploads/images`。浏览器仍通过既有签名上传通道直传Storage，不将大图片塞入浏览器到Vercel的生成JSON。
+
+Grok 官方参考图及 Ext 免费 segment 原图准备改用服务端生成的独立私有副本，存于 `posterflow/image-reference-<owner hash>/references/<timestamp>-<uuid>.<ext>`；仅签发同项目HTTPS精确对象路径，链接1小时有效，不回传浏览器、任务或日志。原始参考仍立即清理，副本独立保留，避免异步读取失效。准备失败或明确拒绝时清理副本，已提交或提交未知时保留，不自动重发。
+
+迁移 `20261110034338_image_reference_delivery_retention.sql` 已应用，正式记录版本为 `20261110035929`，不得为对齐编号改名或重放。仅新增专用private invoker清理函数及每小时57分cron，复用既有Vault配置，经Storage API删除超过12小时副本，批次100／总1000，严格限定新命名空间。原145个函数及权限、4个定时任务保持，清理dry-run通过，新cron已启用。
+
+新增错误 `REFERENCE_UPLOAD_QUOTA_EXCEEDED`（上传HTTP429并明确remaining=0／limit>0）、`REFERENCE_UPLOAD_RATE_LIMITED`（其余上传429）、`REFERENCE_LINK_UNAVAILABLE`。用户及管理员文案区分额度、限流、链接准备，并明确尚未提交生图；平台额度数字不公开，自带Key仅返回清洗后的数字。日志只记录实际返回的limit／used／remaining／window_hours／reset_at，不编造缺失值。旧错误不回填，生成阶段429不冒充上传限流。
+
+GPT2.6平台继续BuyToken；显式自带APIMart Key的旧GPT2.6适配保留原上传协议。价格、预留／退款、请求指纹及一次提交约束保持。真实上游生成与签名链接拉取仍需用户验收；自动测试使用合成数据，不等同真实出图成功。
+
+官方依据：[Nano](https://docs.apimart.ai/cn/api-reference/images/gemini-nano-banana-2.1/generation)、[Pro](https://docs.apimart.ai/cn/api-reference/images/seedream-5-0-pro/generation)、[Lite](https://docs.apimart.ai/cn/api-reference/images/seedream-5-lite/generation)、[Flash](https://docs.apimart.ai/cn/api-reference/images/seedream-5-0-flash/generation)、[Grok](https://docs.apimart.ai/cn/api-reference/images/grok-imagine-2.0-ext/official)、[上传额度](https://docs.apimart.ai/cn/api-reference/uploads/images)、[私有签名链接](https://supabase.com/docs/guides/storage/serving/downloads)。下方旧“所有参考图先上传APIMart”说明由本节取代。
+
 2026-10-24 定价更新：Nano Banana 2.1 的 1K/2K 每张 1 网站积分，4K 每张 2 网站积分，参考图同价、自带 Key 不扣网站积分。服务端和数据库 v3 按校验后的清晰度计费，原任务价格不追溯，部分/失败退款沿用真实价格快照。下方早期“Nano 始终1积分/张”文字以本更新为准，详见 [Nano 4K 定价](nano-4k-pricing.md)。
 
 2026-10-24 后续更新：按用户要求，两个 Grok 模型清晰度默认自动，不显示清晰度下拉，前后端均省略 `resolution`，忽略旧缓存值，不发送字面值 `auto`。以下早期显式传分辨率的记录已被本更新取代；Nano Banana 2.1 保留 1K/2K/4K 选择。

@@ -6,6 +6,12 @@ title PosterFlow AI - Development Server
 set "PROJECT_ROOT=%~dp0"
 set "FRONTEND_DIR=%PROJECT_ROOT%frontend"
 set "BACKEND_FILE=%PROJECT_ROOT%backend\server.py"
+set "FRONTEND_PORT=3001"
+if /I "%~1"=="--local-own-key" (
+    set "POSTERFLOW_LOCAL_OWN_KEY=1"
+    set "BACKEND_FILE=%PROJECT_ROOT%scripts\local-own-key.py"
+    set "FRONTEND_PORT=3002"
+)
 set "REQUIREMENTS_FILE=%PROJECT_ROOT%backend\requirements.txt"
 set "VENV_DIR=%PROJECT_ROOT%.venv"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
@@ -123,15 +129,15 @@ if /I "%~1"=="--setup-only" (
 
 echo [4/5] Starting backend at http://localhost:5001 ...
 start "PosterFlow AI Backend" /B "%VENV_PYTHON%" "%BACKEND_FILE%"
-timeout /T 2 /NOBREAK >nul
+timeout /T 2 /NOBREAK >nul 2>&1
 
-echo [5/5] Starting frontend at http://localhost:3001 ...
+echo [5/5] Starting frontend at http://localhost:%FRONTEND_PORT% ...
 echo.
 echo Keep this window open. Press Ctrl+C to stop the frontend.
 echo Close this window to finish the local development session.
 echo.
 
 pushd "%FRONTEND_DIR%"
-call npm.cmd run dev
+call npm.cmd run dev -- --host 127.0.0.1 --port %FRONTEND_PORT% --strictPort
 popd
 pause

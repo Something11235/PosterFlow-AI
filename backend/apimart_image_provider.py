@@ -34,11 +34,23 @@ MAX_BYTES = 25 * 1024 * 1024
 REFERENCE_UPLOAD_HOSTS = frozenset({"upload.apimart.ai", "getapib.org"})
 
 
+def _safe_upload_quota(value):
+    """Retain numeric diagnostics only; never expose arbitrary upstream data."""
+    if not isinstance(value, dict):
+        return {}
+    bounds = {"limit": 1_000_000_000, "used": 1_000_000_000,
+              "remaining": 1_000_000_000, "window_hours": 87600,
+              "reset_at": 253402300799}
+    return {name: value[name] for name, maximum in bounds.items()
+            if type(value.get(name)) is int and 0 <= value[name] <= maximum}
+
+
 class ImageTaskError(Exception):
-    def __init__(self, code, message, status=400, uncertain=False, *, upstream_status=None, upstream_type=None, failure_stage=None):
+    def __init__(self, code, message, status=400, uncertain=False, *, upstream_status=None, upstream_type=None, failure_stage=None, quota=None):
         super().__init__(message)
         self.code, self.message, self.status, self.uncertain = code, message, status, uncertain
         self.upstream_status,self.upstream_type,self.failure_stage=upstream_status,upstream_type,failure_stage
+        self.quota = _safe_upload_quota(quota)
 
 
 def _upstream_type(payload):
@@ -55,6 +67,17 @@ def _log_upload_failure(error,request_id,index,size,width,height,mime):
     kind=error.upstream_type if isinstance(error.upstream_type,str) and error.upstream_type in {'invalid_request_error','insufficient_user_quota','rate_limit_exceeded','rate_limit_error','server_error','authentication_error','permission_error'} else 'other'
     media=mime if mime in {'image/png','image/jpeg','image/gif','image/webp'} else 'other'
     logging.getLogger(__name__).warning('image_reference_upload_failed request_id=%s reference_index=%s stage=%s upstream_status=%s upstream_type=%s bytes=%s width=%s height=%s mime=%s',rid,number,stage,status,kind,size,width,height,media)
+    _log_upload_quota(error.quota, rid, number, level=logging.WARNING)
+
+
+def _log_upload_quota(quota, request_id, index, *, level=logging.INFO):
+    quota = _safe_upload_quota(quota)
+    if not quota:
+        return
+    rid = request_id if isinstance(request_id, str) and re.fullmatch(r'[a-f0-9-]{36}', request_id) else 'unavailable'
+    number = index if type(index) is int and 1 <= index <= 8 else 0
+    fields = ' '.join(f'{name}={value}' for name, value in quota.items())
+    logging.getLogger(__name__).log(level, 'image_reference_upload_quota request_id=%s reference_index=%s %s', rid, number, fields)
 
 
 def build_request(model, data, references=(), *, mask=None):
@@ -240,16 +263,17 @@ def api_request(method, path, key, *, body=None, request_id=None, files=None, ti
             if 200 <= response.status_code < 300:
                 raise
             payload = {'message': content.decode('utf-8', errors='replace')}
+        quota = _safe_upload_quota(payload.get('quota')) if isinstance(payload, dict) else {}
         if not 200 <= response.status_code < 300:
             code = image_failure_code(payload, response.status_code)
             uncertain = method == 'POST' and (response.status_code >= 500 or response.status_code in (408, 409) or 300 <= response.status_code < 400 or code == 'IMAGE_PROVIDER_TIMEOUT')
             if code == 'IMAGE_PROVIDER_TIMEOUT':
-                raise ImageTaskError(code, IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http')
-            raise ImageTaskError("APIMART_REQUEST_REJECTED", "图片服务未接受本次请求，请检查提示词、参考图、余额或稍后重试。", 502, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http')
+                raise ImageTaskError(code, IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http',quota=quota)
+            raise ImageTaskError("APIMART_REQUEST_REJECTED", "图片服务未接受本次请求，请检查提示词、参考图、余额或稍后重试。", 502, uncertain=uncertain,upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_http',quota=quota)
         if not isinstance(payload, dict) or payload.get("error") or payload.get("code", 200) not in (200, 201, 202):
             if image_failure_code(payload) == 'IMAGE_PROVIDER_TIMEOUT':
-                raise ImageTaskError('IMAGE_PROVIDER_TIMEOUT', IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=method == 'POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload')
-            raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。",503,uncertain=method=='POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload')
+                raise ImageTaskError('IMAGE_PROVIDER_TIMEOUT', IMAGE_TIMEOUT + ' ' + IMAGE_TIMEOUT_RECOVERY[0], 503, uncertain=method == 'POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload',quota=quota)
+            raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。",503,uncertain=method=='POST',upstream_status=response.status_code,upstream_type=_upstream_type(payload),failure_stage='upstream_payload',quota=quota)
         return payload
     except (ValueError, requests.RequestException) as error:
         raise ImageTaskError("APIMART_RESPONSE_UNCERTAIN", "图片服务返回暂时无法确认，请查询原任务，勿重复生成。", 503, uncertain=method == "POST",upstream_status=response.status_code,failure_stage='response_read' if isinstance(error,requests.RequestException) else 'response_format') from None
@@ -304,7 +328,15 @@ def upload_reference(key, encoded, *, request_id=None, reference_index=None):
     except ImageTaskError as error:
         # A failed upload never implies that the paid generation was submitted.
         _log_upload_failure(error,request_id,reference_index,len(data),width,height,mime)
+        if error.upstream_status == 429:
+            code = ('REFERENCE_UPLOAD_QUOTA_EXCEEDED'
+                    if error.quota.get('remaining') == 0 and error.quota.get('limit', 0) > 0
+                    else 'REFERENCE_UPLOAD_RATE_LIMITED')
+            raise ImageTaskError(code, image_failure_reason(code), 429,
+                                 upstream_status=429, upstream_type=error.upstream_type,
+                                 failure_stage=error.failure_stage, quota=error.quota) from None
         raise ImageTaskError("REFERENCE_UPLOAD_FAILED", "参考图上传暂未完成，本次未提交生图，请稍后重试。", 502) from None
+    _log_upload_quota(payload.get('quota'), request_id, reference_index)
     url = payload.get("url")
     try:
         if not isinstance(url, str) or len(url) > 4096 or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url):

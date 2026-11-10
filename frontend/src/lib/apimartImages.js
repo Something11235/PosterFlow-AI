@@ -1,6 +1,13 @@
 import { apimartImageModel } from "./provider.js";
 
 export const APIMART_IMAGES_BASE = "/api/apimart-images";
+export const BUYTOKEN_IMAGES_BASE = "/api/buytoken-images";
+export function usesBuyToken(model, headers) {
+  if (!model?.startsWith("gpt-image-2.6-")) return false;
+  const values = new Headers(headers);
+  if (values.get("X-Billing-Mode") === "platform") return true;
+  try { return new URL(values.get("X-Provider-Endpoint")).hostname === "api.buytoken.work"; } catch { return false; }
+}
 export function requestImageModel(body, headers) {
   const values = new Headers(headers);
   return values.get("X-Billing-Mode") === "platform" ? body.platform_model : values.get("X-Provider-Model");
@@ -25,8 +32,15 @@ async function boundedFetch(url, init, milliseconds) {
   }
 }
 
-export async function readImageTask(requestId, headers, signal) {
-  const response = await boundedFetch(`${APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, 230000);
+export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model")) {
+  const buytoken = usesBuyToken(model, headers);
+  let response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, 230000);
+  // Pre-migration GPT2.6 tasks keep their original APIMart query path and Key.
+  // This is a GET-only recovery fallback, never another generation submission.
+  if (buytoken && response.status === 404) {
+    const missing = await response.clone().json();
+    if (missing.code === "IMAGE_TASK_NOT_FOUND") response = await boundedFetch(`${APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, 230000);
+  }
   const data = await response.json();
   if (!response.ok || data.error) throw Object.assign(new Error(data.detail || data.error || "图片任务暂时无法查询。"), { code: data.code });
   return data;
@@ -36,6 +50,8 @@ export async function readImageTask(requestId, headers, signal) {
 // requests submit once, then only GET the durable task; never retry a paid POST.
 export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000, maxWait = 240000 } = {}) {
   let body = JSON.parse(init.body);
+  const model = requestImageModel(body, init.headers);
+  const buytoken = usesBuyToken(model, init.headers);
   if (requestImageModel(body, init.headers) === "gpt-image-2") return responseJson({error:"GPT Image 2 已下线，请重新选择模型。",code:"MODEL_RETIRED"},400);
   if (!apimartImageModel(requestImageModel(body, init.headers))) return fetch(endpoint, init);
   if (requestImageModel(body, init.headers).startsWith('gpt-image-2.6-')) {
@@ -67,7 +83,7 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
   }
   let response;
   try {
-    response = await boundedFetch(`${APIMART_IMAGES_BASE}/generations`, init, 90000);
+    response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/generations`, init, buytoken ? 230000 : 90000);
   } catch {
     return responseJson({ error: "提交连接未完成，请在图片任务窗口查询原任务，不要重复生成。", code: "IMAGE_SUBMISSION_UNKNOWN" }, 503);
   } finally {
@@ -80,7 +96,7 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
     if (Date.now() - start >= maxWait) return responseJson({ error: "任务仍在处理，可在图片任务窗口查询；请勿重复生成。", code: "IMAGE_TASK_PENDING" }, 202);
     await sleep(pollInterval);
     try {
-      data = await readImageTask(body.request_id, init.headers);
+      data = await readImageTask(body.request_id, init.headers, undefined, model);
     } catch (error) {
       return responseJson({ error: error.message + " 可在图片任务窗口继续查询，请勿重复生成。", code: error.code || "IMAGE_TASK_QUERY_FAILED", submission_unknown:true }, 503);
     }

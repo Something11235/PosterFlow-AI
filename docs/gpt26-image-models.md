@@ -1,37 +1,40 @@
-# GPT Image 2.6 官方双版本与画布编辑
+# GPT Image 2.6 双版本与画布编辑
 
-2026-11-09：已从本地工作树部署正式站，尚未提交或推送 GitHub。新增计费迁移已应用，正式版本与迁移映射以本地 HANDOFF.md 顶部和发布证据为准。Nano 官方路由保留。
+2026-11-10：Flare／Sunburst 的新平台请求已从 APIMart 切换至 BuyToken，沿用 GPT2.5 的 OpenAI 兼容图片协议。已从本地代码部署正式站，GitHub尚未推送。用户已反馈提示词生成GIF成功；代理未进行收费生成。既有 APIMart 任务仍查询原线路。
 
-| 网站名称 | 上游 model | 无图片输入／张 | 有图片输入／张 |
+| 网站名称 | BuyToken model | 无图片输入／张 | 有图片输入／张 |
 | --- | --- | --- | --- |
 | GPT Image 2.6 Flare | gpt-image-2.6-flare | 1积分 | 1.5积分 |
 | GPT Image 2.6 Sunburst | gpt-image-2.6-sunburst | 1积分 | 1.5积分 |
 
-两个版本全部使用官方模型，不再调用 gpt-image-2.6-ext 或发送 version。网站模型顺序、逻辑 ID、管理员角标与旧记录保持。网站仍限1K、最多8参考图；普通生成与迭代重绘可选1–4张，默认1张，PNG与GIF一致。画布每个目标的独立操作仍生成1张，不扩展2K/4K或精确像素入口。所有请求的 quality 由服务器固定为 auto，没有画质选择器，浏览器不能提高画质档位。
+平台复用 GPT2.5 的服务端 PLATFORM_IMAGE_* 配置，完整生成地址须为 `https://api.buytoken.work/v1/images/generations`；不读取浏览器 Key，不将 APIMart Key 发给 BuyToken。两版本不带 Ext 或 version，quality 固定 auto，无画质选择器。保留网站 1K 档、最多8参考、普通及迭代1–4张、默认1张；画布单个操作仍1张。没有新增2K／4K选项。自带Key按显式地址选择适配器，仍不扣网站积分。
 
 ## 编辑与输入
 
-支持普通参考图生图、迭代重绘、无限画布图片框生成与画布图片编辑。矩形、圆形、画笔导出透明PNG蒙版；文字与箭头作为说明或标注参考图。蒙版不混入参考图列表、不参与 @图N 编号，不能单独作为计费原图。
+参考图、局部重绘和无限画布按既有 GPT2.5 协议适配；BuyToken 公开文档未明确列出2.6的参考／蒙版能力，真实可用性仍需用户实测，不能把合成测试当作已出图。
 
-所有图片输入均按每张成功结果1.5网站积分：包括普通参考、previous_image迭代、画布编辑原图及说明图；多张参考不按输入张数重复乘价。无图片输入的普通生图、画布图片框生成均为每张成功结果1积分。批量按所选数量预留，按实际保存结果数量结算；例如4张带图预留6积分，只成功2张收3积分并退3积分。自带Key仍不扣网站积分。
+无图片输入每张成功结果1积分，任何图片输入每张1.5积分，含普通参考、previous_image迭代、画布原图及说明图；多张参考不重复乘价。按所选数量预留、实际保存张数结算，例如带图4张预留6，只返回2张则收3退3。
 
-服务器先读取当前身份私有原图/蒙版并校验，后进行幂等预留与一次收费提交。蒙版小于4MB、PNG带Alpha、含完全透明编辑区域，像素尺寸须与第一张原图一致；原图和蒙版须独立上传。校验失败不预留、不上传上游、不提交生成；成功或失败均清理临时原图与蒙版。合格蒙版以PNG Data URL发送mask_url，参考原图通过既有安全上传转为image_urls。
+先鉴权读取私有原图／蒙版，再校验和预留。蒙版必须PNG带Alpha、与第一张原图同尺寸、含全透明编辑区域，不能混入参考图编号；校验失败不预留或提交，临时素材统一清理。无图使用JSON POST `/v1/images/generations`；有图使用multipart POST `/v1/images/edits`，原图为image或image[]，蒙版独立mask，不再上传至APIMart。
 
-请求指纹包括官方模型、参考图与蒙版；不接受浏览器指定任意mask_url/markup_url/上游model，未知提交状态只查询原任务，不重发收费请求。
+## 动图结果
 
-## PNG 与 GIF
+暂不显示GIF格式选项，也不发送未经文档确认的GIF参数。用户可以在提示词中提出动图要求，已有用户实测成功；不据此保证蒙版编辑或所有配置均能返回动图。若实际返回GIF，按文件内容校验预算后保留原始动画字节、帧时长和循环，保存.gif；若返回静态图，保存.png，不因提示词要求而改扩展名。旧GIF播放、下载及私有读取不受影响。
 
-PNG默认排第一；GIF排第二，支持文生及参考图生成。GIF仍为自动单帧尺寸、单次1–4个动图，不支持局部蒙版或画布重绘；迭代编辑切为PNG。GIF无图1积分、有参考图1.5积分。原始帧、时长、循环、私有存储与备用下载保持，详见[gpt26-gif.md](gpt26-gif.md)。SVG等独立输出流程未开放。
+## 提交与恢复
 
-## 数据库与发布边界
+每个请求编号最多一次收费POST。同步服务没有可查询的上游task_id，禁止伪造远端任务编号或转用APIMart查询。提交前持久化发送标记，成功响应先保存私有结果URL，再下载保存；下载失败可查询原任务重试保存，不重复生成。超时、断线、429、5xx或无法确认的成功响应保留任务与预留；明确参数／鉴权拒绝才退回预留。没有自动切回昂贵APIMart的生成兜底。
 
-本次新增迁移为supabase/migrations/20261109023710_gpt26_official_reference_pricing.sql，通过隔离目录的Supabase CLI migration new生成，已应用到正式环境，对应远端记录20261109032458_gpt26_official_reference_pricing。本地与远端版本映射不同，禁止为统一编号修改文件名或再次执行。它仅增加版本化的private.reserve_gpt26_credits_v2、private/public.begin_gpt26_image_job_v2；固定search_path，public包装invoker、private实现definer，执行权仅service_role。计费由服务端计算的参考图数决定，不接受浏览器价格。
+旧网页向APIMart发起新的平台GPT2.6请求会在扣分前收到409提示刷新；旧APIMart任务仍可GET恢复。
 
-旧begin/reserve、apply、结算、退款及权限完全保留。新预留把1/1.5单价保存到任务与流水；沿用按预留快照结算的既有apply_image_job_v3，旧1积分带图任务不会补扣。在尚未准备该RPC的独立开发环境，新代码请求会在begin阶段失败，不能回退旧RPC按1积分低扣。新环境须先核对自身迁移记录和依赖，再准备匹配的RPC；正式环境已完成迁移，不重放。
+## 数据库与发布
 
-20261105141914等旧迁移已执行，禁止修改或重放；不重置角标、不改变其他模型或账户余额。所有开发验证使用合成素材与内存数据库，不代表真实官方API出图成功；本次未执行收费生成或用户请求重放。
+本轮新增迁移 `20261109153803_buytoken_gpt26_image_provider.sql` 已应用到正式环境，远端记录为 `20261109165114_buytoken_gpt26_image_provider`；版本映射已记录，禁止为对齐编号改名或重放。只新增任务来源／私有结果URL列及4个service_role专用RPC；复用既有1／1.5快照结算和退款函数，保留原函数定义、ACL、任务、余额和流水。本轮按用户部署指令应用此新增迁移并发布匹配代码，正式核对原141个函数定义／ACL保持。没有改动用户余额或重放收费请求。
 
-## 官方依据
+既有已执行迁移（包括 `20261109023710_gpt26_official_reference_pricing.sql`，正式记录20261109032458）均不修改、不重放。回滚应用可继续使用旧APIMart路线，但BuyToken待保存任务应保留并用匹配代码恢复。
 
-- [GPT Image 2.6官方文档](https://docs.apimart.ai/cn/api-reference/images/gpt-image-2.6/generation)
-- [模型与价格页面](https://apimart.ai/zh/model/gpt-image-2-6)
+## 供应商依据
+
+- [BuyToken图片接入文档](https://buytoken.work/docs#image)：标准JSON生成、URL结果、生成耗时及断线计费提醒。
+- [BuyToken价格](https://buytoken.work/pricing)：两个2.6版本列出1K ¥0.11、2K ¥0.15、4K ¥0.18／张；不据此推断未列出的参考编辑或GIF能力。
+- [旧APIMart官方接口](https://docs.apimart.ai/cn/api-reference/images/gpt-image-2.6/generation)：仅保留旧任务及显式自带Key的适配，不代表新BuyToken功能保证。

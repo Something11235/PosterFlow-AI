@@ -1,5 +1,9 @@
 # 模型服务商与积分约定
 
+2026-11-10 参考图传输修复：Nano及三个Seedream参考图改用Data URI，Grok官方／Ext segment改用独立私有Storage副本的1小时签名链接，12小时清理由独立迁移负责。该迁移已应用正式，原函数／cron保持；已有供应商、价格与账务保持，不自动回退或重发。详见[参考图传输修复](apimart-image-generation.md)，真实收费生成仍待用户验收。
+
+2026-11-10 供应商例外（已部署、未推送GitHub）：用户指定GPT Image 2.6 Flare／Sunburst改用BuyToken，沿用原GPT2.5的服务端配置和标准图片／编辑协议；1／1.5网站积分规则保持，旧APIMart任务继续原线查询。用户已确认提示词生成GIF成功，蒙版及其他配置的动图能力仍待实测，详见[gpt26-image-models.md](gpt26-image-models.md)。下方旧模型数量、部署和价格描述保留作历史，不覆盖后续明确规则。
+
 2026-10-26 新增本地 Gemini Omni 1.1 Flash：独立自动时长/素材/续写协议，实际 USD×7÷0.38×1.2向上取整0.5；本次未部署，正式仍四款Seedance且默认2.5。Mini原价及旧快照保持。详见[Omni接入说明](video-omni-flash.md)。
 
 2026-10-26界面更新已部署dpl_DMkAxod4RuNagdpszr2LmC4pXqs9：视频首次默认Seedance2.5，下拉仅显示已接入四款，顺序不变。Mini原固定价与2.0/Fast/2.5的实际费用×7÷0.38×1.2向上取整0.5积分均不变；无数据库或支付变更。

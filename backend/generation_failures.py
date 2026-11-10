@@ -40,6 +40,12 @@ def is_timeout(value, status=None):
 
 IMAGE_TIMEOUT = '图片生成服务响应超时，暂时无法完成本次请求。这通常是服务繁忙或上游处理耗时过长。'
 IMAGE_TIMEOUT_RECOVERY = ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。']
+REFERENCE_FAILURE_REASONS = {
+    'REFERENCE_UPLOAD_FAILED': '参考图上传未完成，尚未提交生图。',
+    'REFERENCE_UPLOAD_QUOTA_EXCEEDED': '图片服务的参考素材上传额度已用尽，本次尚未提交生图。请等待额度恢复；如持续无法使用，请联系站主。',
+    'REFERENCE_UPLOAD_RATE_LIMITED': '图片服务暂时限制参考图上传，本次尚未提交生图。请稍后重试，避免连续提交。',
+    'REFERENCE_LINK_UNAVAILABLE': '参考图临时链接暂时无法准备，本次尚未提交生图。请稍后重试；如持续无法使用，请联系站主。',
+}
 
 
 def image_failure_code(value, status=None):
@@ -47,4 +53,4 @@ def image_failure_code(value, status=None):
 
 
 def image_failure_reason(code):
-    return IMAGE_TIMEOUT if code == 'IMAGE_PROVIDER_TIMEOUT' else '图片服务未完成本次任务，已按实际结果退回预留积分。'
+    return REFERENCE_FAILURE_REASONS.get(code) or (IMAGE_TIMEOUT if code == 'IMAGE_PROVIDER_TIMEOUT' else '图片服务未完成本次任务，已按实际结果退回预留积分。')

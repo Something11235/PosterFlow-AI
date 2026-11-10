@@ -365,12 +365,24 @@ function ErrorState({ error, billingMode, onRetry }) {
         }
       : error;
   const platform = (errorInfo?.billing_mode || billingMode) === "platform";
+  const uploadQuotaExceeded = errorInfo?.code === "REFERENCE_UPLOAD_QUOTA_EXCEEDED";
+  const uploadRateLimited = errorInfo?.code === "REFERENCE_UPLOAD_RATE_LIMITED";
+  const referenceLinkUnavailable = errorInfo?.code === "REFERENCE_LINK_UNAVAILABLE";
   const referenceUploadFailed = ["REFERENCE_UPLOAD_FAILED", "REFERENCE_IMAGE_INVALID"].includes(errorInfo?.code);
+  const uploadLimitDetail = uploadQuotaExceeded
+    ? "图片服务的参考素材上传额度已用尽，本次尚未提交生图。请等待额度恢复；如持续无法使用，请联系站主。"
+    : uploadRateLimited ? "图片服务暂时限制参考图上传，本次尚未提交生图。请稍后重试，避免连续提交。"
+    : referenceLinkUnavailable ? "参考图临时链接暂时无法准备，本次尚未提交生图。请稍后重试；如持续无法使用，请联系站主。" : null;
+  const uploadRecovery = uploadQuotaExceeded
+    ? ["等待上传额度恢复", platform ? "持续无法使用请联系站主" : "在服务商后台核对上传额度"]
+    : uploadRateLimited ? ["稍后重试", "避免连续提交"]
+    : referenceLinkUnavailable ? ["稍后重试", "持续失败请联系站主"] : null;
   const timedOut = errorInfo?.code === 'IMAGE_PROVIDER_TIMEOUT';
-  const pricingChanged = errorInfo?.code === 'IMAGE_PRICING_CHANGED';
-  const recovery = pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
+  const pricingChanged = ['IMAGE_PRICING_CHANGED', 'IMAGE_PROVIDER_CHANGED', 'IMAGE_FEATURE_UNSUPPORTED', 'BUYTOKEN_ENDPOINT_INVALID', 'BUYTOKEN_REQUEST_REJECTED'].includes(errorInfo?.code);
+  const pending = Boolean(errorInfo?.submission_unknown);
+  const recovery = pending ? errorInfo?.recovery || ["查询原任务，请勿重复生成"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
-    : ["检查 API Key", "确认后端进程", "重新发起生成"];
+    : ["检查 API Key", "确认后端进程", "重新发起生成"]);
   const upstream = platform ? errorInfo?.upstream_error : null;
 
   return (
@@ -381,11 +393,11 @@ function ErrorState({ error, billingMode, onRetry }) {
           {platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
+          {uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
         <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
-            "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。"}
+          {uploadLimitDetail || ((pricingChanged || pending) ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
+            "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。")}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
           {recovery.map((chip) => (
@@ -416,8 +428,8 @@ function ErrorState({ error, billingMode, onRetry }) {
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <div className="flex items-start justify-between gap-4">
-            <dt className="text-text-muted">{platform ? "错误类别" : "当前状态"}</dt>
-            <dd className="text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
+            <dt className="shrink-0 text-text-muted">{platform ? "错误类别" : "当前状态"}</dt>
+            <dd className="min-w-0 break-all text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
           </div>
           {upstream?.message && <div>
             <dt className="mb-2 text-text-muted">图片服务返回的说明</dt>

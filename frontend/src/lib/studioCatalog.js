@@ -10,8 +10,8 @@ export const STUDIO_AREAS = [
 ];
 
 export const IMAGE_MODELS = [
-  { id: "gpt-image-2.6-flare", name: "GPT Image 2.6 Flare", maker: "GPT Image", summary: "1K 批量创作、多图参考与画布选区编辑", capability: "文生图 · 参考图编辑 · 蒙版重绘 · 无限画布", available: true, provider: "apimart" },
-  { id: "gpt-image-2.6-sunburst", name: "GPT Image 2.6 Sunburst", maker: "GPT Image", summary: "1K 批量创作、多图参考与画布选区编辑", capability: "文生图 · 参考图编辑 · 蒙版重绘 · 无限画布", available: true, provider: "apimart" },
+  { id: "gpt-image-2.6-flare", name: "GPT Image 2.6 Flare", maker: "GPT Image", summary: "1K 批量创作、多图参考与画布选区编辑", capability: "文生图 · 参考图编辑 · 蒙版重绘 · 无限画布", available: true, provider: "buytoken" },
+  { id: "gpt-image-2.6-sunburst", name: "GPT Image 2.6 Sunburst", maker: "GPT Image", summary: "1K 批量创作、多图参考与画布选区编辑", capability: "文生图 · 参考图编辑 · 蒙版重绘 · 无限画布", available: true, provider: "buytoken" },
   { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", maker: "GPT Image", summary: "海报设计与创意画面 · 支持多图参考", capability: "文生图 · 参考图编辑", available: true },
   { id: "gpt-image-2.5-sunburst", name: "GPT Image 2.5 Sunburst", maker: "GPT Image", summary: "场景构图与图片改写 · 支持多图参考", capability: "文生图 · 参考图编辑", available: true },
   { id: "nano-banana-2.1", name: "Nano Banana 2.1", maker: "Nano Banana", summary: "多图参考与细节编辑 · 支持最高 4K", capability: "文生图 · 参考图编辑", available: true, provider: "apimart" },

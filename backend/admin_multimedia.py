@@ -2,11 +2,11 @@
 import re
 try:
     from backend.music_failure_reasons import REASONS
-    from backend.generation_failures import IMAGE_TIMEOUT
+    from backend.generation_failures import IMAGE_TIMEOUT, REFERENCE_FAILURE_REASONS
     from backend.video_provider import video_failure
 except ModuleNotFoundError:
     from music_failure_reasons import REASONS
-    from generation_failures import IMAGE_TIMEOUT
+    from generation_failures import IMAGE_TIMEOUT, REFERENCE_FAILURE_REASONS
     from video_provider import video_failure
 
 LABELS = {
@@ -21,6 +21,9 @@ LABELS = {
     'VIDEO_REFERENCE_DURATION': '参考素材时长',
     'VIDEO_OMNI_FRAME_INVALID': '首尾帧参数', 'VIDEO_CONTINUATION_INVALID': '续写源任务',
     'REFERENCE_UPLOAD_FAILED': '参考图上传失败', 'VIDEO_TASK_CONSTRAINT': '视频任务参数不符',
+    'REFERENCE_UPLOAD_QUOTA_EXCEEDED': '参考素材上传额度已用尽',
+    'REFERENCE_UPLOAD_RATE_LIMITED': '参考图上传被限流',
+    'REFERENCE_LINK_UNAVAILABLE': '参考图临时链接不可用',
     'VIDEO_PARAMETER_INVALID': '视频参数不符',
     'MUSIC_PROVIDER_BUSY': '服务繁忙', 'VIDEO_PROVIDER_BUSY': '服务繁忙',
     'MUSIC_PROVIDER_BALANCE': '服务额度不足', 'VIDEO_PROVIDER_BALANCE': '服务额度不足',
@@ -40,8 +43,8 @@ def explanation(kind, code):
         reason = video_failure(code)[1]
     elif kind == 'image' and code in {'IMAGE_PROVIDER_TIMEOUT', 'PROVIDER_TIMEOUT'}:
         reason = IMAGE_TIMEOUT
-    elif kind == 'image' and code == 'REFERENCE_UPLOAD_FAILED':
-        reason = '参考图上传未完成，尚未提交生图。'
+    elif kind == 'image' and code in REFERENCE_FAILURE_REASONS:
+        reason = REFERENCE_FAILURE_REASONS[code]
     else:
         return '原因未记录', '未记录可识别的具体原因，请结合请求编号核对。'
     return LABELS.get(code, '生成参数或素材限制'), reason
