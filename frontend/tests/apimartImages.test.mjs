@@ -22,7 +22,8 @@ test("existing image models retain their original endpoint and body", async t =>
   let called;
   install(t, async (...args) => { called = args; return json({ images: [] }); });
   await imageGenerationFetch("/api/modify", init);
-  assert.deepEqual(called, ["/api/modify", init]);
+  assert.equal(called[0], "/api/modify");
+  assert.deepEqual(JSON.parse(called[1].body), {...JSON.parse(init.body), pricing_version: 3});
 });
 test("new models submit once then query until actual saved images are returned", async t => {
   const calls = [];

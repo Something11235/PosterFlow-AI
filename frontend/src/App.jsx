@@ -34,6 +34,7 @@ import "./components/studio/studio.css";
 import {
   buildProviderHeaders,
   apimartImageModel,
+  imageResolutionSpec,
   DEFAULT_PLATFORM_MODEL,
   clearProviderConfig,
   getProviderDisplayName,
@@ -353,13 +354,16 @@ export default function App() {
   const canvasAllowed = canvasEditCapability(activeImageModel).kind !== "disabled";
   const canvasAllowedRef = useRef(canvasAllowed);
   canvasAllowedRef.current = canvasAllowed;
-  const apimartSpec = apimartImageModel(activeImageModel);
+  const apimartSpec = imageResolutionSpec(activeImageModel);
+  const routedImageSpec = apimartImageModel(activeImageModel);
+  const imagePriceResolution = size === "custom" && ["seedream-5-5", "seedream-5-0-pro"].includes(activeImageModel)
+    ? Number(customSize.width) * Number(customSize.height) > 2601124 ? "2K" : "1K" : imageResolution;
   const routedImageConfigured = activeImageModel?.startsWith("gpt-image-2.6-") ? buytokenConfigured : apimartConfigured;
   const gifMode = apimartSpec?.outputFormats?.includes("gif") && imageOutputFormat === "gif";
   const referenceSpec = referenceCapability(gifMode && !apimartSpec.gifReferences ? {...apimartSpec, maxReferences: 0} : apimartSpec);
   const materialReferenceSpec = useRef(referenceSpec);
   materialReferenceSpec.current = referenceSpec;
-  const platformReady = Boolean((apimartSpec ? routedImageConfigured : serverProvider.platformConfigured) && session);
+  const platformReady = Boolean((apimartImageModel(activeImageModel) ? routedImageConfigured : serverProvider.platformConfigured) && session);
   const providerConfigured = billingMode === "platform" ? platformReady : hasBrowserProvider;
   useEffect(() => {
     const controller = new AbortController();
@@ -378,7 +382,7 @@ export default function App() {
     if (!apimartSpec) return;
     setCount(previous => apimartSpec.value.startsWith('gpt-image-2.6-') ? 1 : Math.min(previous, apimartSpec.maxCount));
     if (apimartSpec.value === "seedream-5-0-lite" || apimartSpec.customSize === false) setSize(previous => previous === "custom" ? "" : previous);
-    if (!apimartSpec.automaticResolution) setImageResolution(previous => apimartSpec.resolutions.includes(previous) ? previous : apimartSpec.resolutions[0]);
+    if (!apimartSpec.automaticResolution) setImageResolution(apimartSpec.resolutions[0]);
   }, [apimartSpec]);
   // 平台积分模式不向用户暴露实际中转站/服务商域名；自带 Key 模式仍显示用户自己的配置。
   const providerName = billingMode === "platform" ? "平台图片服务" : getProviderDisplayName(providerConfig, serverProvider.host);
@@ -402,7 +406,7 @@ export default function App() {
       setNotice("请先登录，完成邮箱验证后即可领取注册赠送积分");
       return false;
     }
-    if (billingMode === "platform" && !(apimartSpec ? routedImageConfigured : serverProvider.platformConfigured)) {
+    if (billingMode === "platform" && !(routedImageSpec ? routedImageConfigured : serverProvider.platformConfigured)) {
       setShowProviderSettings(true);
       setError({
         message: "平台积分服务尚未配置",
@@ -423,7 +427,7 @@ export default function App() {
       return false;
     }
     return true;
-  }, [apimartSpec, routedImageConfigured, billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
+  }, [routedImageSpec, routedImageConfigured, billingMode, hasBrowserProvider, serverProvider.configured, serverProvider.platformConfigured, session]);
 
   const handleAddToCanvas = useCallback((filenames) => {
     if (!canvasAllowedRef.current) { setNotice("当前模型未开放无限画布，请先切换模型。"); return; }
@@ -531,7 +535,7 @@ export default function App() {
       store.finish(requestId, { images: data.images || [], prompt: data.prompt || taskPrompt });
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
     };
-    if (apimartSpec) store.registerRecovery(requestId, async () => {
+    if (routedImageSpec) store.registerRecovery(requestId, async () => {
       const data = await readImageTask(requestId, providerHeaders, undefined, activeImageModel);
       if (!live()) return;
       if (data.job?.status === "completed") show(data);
@@ -565,12 +569,12 @@ export default function App() {
       const data = await response.json();
       if (!response.ok || data.error) {
         const failure = { ...normalizeApiError(data), billing_mode: billingMode };
-        store.finish(requestId, { error: failure, pending: Boolean(apimartSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))) });
+        store.finish(requestId, { error: failure, pending: Boolean(routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))) });
         if (selected()) setError(failure);
       } else show(data);
     } catch (reason) {
       // Existing synchronous models have their original GET-only recovery.
-      const recovered = started && billingMode === "platform" && !apimartSpec
+      const recovered = started && billingMode === "platform" && !routedImageSpec
         ? await recoverGeneration(requestId, { headers: authHeaders }).catch(() => null) : null;
       if (recovered?.images?.length) show(recovered);
       else {
@@ -584,7 +588,7 @@ export default function App() {
       if (live()) await refreshAccount();
       await cleanupReferencePaths(paths, referenceUploadHeaders);
     }
-  }, [activeImageModel, apimartSpec, authHeaders, billingMode, count, customSize.height, customSize.width,
+  }, [activeImageModel, apimartSpec, routedImageSpec, authHeaders, billingMode, count, customSize.height, customSize.width,
     imageResolution, imageOutputFormat, gifMode, imageTaskStore, platformModel, providerConfigured, providerHeaders, referenceFiles,
     referenceSpec.disabled, referenceSpec.limit, referenceUploadHeaders, refreshAccount, requireGenerationAccess, session?.user?.id, size]);
 
@@ -839,6 +843,7 @@ export default function App() {
                   imageModel={activeImageModel}
                   onImageModelChange={handleImageModelChange}
                   imageResolution={imageResolution}
+                  onImageResolutionChange={setImageResolution}
                   authenticated={Boolean(session)}
                   onAuthRequired={() => { setAuthOpen(true); setNotice("请先登录，验证邮箱后即可使用免费积分"); }}
                   onAccountRefresh={refreshAccount}
@@ -862,6 +867,7 @@ export default function App() {
               {classicWorkspace && <PresetLibrary activePresetId={activePreset?.id} onApplyPreset={handleApplyPreset} />}
               <PromptEditor
                 imageModel={activeImageModel}
+                imageResolution={imagePriceResolution}
                 imageReferenceCount={referenceFiles.length || (mode === "iterative" && images.length ? 1 : 0)}
                 onImageModelChange={handleImageModelChange}
                 billingMode={billingMode}

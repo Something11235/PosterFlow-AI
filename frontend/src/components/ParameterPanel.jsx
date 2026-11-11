@@ -1,6 +1,6 @@
 import React from "react";
 import { LayoutTemplate, Scaling, SlidersHorizontal } from "lucide-react";
-import { imageCreditCost, imagePricingLabel } from "../lib/provider";
+import { imageCreditCost, imageSelectedPricingLabel } from "../lib/provider";
 
 const FALLBACK_SIZES = {
   square_1_1: { label: "正方形 1:1", width: 1024, height: 1024 },
@@ -39,6 +39,8 @@ export default function ParameterPanel({
 }) {
   const sizeMap = Object.keys(sizes || {}).length ? sizes : FALLBACK_SIZES;
   const customSizeActive = size === "custom";
+  const priceResolution = customSizeActive && ["seedream-5-5", "seedream-5-0-pro"].includes(apimartSpec?.value)
+    ? Number(customSize.width) * Number(customSize.height) > 2601124 ? "2K" : "1K" : resolution;
   const gifMode = apimartSpec?.outputFormats?.includes("gif") && outputFormat === "gif";
 
   const updateCustomDimension = (dimension, value) => {
@@ -85,7 +87,7 @@ export default function ParameterPanel({
                 </span>
                 <span className="mt-0.5 block text-xs text-text-muted">{meta.use}</span>
                 <span className="mt-1 block text-[11px] text-text-muted">
-                  {value.width} x {value.height}
+                  {apimartSpec ? "按所选分辨率生成" : `${value.width} x ${value.height}`}
                 </span>
               </button>
             );
@@ -183,8 +185,8 @@ export default function ParameterPanel({
       </fieldset>
 
       {apimartSpec && <div className="mb-4 space-y-3 rounded-lg border border-accent/25 bg-accent/5 p-3">
-        {!apimartSpec.automaticResolution && apimartSpec.resolutions.length > 1 && <label className="block text-xs text-text-secondary">清晰度<select aria-label="图片清晰度" value={resolution} onChange={event => onResolutionChange(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary">{apimartSpec.resolutions.map(value => <option key={value} value={value}>{value === "quality" ? "质量模式" : value}</option>)}</select></label>}
-        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 模式不扣网站积分" : apimartSpec.resolutionCreditCosts ? `当前 ${resolution} 每张 ${imageCreditCost(apimartSpec.value, referenceCount, resolution)} 积分（${count} 张共 ${count * imageCreditCost(apimartSpec.value, referenceCount, resolution)} 积分）。${imagePricingLabel(apimartSpec.value)}` : apimartSpec.referenceCreditCost ? `无图片输入每张 ${apimartSpec.creditCost} 积分，有图片输入每张 ${apimartSpec.referenceCreditCost} 积分；当前 ${imageCreditCost(apimartSpec.value, referenceCount)} 积分 / 张（${count} 张共 ${count * imageCreditCost(apimartSpec.value, referenceCount)} 积分）` : `每张 ${apimartSpec.creditCost} 积分`} · 单次最多 {apimartSpec.maxCount} 张 · {gifMode ? "GIF 支持文字及参考图，尺寸自动决定" : apimartSpec.maxReferences ? `最多 ${apimartSpec.maxReferences} 张参考图` : "仅支持文生图"}。{!gifMode && "画面采用比例控制，实际像素以生成结果为准。"}</p>
+        {!apimartSpec.automaticResolution && apimartSpec.resolutions.length > 1 && <label className="block text-xs text-text-secondary">分辨率<select aria-label="图片清晰度" value={resolution} disabled={customSizeActive && ["seedream-5-5", "seedream-5-0-pro"].includes(apimartSpec.value)} onChange={event => onResolutionChange(event.target.value)} className="mt-2 min-h-11 w-full rounded-md border border-border-default bg-bg-primary px-3 text-sm text-text-primary disabled:opacity-50">{apimartSpec.resolutions.map(value => <option key={value} value={value}>{value === "quality" ? "质量模式" : value}</option>)}</select>{customSizeActive && ["seedream-5-5", "seedream-5-0-pro"].includes(apimartSpec.value) && <span className="mt-2 block leading-5 text-text-muted">自定义尺寸按总像素计档：当前按 {priceResolution} 计费。</span>}</label>}
+        <p className="text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "own_key" ? "自带 API Key 不扣网站积分" : `${imageSelectedPricingLabel(apimartSpec.value, referenceCount, priceResolution)}${count > 1 ? `，${count} 张共 ${count * imageCreditCost(apimartSpec.value, referenceCount, priceResolution)} 积分` : ""}`}</p>
       </div>}
 
       <div className="rounded-lg border border-border-subtle bg-bg-primary/55 p-3">

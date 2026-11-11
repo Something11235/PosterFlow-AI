@@ -17,7 +17,7 @@ try:
 except ModuleNotFoundError:
     from apimart_image_provider import ImageTaskError
 
-INLINE_MODELS = frozenset({"gemini-nano-banana-2.1", "seedream-5-0-pro",
+INLINE_MODELS = frozenset({"gemini-nano-banana-2.1", "seedream-5-5", "seedream-5-0-pro",
                            "seedream-5-0-lite", "seedream-5-0-flash"})
 LINK_MODELS = frozenset({"grok-imagine-image-2.0", "grok-imagine-2.0-ext"})
 LINK_SECONDS = 3600

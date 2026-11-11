@@ -1,8 +1,8 @@
 import React, { useId } from "react";
-import { IMAGE_MODEL_OPTIONS, imageCreditCost, imagePricingLabel } from "../lib/provider";
+import { IMAGE_MODEL_OPTIONS, imageSelectedPricingLabel } from "../lib/provider";
 import ModelPicker from "./ModelPicker";
 
-export default function ImageModelSelect({ model = "", billingMode = "platform", onModelChange, onOpenProvider, disabled = false, referenceCount = 0 }) {
+export default function ImageModelSelect({ model = "", billingMode = "platform", onModelChange, onOpenProvider, disabled = false, referenceCount = 0, resolution = "" }) {
   const id = useId();
   const customModel = model && !IMAGE_MODEL_OPTIONS.some(option => option.value === model);
   return <div className="mb-4 rounded-lg border border-border-subtle bg-bg-primary/40 p-3">
@@ -16,9 +16,6 @@ export default function ImageModelSelect({ model = "", billingMode = "platform",
       ...IMAGE_MODEL_OPTIONS,
     ]}/>
     <p className="mt-2 text-xs text-text-muted">{billingMode === "platform" ? "平台积分" : "自带 API Key"}</p>
-    {model.startsWith("gpt-image-2.6-") && <p className="mt-2 text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "platform" ? `${referenceCount > 0 ? "参考图编辑" : "纯文生图"} · ${imageCreditCost(model, referenceCount)} 积分 / 张。` : "自带 API Key 不扣网站积分。"}</p>}
-    {model === "gemini-nano-banana-2.1" && billingMode === "platform" && <p className="mt-2 text-xs leading-5 text-text-muted">{imagePricingLabel(model)}。</p>}
-    {model.startsWith("seedream-") && <p className="mt-2 text-xs leading-5 text-text-muted">{billingMode === "platform" ? `${imagePricingLabel(model)}。` : "自带 API Key 不扣网站积分。"}{model.endsWith("lite") ? "支持参考图创作，暂未开放局部重绘与无限画布。" : "支持参考图与标注编辑；单次生成 1 张。"}</p>}
-    {model === "grok-imagine-image-2.0" && <p className="mt-2 text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "platform" ? `${referenceCount > 0 ? "参考图编辑" : "纯文生图"} · ${imageCreditCost(model, referenceCount)} 积分 / 张。` : "支持文字生成与参考图编辑。"}最多 3 张参考图。</p>}
+    {model && <p className="mt-2 text-xs leading-5 text-text-muted" aria-live="polite">{billingMode === "platform" ? imageSelectedPricingLabel(model, referenceCount, resolution) : "自带 API Key 不扣网站积分。"}</p>}
   </div>;
 }

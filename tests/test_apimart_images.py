@@ -121,7 +121,7 @@ class ImageProtocolTests(unittest.TestCase):
                 self.assertEqual(body.get("aspect_ratio") or body.get("size"), expected)
             if provider.MODELS[model]["references"]:
                 body = provider.build_request(model, {"prompt": "synthetic edit", "size": ""}, ["reference"])
-                self.assertEqual(body.get("aspect_ratio") or body.get("size"), "auto")
+                self.assertEqual(body.get("aspect_ratio") or body.get("size"), "1K" if model == "seedream-5-5" else "auto")
 
     def test_model_capabilities_reject_before_paid_calls(self):
         invalid = [
@@ -338,14 +338,14 @@ if __name__ == "__main__":
 class GrokReferenceTests(unittest.TestCase):
     def test_official_reference_protocol_and_no_text_only_quality(self):
         plain = provider.build_request("grok-imagine-image-2.0", {"prompt": "cat", "resolution": "2K"})
-        self.assertNotIn("resolution", plain)
+        self.assertEqual(plain["resolution"], "2k")
         self.assertEqual(plain["aspect_ratio"], "auto")
         self.assertNotIn("size", plain)
         edited = provider.build_request("grok-imagine-image-2.0", {"prompt": "cat", "quality": "medium"}, ["one", "two", "three"])
         self.assertEqual(len(edited["image_urls"]), 3)
         self.assertNotIn("quality", edited)
-        self.assertNotIn("resolution", edited)
-        for model in ("grok-imagine-image-2.0", "grok-imagine-2.0-ext"):
+        self.assertEqual(edited["resolution"], "1k")
+        for model in ("grok-imagine-2.0-ext",):
             for stale_resolution in ("1K", "2K", "4K", "quality", "auto"):
                 self.assertNotIn("resolution", provider.build_request(model, {"prompt": "cat", "resolution": stale_resolution}))
         with self.assertRaises(provider.ImageTaskError):

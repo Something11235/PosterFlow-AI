@@ -43,7 +43,7 @@ class LocalOwnKeyStore:
                 return {'existing': True, 'job': json.loads(prior[1])}
             job = {'id': str(uuid.uuid4()), 'request_id': rid, 'model': model, 'billing_mode': mode,
                    'status': 'submitting', 'requested_count': body['payload']['n'], 'reference_count': len(body['references']),
-                   'unit_credit_cost': 0, 'pricing_resolution': '1K', 'provider_result_urls': [], 'image_keys': [],
+                   'unit_credit_cost': 0, 'pricing_resolution': body.get('pricing_resolution', '1K'), 'provider_result_urls': [], 'image_keys': [],
                    'error_code': None, 'created_at': datetime.now(timezone.utc).isoformat(), 'save_token': None, 'save_until': 0}
             db.execute('insert into jobs values(?,?,?,?)', (owner, rid, fingerprint, json.dumps(job)))
             return {'existing': False, 'job': job}

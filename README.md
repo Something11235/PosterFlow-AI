@@ -106,7 +106,7 @@ PosterFlow AI 面向想做图、写歌、制作视频素材的创作者。打开
 
 | 创作类型 | 已接入的模型系列 |
 | --- | --- |
-| 图像 | GPT Image 2.6 Flare / Sunburst、GPT Image 2.5 Flare / Sunburst、Nano Banana 2.1、Grok Imagine Image 2.0 / Ext、（即梦）Seedream 5.0 Pro / Lite / Flash |
+| 图像 | GPT Image 2.6 Flare / Sunburst、GPT Image 2.5 Flare / Sunburst、Nano Banana 2.1、Grok Imagine Image 2.0 / Ext、（即梦）Seedream 5.5、Seedream 5.0 Pro / Lite / Flash |
 | 音乐 | Suno、Flow Music |
 | 视频 | Seedance 2.5、Seedance 2.0 / Fast / Mini、Gemini Omni 1.1 Flash、MiniMax H3 / H3 Max、Wan 3.0、FLUX 3 Video |
 
@@ -129,7 +129,7 @@ PosterFlow AI 面向想做图、写歌、制作视频素材的创作者。打开
 | 平台积分 | 希望选好模型就开始创作的用户 | 按模型页面显示的积分规则计费 |
 | 自带 API Key | 已有兼容服务接口，希望自行管理用量的用户 | 不扣网站积分，上游服务费用由自己的账户承担 |
 
-GPT Image 2.6 的平台价格为无图片输入 **1 积分 / 张**、有图片输入 **1.5 积分 / 张**，局部重绘和画布编辑原图属于图片输入。其他模型、音乐和视频的价格请查看相应表单。
+GPT Image 2.6 的 1K 平台价格为无图片输入 **1 积分 / 张**、有图片输入 **1.5 积分 / 张**，局部重绘和画布编辑原图属于图片输入。默认最低分辨率，仅在供应商价格升档时加收 0.5 积分；完整图片价格见网站“模型一览”及[分辨率计费说明](docs/image-resolution-pricing.md)。音乐和视频价格请查看相应表单。
 
 平台模式提交时预留积分，成功后按对应规则结算，明确失败退回预留。提交结果暂时未知时，保留原任务查询核对，避免重复提交。生成内容和下载链接有保留期限，请及时下载；可在历史记录中回看保留期内的提示词与创作设置。
 

@@ -1,5 +1,7 @@
 # GPT Image 2.6 双版本与画布编辑
 
+2026-11-11 版本更新：新增Seedream 5.5及分辨率价格档位；当前规则统一见[图片分辨率与积分](image-resolution-pricing.md)。两份新增迁移已应用。下方旧价格、分辨率入口和Git状态属于历史记录，以新说明及本地交接为准。
+
 2026-11-10：Flare／Sunburst 的新平台请求已从 APIMart 切换至 BuyToken，沿用 GPT2.5 的 OpenAI 兼容图片协议。已从本地代码部署正式站，GitHub尚未推送。用户已反馈提示词生成GIF成功；代理未进行收费生成。既有 APIMart 任务仍查询原线路。
 
 | 网站名称 | BuyToken model | 无图片输入／张 | 有图片输入／张 |

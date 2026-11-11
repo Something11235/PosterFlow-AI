@@ -1,4 +1,4 @@
-import { apimartImageModel } from "./provider.js";
+import { apimartImageModel, IMAGE_TIER_MODELS } from "./provider.js";
 
 export const APIMART_IMAGES_BASE = "/api/apimart-images";
 export const BUYTOKEN_IMAGES_BASE = "/api/buytoken-images";
@@ -52,10 +52,14 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
   let body = JSON.parse(init.body);
   const model = requestImageModel(body, init.headers);
   const buytoken = usesBuyToken(model, init.headers);
+  if (IMAGE_TIER_MODELS.has(model)) {
+    body = {...body, pricing_version: 3};
+    init = {...init, body: JSON.stringify(body)};
+  }
   if (requestImageModel(body, init.headers) === "gpt-image-2") return responseJson({error:"GPT Image 2 已下线，请重新选择模型。",code:"MODEL_RETIRED"},400);
   if (!apimartImageModel(requestImageModel(body, init.headers))) return fetch(endpoint, init);
   if (requestImageModel(body, init.headers).startsWith('gpt-image-2.6-')) {
-    body = { ...body, pricing_version: 2 };
+    body = { ...body, pricing_version: 3 };
     init = { ...init, body: JSON.stringify(body) };
   }
   if (requestImageModel(body, init.headers) === "grok-imagine-2.0-ext" && body.operation === "region_edit") {

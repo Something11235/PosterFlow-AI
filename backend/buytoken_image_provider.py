@@ -9,6 +9,10 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 from PIL import Image
+try:
+    from backend import image_tier_pricing as tiers
+except ModuleNotFoundError:
+    import image_tier_pricing as tiers
 
 try:
     from backend.apimart_image_provider import ImageTaskError, build_gpt26_request
@@ -46,12 +50,15 @@ def build_request(server, model, data, references, mask=None):
         raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前图片服务尚未确认支持 GIF，请选择 PNG。")
     # Preserve the existing reference/count/mask/workflow validation. This is a
     # local validator only; it performs no APIMart request.
-    checked = build_gpt26_request(model, data, references, mask=mask)
+    try:
+        tier = tiers.resolution(model, data)
+        selected_size = tiers.pixels(server, {**data, "model": model})
+    except ValueError as error:
+        raise ImageTaskError("IMAGE_RESOLUTION_INVALID", str(error)) from None
+    checked = build_gpt26_request(model, {**data, "resolution": "1K"}, references, mask=mask)
     payload = {"model": model, "prompt": checked["prompt"], "n": checked["n"], "quality": "auto"}
-    size = server.SIZE_OPTIONS.get(data.get("size"))
-    if size:
-        payload["size"] = f"{size['width']}x{size['height']}"
-    return {"provider": "buytoken", "payload": payload, "references": list(references), "mask": mask}
+    payload["size"] = selected_size
+    return {"provider": "buytoken", "payload": payload, "references": list(references), "mask": mask, "pricing_resolution": tier, "pricing_policy_version": 3 if data.get('pricing_version') == 3 else 1}
 
 
 def validate_result_url(server, url, *, resolve_dns=True):

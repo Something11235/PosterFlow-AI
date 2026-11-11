@@ -13,7 +13,7 @@ class ModelBadgeTests(unittest.TestCase):
 
     def test_defaults_have_only_requested_five_badges(self):
         self.assertEqual(sum(v == 'hot' for v in badges.DEFAULTS.values()), 2)
-        self.assertEqual(sum(v == 'new' for v in badges.DEFAULTS.values()), 3)
+        self.assertEqual(sum(v == 'new' for v in badges.DEFAULTS.values()), 4)
         with patch.object(badges, 'is_supabase_configured', return_value=False), patch.object(badges, 'SupabaseGateway') as gateway:
             response = self.client.get('/api/model-badges')
         self.assertEqual(response.status_code, 200)
@@ -21,8 +21,8 @@ class ModelBadgeTests(unittest.TestCase):
         gateway.assert_not_called()
 
     def test_music_video_and_legacy_image_reads_preserve_existing_tags(self):
-        self.assertEqual(len(badges.MODEL_IDS),21)
-        self.assertEqual(len(set(badges.MODEL_IDS)),21)
+        self.assertEqual(len(badges.MODEL_IDS),22)
+        self.assertEqual(len(set(badges.MODEL_IDS)),22)
         self.gateway.rpc.return_value={'revision':7,'badges':{model:('new' if model=='gpt-image-2.6-flare' else '') for model in badges.IMAGE_MODEL_IDS}}
         with patch.object(badges,'is_supabase_configured',return_value=True),patch.object(badges,'SupabaseGateway',return_value=self.gateway):
             response=self.client.get('/api/model-badges')

@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { fetchImageBlob, recoverGeneration } from "../lib/client";
 import CanvasAiPanel from "./CanvasAiPanel";
+import { imageResolutionSpec } from "../lib/provider.js";
 import { canvasEditCapability, canvasReferenceError, canvasGenerationSize, canvasReferencePayload, exportCanvasEditMask, isMaskAnnotation, canvasSelectionRegions, interactiveEditInstructions } from "../lib/canvasImageEditing";
 
 const CANVAS_DB_NAME = "posterflow-ai-fabric-canvas";
@@ -661,6 +662,7 @@ export default function FabricCanvasWorkspace({
   imageModel,
   onImageModelChange,
   imageResolution = "1K",
+  onImageResolutionChange,
   authenticated = false,
   onAuthRequired,
   onAccountRefresh,
@@ -1563,7 +1565,7 @@ export default function FabricCanvasWorkspace({
       body.request_id = requestId;
       generationRequestStarted = true;
       if (!authenticated) rememberGuestPrompt(body.prompt, requestId);
-      const spec = apimartImageModel(requestImageModel(body, providerHeaders));
+      const spec = imageResolutionSpec(requestImageModel(body, providerHeaders));
       const imageGenerationVersion = generatedImportVersionRef.current;
       if (spec && !spec.automaticResolution) body.resolution = spec.resolutions.includes(imageResolution) ? imageResolution : spec.resolutions[0];
       const response = await imageGenerationFetch(endpoint, {
@@ -1869,6 +1871,8 @@ export default function FabricCanvasWorkspace({
         {aiPanelOpen && (
           <CanvasAiPanel
             imageModel={imageModel}
+            resolution={imageResolution}
+            onResolutionChange={onImageResolutionChange}
             referenceLimit={modelReferenceLimit}
             onImageModelChange={onImageModelChange}
             billingMode={billingMode}

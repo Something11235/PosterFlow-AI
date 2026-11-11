@@ -24,6 +24,7 @@ function ReferenceThumbnail({ file, number }) {
 export default function PromptEditor({
   imageModel,
   imageReferenceCount = 0,
+  imageResolution,
   onImageModelChange,
   billingMode,
   prompt,
@@ -89,7 +90,7 @@ export default function PromptEditor({
         </div>
       </div>
 
-      <ImageModelSelect model={imageModel} referenceCount={imageReferenceCount} billingMode={billingMode} onModelChange={onImageModelChange} onOpenProvider={onOpenProvider} />
+      <ImageModelSelect model={imageModel} resolution={imageResolution} referenceCount={imageReferenceCount} billingMode={billingMode} onModelChange={onImageModelChange} onOpenProvider={onOpenProvider} />
 
       <div className="mb-4">
         <div className="mb-2 flex items-center justify-between gap-3">

@@ -1,12 +1,13 @@
 export const PROVIDER_STORAGE_KEY = "posterflow.provider.session.v1";
 export const MAX_REFERENCE_IMAGES = 8;
-export const GPT26_IMAGE_MODELS = ["flare", "sunburst"].map(version => ({ value: `gpt-image-2.6-${version}`, label: `GPT Image 2.6 ${version === "flare" ? "Flare" : "Sunburst"}`, upstreamVersion: version, provider: "buytoken", outputFormats: ["png"], gifReferences: false, creditCost: 1, referenceCreditCost: 1.5, maxCount: 4, maxReferences: 8, resolutions: ["1K"], canvasEdit: true, maskEdit: true, customSize: false }));
+export const GPT26_IMAGE_MODELS = ["flare", "sunburst"].map(version => ({ value: `gpt-image-2.6-${version}`, label: `GPT Image 2.6 ${version === "flare" ? "Flare" : "Sunburst"}`, upstreamVersion: version, provider: "buytoken", outputFormats: ["png"], gifReferences: false, creditCost: 1, referenceCreditCost: 1.5, maxCount: 4, maxReferences: 8, resolutions: ["1K", "2K", "4K"], canvasEdit: true, maskEdit: true, customSize: false }));
 
 export const APIMART_IMAGE_MODELS = [
   ...GPT26_IMAGE_MODELS,
   { value: "gemini-nano-banana-2.1", label: "Nano Banana 2.1", creditCost: 1, resolutionCreditCosts: { "4K": 2 }, maxCount: 1, maxReferences: 8, resolutions: ["1K", "2K", "4K"] },
-  { value: "grok-imagine-image-2.0", label: "Grok Imagine Image 2.0", creditCost: 1, referenceCreditCost: 2, maxCount: 4, maxReferences: 3, automaticResolution: true, resolutions: ["1K", "2K"] },
+  { value: "grok-imagine-image-2.0", label: "Grok Imagine Image 2.0", creditCost: 1, referenceCreditCost: 2, maxCount: 4, maxReferences: 3, resolutions: ["1K", "2K"] },
   { value: "grok-imagine-2.0-ext", label: "Grok Imagine 2.0 Ext", creditCost: 1, maxCount: 4, maxReferences: 0, automaticResolution: true, resolutions: ["quality"] },
+  { value: "seedream-5-5", label: "（即梦）Seedream 5.5", creditCost: 1, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
   { value: "seedream-5-0-pro", label: "（即梦）Seedream 5.0 Pro", creditCost: 2, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
   { value: "seedream-5-0-lite", label: "（即梦）Seedream 5.0 Lite", creditCost: 1, maxCount: 4, maxReferences: 8, resolutions: ["2K", "3K", "4K"], canvasEdit: false },
   { value: "seedream-5-0-flash", label: "（即梦）Seedream 5.0 Flash", creditCost: 0.5, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
@@ -15,22 +16,37 @@ export const apimartImageModel = model => APIMART_IMAGE_MODELS.find(item => item
 
 export const IMAGE_MODEL_OPTIONS = [
   ...GPT26_IMAGE_MODELS,
-  { value: "gpt-image-2.5-flare", label: "GPT Image 2.5 Flare", creditCost: 1 },
-  { value: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst", creditCost: 1 },
+  { value: "gpt-image-2.5-flare", label: "GPT Image 2.5 Flare", creditCost: 1, maxCount: 4, maxReferences: 8, canvasEdit: true, maskEdit: true, customSize: false, resolutions: ["1K", "2K", "4K"] },
+  { value: "gpt-image-2.5-sunburst", label: "GPT Image 2.5 Sunburst", creditCost: 1, maxCount: 4, maxReferences: 8, canvasEdit: true, maskEdit: true, customSize: false, resolutions: ["1K", "2K", "4K"] },
   ...APIMART_IMAGE_MODELS.filter(model => !model.value.startsWith("gpt-image-2.6-")),
 ];
 
+export const imageResolutionSpec = model => IMAGE_MODEL_OPTIONS.find(item => item.value === model);
+export const IMAGE_TIER_MODELS = new Set(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gemini-nano-banana-2.1", "grok-imagine-image-2.0", "seedream-5-0-pro", "seedream-5-5"]);
 export function imageCreditCost(model, referenceCount = 0, resolution = "") {
   const spec = IMAGE_MODEL_OPTIONS.find(option => option.value === model);
   const resolutionCost = spec?.resolutionCreditCosts?.[String(resolution).trim().toUpperCase()];
+  if (IMAGE_TIER_MODELS.has(model)) {
+    const tier = String(resolution || spec.resolutions[0]).toUpperCase();
+    const index = Math.max(0, spec.resolutions.indexOf(tier));
+    const rank = model.startsWith("seedream-") ? tier === "2K" ? 1 : 0 : index;
+    return (referenceCount > 0 ? spec.referenceCreditCost ?? spec.creditCost : spec.creditCost) + rank * 0.5;
+  }
   if (resolutionCost != null) return resolutionCost;
   return referenceCount > 0 ? spec?.referenceCreditCost ?? spec?.creditCost ?? 1 : spec?.creditCost ?? 1;
 }
 
 export function imagePricingLabel(model) {
   const spec = IMAGE_MODEL_OPTIONS.find(option => option.value === model);
+  if (IMAGE_TIER_MODELS.has(model)) return spec.resolutions.map(tier => `${tier} ${imageCreditCost(model, 0, tier)} 积分 / 张${spec.referenceCreditCost ? `，带图 ${imageCreditCost(model, 1, tier)} 积分 / 张` : ""}`).join("；");
   if (spec?.resolutionCreditCosts) return `1K、2K ${imageCreditCost(model)} 积分 / 张，4K ${imageCreditCost(model, 0, "4K")} 积分 / 张`;
   return `${imageCreditCost(model)} 积分 / 张${spec?.referenceCreditCost ? `，使用参考图 ${imageCreditCost(model, 1)} 积分 / 张` : ""}`;
+}
+
+export function imageSelectedPricingLabel(model, referenceCount = 0, resolution = "") {
+  const spec = imageResolutionSpec(model);
+  const tier = spec?.resolutions.includes(resolution) ? resolution : spec?.resolutions[0];
+  return `${tier && !spec.automaticResolution ? `${tier} · ` : ""}${imageCreditCost(model, referenceCount, tier)} 积分 / 张`;
 }
 
 export const DEFAULT_PLATFORM_MODEL = IMAGE_MODEL_OPTIONS[0].value;

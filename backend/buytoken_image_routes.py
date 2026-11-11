@@ -22,12 +22,12 @@ except ModuleNotFoundError:
 class BuyTokenStore(ImageStore):
     def begin(self, owner, user, request_id, mode, model, body, prompt):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        return self.rpc("begin_buytoken_gpt26_image_job", {"p_owner": owner, "p_user": user, "p_request": request_id,
+        return self.rpc("begin_buytoken_image_tier_job" if body.get('pricing_policy_version') == 3 else "begin_buytoken_gpt26_image_job", {"p_owner": owner, "p_user": user, "p_request": request_id,
             "p_mode": mode, "p_model": model, "p_count": body["payload"]["n"], "p_fingerprint": fingerprint,
-            "p_prompt": prompt, "p_reference_count": len(body["references"]), "p_resolution": "1K"})
+            "p_prompt": prompt, "p_reference_count": len(body["references"]), "p_resolution": body.get("pricing_resolution", "1K")})
 
     def apply(self, owner, request_id, event, **kwargs):
-        return self.rpc("apply_buytoken_gpt26_image_job", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
+        return self.rpc("apply_buytoken_image_tier_job", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
 
     def jobs(self, owner, request_id=None):
         params = {"owner_scope": "eq." + owner, "submission_provider": "eq.buytoken", "select": "*", "order": "created_at.desc", "limit": "50"}
@@ -150,8 +150,8 @@ def create_buytoken_image_blueprint(server):
                 if not previous:
                     raise ImageTaskError("PREVIOUS_IMAGE_MISSING", "原图已过期或暂时无法读取，请重新选择。")
                 references = [server.validate_reference_image_b64(previous)]
-            if mode == "platform" and references and (type(data.get("pricing_version")) is not int or data["pricing_version"] != 2):
-                raise ImageTaskError("IMAGE_PRICING_CHANGED", "带图编辑每张1.5积分，请刷新页面核对后提交。", 409)
+            if mode == "platform" and (data.get('resolution','1K') != '1K' and data.get('pricing_version') != 3 or references and data.get('pricing_version') not in (2,3)):
+                raise ImageTaskError("IMAGE_PRICING_CHANGED", "分辨率计费已更新，请刷新页面核对后提交。", 409)
             mask = server.stored_reference_to_base64(mask_path) if mask_path else server.validate_reference_image_b64(data.get("mask_b64"))
             if mask:
                 try:

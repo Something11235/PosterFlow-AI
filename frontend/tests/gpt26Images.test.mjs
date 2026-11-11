@@ -13,7 +13,7 @@ test('GPT26 versions lead the active catalog, remain single image 1K, and each c
     const id = 'gpt-image-2.6-' + version, spec = apimartImageModel(id);
     assert.equal(spec.upstreamVersion, version);
     assert.equal(spec.maxCount, 4);
-    assert.deepEqual(spec.resolutions, ['1K']);
+    assert.deepEqual(spec.resolutions, ['1K','2K','4K']);
     assert.equal(spec.maxReferences, 8);
     assert.equal(imageCreditCost(id, 0, '1K'), 1);
     assert.equal(imageCreditCost(id, 1, '1K'), 1.5);
@@ -49,6 +49,6 @@ test('new official image requests include pricing revision without trusting a ca
   t.after(() => { delete globalThis.window; });
   const response = await imageGenerationFetch('/api/modify', {method: 'POST', headers: {'X-Billing-Mode': 'platform'}, body: JSON.stringify({platform_model: 'gpt-image-2.6-flare', request_id: 'fixture', prompt: 'fixture', reference_storage_paths: ['fixture'], pricing_version: 1})}, {pollInterval: 0});
   assert.equal(response.status, 200);
-  assert.equal(submitted.pricing_version, 2);
+  assert.equal(submitted.pricing_version, 3);
   assert.deepEqual(submitted.reference_storage_paths, ['fixture']);
 });

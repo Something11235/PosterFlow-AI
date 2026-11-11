@@ -22,8 +22,9 @@ MODELS = {
     "gpt-image-2.6-flare": {"name": "GPT Image 2.6 Flare", "version": "flare", "references": 8, "count": 4, "resolutions": ("1K",), "credit_cost": 1, "reference_credit_cost": 1.5, "canvas_edit": True},
     "gpt-image-2.6-sunburst": {"name": "GPT Image 2.6 Sunburst", "version": "sunburst", "references": 8, "count": 4, "resolutions": ("1K",), "credit_cost": 1, "reference_credit_cost": 1.5, "canvas_edit": True},
     "gemini-nano-banana-2.1": {"name": "Nano Banana 2.1", "references": 8, "count": 1, "resolutions": ("1K", "2K", "4K"), "resolution_credit_costs": {"4K": 2}},
-    "grok-imagine-image-2.0": {"name": "Grok Imagine Image 2.0", "references": 3, "count": 4, "resolutions": ("1K", "2K"), "reference_credit_cost": 2, "automatic_resolution": True},
+    "grok-imagine-image-2.0": {"name": "Grok Imagine Image 2.0", "references": 3, "count": 4, "resolutions": ("1K", "2K"), "reference_credit_cost": 2},
     "grok-imagine-2.0-ext": {"name": "grok-imagine-2.0-ext", "references": 0, "count": 4, "resolutions": ("quality",), "automatic_resolution": True},
+    "seedream-5-5": {"name": "（即梦）Seedream 5.5", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 1, "canvas_edit": True},
     "seedream-5-0-pro": {"name": "（即梦）Seedream 5.0 Pro", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 2, "canvas_edit": True},
     "seedream-5-0-lite": {"name": "（即梦）Seedream 5.0 Lite", "references": 8, "count": 4, "resolutions": ("2K", "3K", "4K"), "credit_cost": 1, "canvas_edit": False},
     "seedream-5-0-flash": {"name": "（即梦）Seedream 5.0 Flash", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 0.5, "canvas_edit": True},
@@ -123,7 +124,7 @@ def build_request(model, data, references=(), *, mask=None):
         resolution = data.get("resolution", spec["resolutions"][0])
         if resolution not in spec["resolutions"]:
             raise ImageTaskError("IMAGE_RESOLUTION_INVALID", "此模型不支持所选清晰度档位。")
-        body["resolution"] = resolution
+        body["resolution"] = resolution.lower() if model == "grok-imagine-image-2.0" else resolution
     if model == "grok-imagine-image-2.0":
         body["aspect_ratio"] = ratio
     else:
@@ -202,6 +203,8 @@ def build_gpt26_request(model, data, references, *, mask=None):
 
 def build_seedream_request(model, data, references):
     spec = MODELS[model]
+    if model == "seedream-5-5" and (data.get("output_format", "png") != "png" or data.get("layer_decomposition_options") or data.get("optimize_prompt_options") not in (None, {"mode": "standard"}) or data.get("nsfw_check") or data.get("mask_url")):
+        raise ImageTaskError("IMAGE_FEATURE_UNSUPPORTED", "当前入口仅支持 PNG 单图生成与参考图编辑，不支持 GIF、图层拆分或独立蒙版。")
     prompt, count = data.get("prompt"), data.get("count", 1)
     if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 6000:
         raise ImageTaskError("PROMPT_INVALID", "提示词须为 1–6000 个字符。")
@@ -238,6 +241,10 @@ def build_seedream_request(model, data, references):
         body["size"] = ratio
     if references:
         body["image_urls"] = list(references)
+    if model == "seedream-5-5" and body.get("size") == "auto":
+        # In 5.5 auto means 2K; a tier size preserves the selected resolution.
+        body["size"] = resolution
+        body.pop("resolution", None)
     return body
 
 

@@ -8,11 +8,11 @@ import {
 
 test("catalog follows the selected 10 image, 2 music and 9 video models in that order", () => {
   assert.deepEqual(STUDIO_AREAS.map(x => x.id), ["image", "music", "video"]);
-  assert.deepEqual(IMAGE_MODELS.map(x => x.name), ["GPT Image 2.6 Flare", "GPT Image 2.6 Sunburst", "GPT Image 2.5 Flare", "GPT Image 2.5 Sunburst", "Nano Banana 2.1", "Grok Imagine Image 2.0", "Grok Imagine 2.0 Ext", "（即梦）Seedream 5.0 Pro", "（即梦）Seedream 5.0 Lite", "（即梦）Seedream 5.0 Flash"]);
+  assert.deepEqual(IMAGE_MODELS.map(x => x.name), ["GPT Image 2.6 Flare", "GPT Image 2.6 Sunburst", "GPT Image 2.5 Flare", "GPT Image 2.5 Sunburst", "Nano Banana 2.1", "Grok Imagine Image 2.0", "Grok Imagine 2.0 Ext", "（即梦）Seedream 5.5", "（即梦）Seedream 5.0 Pro", "（即梦）Seedream 5.0 Lite", "（即梦）Seedream 5.0 Flash"]);
   assert.deepEqual(MUSIC_MODELS.map(x => x.name), ["suno", "flowmusic"]);
   assert.deepEqual(VIDEO_MODELS.map(x => x.name), ["Seedance 2.5", "Seedance 2.0", "Seedance 2.0 Fast", "Seedance 2.0 Mini", "Gemini Omni 1.1 Flash", "MiniMax H3", "MiniMax H3 Max", "Wan 3.0", "FLUX 3 Video"]);
-  assert.equal(MODEL_CATALOG.length, 21);
-  assert.deepEqual(MODEL_CATALOG.map(x => x.area), [...Array(10).fill("image"), ...Array(2).fill("music"), ...Array(9).fill("video")]);
+  assert.equal(MODEL_CATALOG.length, 22);
+  assert.deepEqual(MODEL_CATALOG.map(x => x.area), [...Array(11).fill("image"), ...Array(2).fill("music"), ...Array(9).fill("video")]);
   assert.equal(MODEL_CATALOG.some(x => x.docs || x.url), false);
 });
 test("video previews and unknown music models cannot produce request drafts", () => {

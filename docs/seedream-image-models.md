@@ -1,5 +1,7 @@
 # Nano 官方路由与 Seedream 5.0 接入
 
+2026-11-11 版本更新：新增Seedream 5.5及分辨率价格档位；当前规则统一见[图片分辨率与积分](image-resolution-pricing.md)。两份新增迁移已应用。下方旧价格、分辨率入口和Git状态属于历史记录，以新说明及本地交接为准。
+
 2026-11-10 参考图修复：Nano官方及三个Seedream改用Base64 Data URI，不再单独上传APIMart；格式校验、价格和参考顺序保持。真实收费生成仍待用户验收，详见[参考图传输修复](apimart-image-generation.md)。下方旧Git及部署状态仅为历史记录。
 
 2026-11-09 更新：按用户要求，Nano 已切回官方 `gemini-nano-banana-2.1`，不再调用 Ext 或发送 `official_fallback`。本次已从本地工作树直接部署至正式站，用户确认真实生成成功；尚未提交或推送，GitHub 仍为 6617df0，正式代码包含其后的本地路由修改。下方迁移与最初验收记录属于 2026-11-05 历史阶段，相关迁移早已执行，禁止重放；当前状态以本地 HANDOFF.md 为准。

@@ -89,7 +89,7 @@ class BuyTokenImagesTests(unittest.TestCase):
             endpoint, = self.post.call_args.args
             wire = self.post.call_args.kwargs['json']
             self.assertEqual(endpoint, CONFIG.endpoint)
-            self.assertEqual(wire, {'model': model, 'prompt': 'synthetic prompt', 'n': 4, 'quality': 'auto', 'size': '1792x1008'})
+            self.assertEqual(wire, {'model': model, 'prompt': 'synthetic prompt', 'n': 4, 'quality': 'auto', 'size': '1024x576'})
             self.assertNotIn('version', wire)
             self.assertEqual(self.store.begin.call_args.args[5]['references'], [])
             self.assertNotIn('provider_result_urls', result.json['job'])

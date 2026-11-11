@@ -89,6 +89,7 @@ class DeliveryRouteTests(unittest.TestCase):
         stack.enter_context(patch.object(server, "enforce_rate_limit"))
         stack.enter_context(patch.object(server, "storage_scope_name", return_value="user-" + USER))
         store = stack.enter_context(patch.object(routes, "ImageStore")).return_value
+        stack.enter_context(patch.object(routes, "Seedream55ImageStore", return_value=store))
         job = {"id": RID, "request_id": RID, "model": model, "status": "submitted", "image_keys": [], "requested_count": 1}
         store.begin.return_value = {"job": job, "existing": False}
         store.apply.return_value = {"job": job}

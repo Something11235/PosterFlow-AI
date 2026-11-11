@@ -28,7 +28,7 @@ test('new GPT26 submits once to BuyToken and polls only that original durable ta
   assert.deepEqual(calls.map(([url]) => url), ['/api/buytoken-images/generations', '/api/buytoken-images/tasks/fixture']);
   assert.equal(calls.filter(([, init]) => init.method === 'POST').length, 1);
   assert.equal((await result.json()).images[0].filename, 'fixture.gif');
-  assert.equal(JSON.parse(calls[0][1].body).pricing_version, 2);
+  assert.equal(JSON.parse(calls[0][1].body).pricing_version, 3);
 });
 
 test('old GPT26 recovery falls back to the old APIMart GET only when the BuyToken job is absent', async t => {

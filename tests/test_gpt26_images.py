@@ -41,7 +41,7 @@ class Gpt26ImageTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.json['code'], 'IMAGE_PRICING_CHANGED')
             self.assertFalse(response.json['generation_submitted'])
-            self.assertIn('1.5', response.json['detail'])
+            self.assertIn('刷新', response.json['detail'])
             store.assert_not_called(); upload.assert_not_called(); submit.assert_not_called()
 
     def test_validated_canvas_masks_use_data_url_and_never_count_as_references(self):

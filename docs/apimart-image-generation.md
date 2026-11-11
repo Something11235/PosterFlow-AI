@@ -1,5 +1,7 @@
 # APIMart 新增图像模型
 
+2026-11-11 版本更新：新增Seedream 5.5及分辨率价格档位；当前规则统一见[图片分辨率与积分](image-resolution-pricing.md)。两份新增迁移已应用。下方旧价格、分辨率入口和Git状态属于历史记录，以新说明及本地交接为准。
+
 ## 2026-11-10 参考图传输修复
 
 Nano Banana 2.1、Seedream 5.0 Pro／Lite／Flash 改用官方支持的完整 Base64 Data URI，保留真实 MIME、原有顺序、模型校验及计费参考张数；Lite 仍先将 WebP 等转为 PNG。普通参考、previous_image 迭代和画布指令编辑共用此路线，不调用 APIMart `/uploads/images`。浏览器仍通过既有签名上传通道直传Storage，不将大图片塞入浏览器到Vercel的生成JSON。

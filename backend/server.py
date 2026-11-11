@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import secrets
+import sys
 
 
 def _load_local_env():
@@ -48,6 +49,7 @@ try:
     from backend.image_preview import create_image_preview, preview_filename
     from backend.image_edit_mask import validate_edit_mask
     from backend.credits import credit_amount, credit_text
+    from backend import image_tier_pricing as image_tiers
     from backend.admin_multimedia import enrich_overview
     from backend.supabase_service import (
         AuthenticatedUser,
@@ -65,6 +67,7 @@ except ModuleNotFoundError:  # Allows `python backend/server.py` in local develo
     from image_preview import create_image_preview, preview_filename
     from image_edit_mask import validate_edit_mask
     from credits import credit_amount, credit_text
+    import image_tier_pricing as image_tiers
     from admin_multimedia import enrich_overview
     from supabase_service import (
         AuthenticatedUser,
@@ -1085,20 +1088,32 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                 raise ProviderError("MODEL_NOT_ALLOWED", "平台模型不可用", 400, "请选择平台提供的模型。", ["重新选择模型", "再次生成"])
             provider = resolve_provider_config("platform", platform_model=requested_platform_model)
             enforce_rate_limit("platform-generate", user.id, 8, 60)
-            reservation = raise_for_rpc_result(
-                gateway.reserve_credits(
-                    user.id,
-                    request_id,
-                    requested_count,
-                    provider.host,
-                    provider.model,
-                    prompt,
-                    # No per-user or platform-wide daily cap. Legacy daily-limit
-                    # environment variables must not re-enable these limits.
-                    None,
-                    None,
+            if provider.model in image_tiers.GPT25 and data.get('pricing_version') != image_tiers.VERSION and data.get('resolution', '1K') != '1K':
+                raise ProviderError("IMAGE_PRICING_CHANGED", "分辨率计费已更新，请刷新页面后提交。", 409)
+            if provider.model in image_tiers.GPT25 and data.get('pricing_version') == image_tiers.VERSION:
+                try:
+                    selected_resolution = image_tiers.resolution(provider.model, data)
+                except ValueError as error:
+                    raise ProviderError("IMAGE_RESOLUTION_INVALID", str(error), 400) from None
+                reservation = raise_for_rpc_result(gateway.rpc("reserve_legacy_image_tier_credits", {
+                    "p_user_id": user.id, "p_request_id": request_id, "p_count": requested_count,
+                    "p_provider": provider.host, "p_model": provider.model, "p_prompt": prompt,
+                    "p_resolution": selected_resolution}))
+            else:
+                reservation = raise_for_rpc_result(
+                    gateway.reserve_credits(
+                        user.id,
+                        request_id,
+                        requested_count,
+                        provider.host,
+                        provider.model,
+                        prompt,
+                        # No per-user or platform-wide daily cap. Legacy daily-limit
+                        # environment variables must not re-enable these limits.
+                        None,
+                        None,
+                    )
                 )
-            )
             job_id = reservation.get("job_id")
             if reservation.get("existing"):
                 status = reservation.get("status")
@@ -1137,7 +1152,10 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
         duration_ms = utc_milliseconds_since(started_at)
         credit_balance = None
         if billing_mode == "platform":
-            settled = raise_for_rpc_result(gateway.settle_generation(job_id, len(images), duration_ms, filenames))
+            if provider.model in image_tiers.GPT25 and data.get('pricing_version') == image_tiers.VERSION:
+                settled = raise_for_rpc_result(gateway.rpc("settle_image_tier_generation", {"p_job_id": job_id, "p_generated_count": len(images), "p_duration_ms": duration_ms, "p_image_keys": filenames}))
+            else:
+                settled = raise_for_rpc_result(gateway.settle_generation(job_id, len(images), duration_ms, filenames))
             credit_balance = settled.get("balance")
         elif user:
             # Own-key requests are logged only after success and never include the API key.
@@ -1461,7 +1479,7 @@ def provider_request_timeout_seconds(count):
     )
 
 
-def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", quality="auto", count=1, custom_size=None, mask_b64=None):
+def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", quality="auto", count=1, custom_size=None, mask_b64=None, resolution="1K"):
     # Keep the provider request aligned with the product default even for legacy callers.
     quality = "auto"
     request_timeout_seconds = provider_request_timeout_seconds(count)
@@ -1474,6 +1492,12 @@ def generate_images(provider, prompt, ref_b64=None, strength=0.65, size="", qual
     }
     if size_cfg:
         payload["size"] = f"{size_cfg['width']}x{size_cfg['height']}"
+    if provider.model in image_tiers.GPT25:
+        try:
+            payload["size"] = image_tiers.pixels(sys.modules[__name__], {"model": provider.model, "resolution": resolution, "size": size,
+                **({"custom_width": custom_size['width'], "custom_height": custom_size['height']} if custom_size else {})})
+        except ValueError as error:
+            raise ProviderError("IMAGE_RESOLUTION_INVALID", str(error), 400) from None
     references = ref_b64 if isinstance(ref_b64, list) else ([ref_b64] if ref_b64 else [])
 
     try:
@@ -2351,7 +2375,7 @@ def generate():
             requested_count=count,
             prompt=prompt,
             generate_callback=lambda provider: generate_images(
-                provider, prompt, reference_b64, strength, size, quality, count, custom_size
+                provider, prompt, reference_b64, strength, size, quality, count, custom_size, resolution=data.get("resolution", "1K")
             ),
         )
     except (ProviderError, SupabaseError) as error:
@@ -2420,7 +2444,7 @@ def modify():
             requested_count=1,
             prompt=prompt,
             generate_callback=lambda provider: generate_images(
-                provider, prompt, ref_b64, strength, size, quality, 1, custom_size, mask_b64=mask_b64
+                provider, prompt, ref_b64, strength, size, quality, 1, custom_size, mask_b64=mask_b64, resolution=data.get("resolution", "1K")
             ),
         )
     except (ProviderError, SupabaseError) as error:

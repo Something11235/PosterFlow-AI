@@ -13,11 +13,13 @@ try:
     from backend import apimart_image_provider as provider
     from backend import grok_region
     from backend import image_reference_delivery as delivery
+    from backend import image_tier_pricing as tiers
     from backend.supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 except ModuleNotFoundError:
     import apimart_image_provider as provider
     import grok_region
     import image_reference_delivery as delivery
+    import image_tier_pricing as tiers
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 
 PUBLIC_FIELDS = ("request_id", "model", "billing_mode", "status", "requested_count", "image_keys", "error_code", "created_at", "reference_count", "unit_credit_cost", "pricing_resolution")
@@ -46,8 +48,13 @@ class ImageStore:
 
     def begin(self, owner, user, request_id, mode, model, body, prompt):
         fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        rpc_name = "begin_gpt26_image_job_v2" if model.startswith("gpt-image-2.6-") else "begin_seedream_image_job" if model.startswith("seedream-") else "begin_apimart_image_job_v3"
-        return self.rpc(rpc_name, {"p_owner": owner, "p_user": user, "p_request": request_id, "p_mode": mode, "p_model": model, "p_count": body["n"], "p_fingerprint": fingerprint, "p_prompt": prompt, "p_reference_count": len(body.get("image_urls") or []), "p_resolution": body.get("resolution", "").upper() or None})
+        resolution = body.get("resolution", "").upper() or None
+        if model == "seedream-5-5" and body.get("size") in ("1K", "1.5K", "2K"):
+            resolution = body["size"]
+        if model == 'grok-imagine-image-2.0':
+            resolution = None  # Legacy RPC; v3 tier store handles its resolution.
+        rpc_name = "begin_seedream55_image_job" if model == "seedream-5-5" else "begin_gpt26_image_job_v2" if model.startswith("gpt-image-2.6-") else "begin_seedream_image_job" if model.startswith("seedream-") else "begin_apimart_image_job_v3"
+        return self.rpc(rpc_name, {"p_owner": owner, "p_user": user, "p_request": request_id, "p_mode": mode, "p_model": model, "p_count": body["n"], "p_fingerprint": fingerprint, "p_prompt": prompt, "p_reference_count": len(body.get("image_urls") or []), "p_resolution": resolution})
 
     def apply(self, owner, request_id, event, **kwargs):
         return self.rpc("apply_image_job_v3", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
@@ -57,6 +64,29 @@ class ImageStore:
         if request_id:
             params["request_id"] = "eq." + request_id
         return self.gateway._request("GET", "/rest/v1/apimart_image_jobs", params=params) or []
+
+
+class ImageTierStore(ImageStore):
+    def begin(self, owner, user, request_id, mode, model, body, prompt):
+        fingerprint = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        data = dict(body)
+        if model == 'seedream-5-5' and body.get('size') in tiers.TIERS[model]:
+            data['resolution'] = body['size']
+        if model in ('seedream-5-0-pro', 'seedream-5-5') and 'x' in body.get('size', ''):
+            width, height = body['size'].split('x')
+            data.update(size='custom', custom_width=width, custom_height=height)
+        resolution = tiers.resolution(model, data)
+        return self.rpc('begin_image_tier_job', {'p_owner': owner, 'p_user': user, 'p_request': request_id,
+            'p_mode': mode, 'p_model': model, 'p_count': body['n'], 'p_fingerprint': fingerprint,
+            'p_prompt': prompt, 'p_reference_count': len(body.get('image_urls') or []), 'p_resolution': resolution})
+
+    def apply(self, owner, request_id, event, **kwargs):
+        return self.rpc('apply_image_tier_job', {'p_owner': owner, 'p_request': request_id, 'p_event': event, **kwargs})
+
+
+class Seedream55ImageStore(ImageStore):
+    def apply(self, owner, request_id, event, **kwargs):
+        return self.rpc("apply_seedream55_image_job", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
 
 
 def create_image_blueprint(server):
@@ -131,6 +161,10 @@ def create_image_blueprint(server):
         return {"success": True, "job": public_job(job), "images": [{"filename": name, "index": i + 1} for i, name in enumerate(job.get("image_keys") or [])], "credit_balance": balance, **extra}
 
     def reconcile(store, owner, key, job):
+        if job.get('pricing_policy_version', 1) == tiers.VERSION:
+            store = ImageTierStore()
+        elif job.get("model") == "seedream-5-5":
+            store = Seedream55ImageStore()
         request_id = job["request_id"]
         if job["status"] in ("completed", "failed") or not job.get("provider_task_id"):
             return result(job)
@@ -186,6 +220,18 @@ def create_image_blueprint(server):
         if mode == "platform" and isinstance(model, str) and model.startswith("gpt-image-2.6-"):
             raise provider.ImageTaskError("IMAGE_PROVIDER_CHANGED", "图片服务线路已更新，请刷新页面后再提交；本次尚未提交生图。", 409)
         request_id = normalize_id(data.get("request_id"))
+        if model in tiers.TIERS:
+            try:
+                tiers.resolution(model, data)
+            except ValueError as error:
+                raise provider.ImageTaskError('IMAGE_RESOLUTION_INVALID', str(error)) from None
+            if mode == 'platform' and data.get('pricing_version') != tiers.VERSION:
+                tier = tiers.resolution(model, data)
+                refs = bool(data.get('reference_storage_paths') or data.get('reference_images_b64') or data.get('reference_b64') or data.get('previous_image'))
+                old = provider.MODELS[model].get('reference_credit_cost', provider.MODELS[model].get('credit_cost', 1)) if refs else provider.MODELS[model].get('credit_cost', 1)
+                old = provider.MODELS[model].get('resolution_credit_costs', {}).get(tier, old)
+                if tiers.unit_cost(model, tier, int(refs)) != old:
+                    raise provider.ImageTaskError('IMAGE_PRICING_CHANGED', '分辨率计费已更新，请刷新页面后提交。', 409)
         server.enforce_rate_limit("apimart-image-submit", owner, 8, 60)
         paths = server.validate_reference_storage_paths(data.get("reference_storage_paths"))
         temporary_paths = list(paths)
@@ -222,7 +268,7 @@ def create_image_blueprint(server):
                 except ValueError as error:
                     raise provider.ImageTaskError("IMAGE_MASK_INVALID", str(error)) from None
             body = grok_region.build_request(data, key, owner) if region_edit else provider.build_request(model, data, references, **({"mask": mask} if mask else {}))
-            store = ImageStore()
+            store = ImageTierStore() if model in tiers.TIERS and data.get('pricing_version') == tiers.VERSION else Seedream55ImageStore() if model == "seedream-5-5" else ImageStore()
             begun = store.begin(owner, user_id, request_id, mode, model, body, str(data.get("prompt", "")).strip())
             if begun.get("existing"):
                 return jsonify(result(begun["job"], begun.get("balance"), idempotent=True)), 200

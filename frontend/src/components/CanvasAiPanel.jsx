@@ -1,6 +1,6 @@
 import React, { useRef } from "react";
 import ImageModelSelect from "./ImageModelSelect";
-import { MAX_REFERENCE_IMAGES } from "../lib/provider";
+import { MAX_REFERENCE_IMAGES, imageResolutionSpec, imageCreditCost } from "../lib/provider";
 import { canvasEditCapability, canvasReferenceError } from "../lib/canvasImageEditing";
 import {
   CheckCircle2,
@@ -16,6 +16,8 @@ import {
 
 export default function CanvasAiPanel({
   imageModel,
+  resolution = "1K",
+  onResolutionChange,
   onImageModelChange,
   billingMode,
   referenceLimit = MAX_REFERENCE_IMAGES,
@@ -40,6 +42,7 @@ export default function CanvasAiPanel({
   onOpenProvider,
 }) {
   const promptRef = useRef(null);
+  const resolutionSpec = imageResolutionSpec(imageModel);
   const isFrameWorkflow = workflow === "frame";
   const hasTarget = (isFrameWorkflow ? Boolean(selection.holder) : Boolean(selection.image)) && canvasEditCapability(imageModel).kind !== "disabled";
   const hasInstruction =
@@ -88,7 +91,8 @@ export default function CanvasAiPanel({
       </div>
 
       <div className="p-4">
-        <ImageModelSelect model={imageModel} referenceCount={isFrameWorkflow ? 0 : Math.max(1, selection.images?.length || 1)} billingMode={billingMode} onModelChange={onImageModelChange} onOpenProvider={onOpenProvider} disabled={busy} />
+        <ImageModelSelect model={imageModel} resolution={resolution} referenceCount={isFrameWorkflow ? 0 : Math.max(1, selection.images?.length || 1)} billingMode={billingMode} onModelChange={onImageModelChange} onOpenProvider={onOpenProvider} disabled={busy} />
+        {resolutionSpec?.resolutions?.length > 1 && !resolutionSpec.automaticResolution && <label className="mb-4 block text-xs text-text-secondary">分辨率<select aria-label="画布图片分辨率" value={resolution} disabled={busy} onChange={event => onResolutionChange?.(event.target.value)} className="mt-2 min-h-10 w-full rounded border border-border-default bg-bg-primary px-2">{resolutionSpec.resolutions.map(tier => <option key={tier} value={tier}>{tier}{billingMode === 'platform' ? ` · ${imageCreditCost(imageModel, isFrameWorkflow ? 0 : 1, tier)} 积分 / 张` : ''}</option>)}</select></label>}
         {editCapability.kind === "disabled" && <p role="alert" className="mb-3 text-xs leading-5 text-gold">当前模型未确认支持局部编辑，已禁用无限画布 AI 功能。切换模型可继续使用，画布内容已保留。</p>}
         <div className="grid grid-cols-2 rounded-md border border-border-subtle bg-bg-primary p-1" role="tablist">
           <button

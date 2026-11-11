@@ -15,7 +15,7 @@ function currentSnapshot() {
 
 test('only the two GPT Image 2.6 variants are hot and the three Seedream models are new', () => {
   assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'hot').map(([id]) => id), ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']);
-  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'new').map(([id]) => id), ['seedream-5-0-pro', 'seedream-5-0-lite', 'seedream-5-0-flash']);
+  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'new').map(([id]) => id), ['seedream-5-5', 'seedream-5-0-pro', 'seedream-5-0-lite', 'seedream-5-0-flash']);
 });
 test('parser permits explicit removal, fills newly added models, and strips private fields', () => {
   const result = parseModelBadges({revision: 2, badges: {'seedream-5-0-pro': ''}, updated_by: 'private'});
@@ -25,8 +25,8 @@ test('parser permits explicit removal, fills newly added models, and strips priv
 });
 
 test('all active image, music and video models have unique editable badge slots and multimedia defaults are empty',()=>{
-  assert.deepEqual(MODEL_BADGE_GROUPS.map(group=>[group.value,group.options.length]),[['image',10],['music',2],['video',9]]);
-  assert.equal(new Set(MODEL_BADGE_OPTIONS.map(option=>option.value)).size,21);
+  assert.deepEqual(MODEL_BADGE_GROUPS.map(group=>[group.value,group.options.length]),[['image',11],['music',2],['video',9]]);
+  assert.equal(new Set(MODEL_BADGE_OPTIONS.map(option=>option.value)).size,22);
   const models=[...MUSIC_MODELS,...VIDEO_MODELS.filter(model=>model.available)];
   for(const model of models)assert.equal(DEFAULT_MODEL_BADGES[model.id],'');
   const result=parseModelBadges({revision:5,badges:{'suno':'hot','flowmusic':'new','seedance-2.5':'hot','MiniMax-H3-Max':'new','seedream-5-0-pro':''}});

@@ -17,8 +17,6 @@ import {
   isProviderConfigComplete,
   IMAGE_MODEL_OPTIONS,
   DEFAULT_PLATFORM_MODEL,
-  apimartImageModel,
-  imagePricingLabel,
 } from "../lib/provider";
 import { CLIENT_HEADERS } from "../lib/client";
 
@@ -204,9 +202,9 @@ export default function ProviderSettings({
 
           {billingMode === "platform" ? (
             <div className="space-y-4 rounded-lg border border-accent/30 bg-accent/8 p-4">
-              <div><p className="text-sm font-semibold text-text-primary">平台积分生图</p><p className="mt-1 text-sm leading-6 text-text-muted">{platformModel === "grok-imagine-image-2.0" ? "纯文生图每张 1 积分，参考图编辑每张 2 积分，最多 3 张参考图。按实际保存张数结算，失败退回。" : apimartImageModel(platformModel) ? `${imagePricingLabel(platformModel)}，按实际保存张数结算。结果待确认时保留任务与预留积分，请查询原任务。` : "选择模型后按对应积分计费，失败或超时自动退回。"}</p></div>
+              <p className="text-sm font-semibold text-text-primary">平台积分生图</p>
               <label htmlFor="platform-image-model" className="text-sm font-medium text-text-secondary">模型</label>
-              <ModelPicker id="platform-image-model" value={platformModel} onChange={onPlatformModelChange} options={IMAGE_MODEL_OPTIONS.map(option => ({...option, label: `${option.label}（${imagePricingLabel(option.value)}）`}))}/>
+              <ModelPicker id="platform-image-model" value={platformModel} onChange={onPlatformModelChange} options={IMAGE_MODEL_OPTIONS}/>
               <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">当前积分</p><p className="mt-1 text-xl font-semibold text-accent">{platformCredits}</p></div><div className="rounded-lg border border-border-subtle bg-bg-primary/50 p-3"><p className="text-xs text-text-muted">平台图片服务</p><p className="mt-1 truncate text-sm font-medium text-text-primary">{IMAGE_MODEL_OPTIONS.find(option => option.value === platformModel)?.label || platformModel}</p></div></div>
               {!session && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">请先登录。完成邮箱验证后会自动获得注册赠送积分。</p>}
               {session && !platformReady && <p className="rounded-md border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold">平台积分服务尚未完成配置，请切换到自带 Key 模式。</p>}
