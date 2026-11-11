@@ -22,7 +22,7 @@ PACKAGES = [
     {'id':'pf200','credits':200,'price_fen':8000,'name':'80元200积分'},
     {'id':'pf260','credits':260,'price_fen':10000,'name':'100元260积分'},
 ]
-PURCHASE_URL = 'https://item.taobao.com/item.htm?id=1095173273773&et_token=6920d7ce33949945432eae8a51d200c2&et_ver=1.0'
+PURCHASE_URL = 'https://wzyp.cn/shop/YG4BMC3P'
 CODE = re.compile(r'^PF[A-Z2-7]{26}$')
 
 
@@ -132,7 +132,7 @@ def create_credit_code_blueprint(require_user,require_admin,rate_limit,allowed_o
             try:ready=bool(rpc(SupabaseGateway(),'credit_code_catalog',{}).get('ready'))
             except (CreditCodeError,SupabaseError):pass
         return jsonify(success=True,ready=ready,packages=PACKAGES,purchase_url=PURCHASE_URL,
-                       purchase_available=True,automatic_taobao_verification=False,notice='在淘宝选购套餐并领取本站兑换码，登录后兑换到账；购买与售后请通过淘宝订单处理。')
+                       purchase_available=True,automatic_taobao_verification=False,notice='在店铺选购套餐并领取本站兑换码，登录后兑换到账；购买与售后请通过店铺订单处理。')
 
     @bp.post('/redeem')
     def redeem():
