@@ -47,7 +47,7 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
     <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
       <div><span className="studio-breadcrumb">{['materials','models'].includes(area)?'资料与工具':'工作空间'}</span><ChevronRight size={13} /><strong>{PAGE_TITLES[area]}</strong></div>
       {area === "home" && <a className="studio-github-support" href="https://github.com/Something11235/PosterFlow-AI" target="_blank" rel="noopener noreferrer"><span>AI全功能生成工作台已完全开源至GitHub，如果帮到了你，请点一颗小小的Star，这对我们意义重大</span><ArrowUpRight size={16} aria-hidden="true" /></a>}
-      <div><span className="studio-local-badge"><span />本地新版预览</span><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div>
+      <div><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div>
     </header>
     <div ref={scrollRef} className="studio-scroll">
       {area === "home" && <div className="studio-page studio-home">
