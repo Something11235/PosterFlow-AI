@@ -1,4 +1,4 @@
-import { TAVERN_CONTEXT_CHARS, TAVERN_CONTEXT_OPTIONS, TAVERN_MAX_REPLY_CHARS, normalizeLoreEntries } from './tavern.js';
+import { TAVERN_CONTEXT_CHARS, isValidTavernContextChars, TAVERN_MAX_REPLY_CHARS, normalizeLoreEntries } from './tavern.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeTime = value => Number.isSafeInteger(value) && value >= 0;
@@ -96,7 +96,7 @@ export function branchTavernSession(session, messageId, { content, now = Date.no
   const title = text(session.title ?? '新对话', 160, '对话标题');
   const contextChars = session.contextChars === undefined ? TAVERN_CONTEXT_CHARS : session.contextChars;
   const autoMemory = session.autoMemory === undefined ? false : session.autoMemory;
-  if (!TAVERN_CONTEXT_OPTIONS.includes(contextChars) || typeof autoMemory !== 'boolean') throw new Error('分支上下文或记忆设置无效。');
+  if (!isValidTavernContextChars(contextChars) || typeof autoMemory !== 'boolean') throw new Error('分支上下文或记忆设置无效。');
   return { id: `session-${uuid()}`, characterId: session.characterId, title: `${title.slice(0, 155)} · 分支`,
     createdAt: now, updatedAt: now, sourceSessionId: session.id,
     persona: text(session.persona ?? '', 3000, '用户人设'), personaPresetVersion: 1,

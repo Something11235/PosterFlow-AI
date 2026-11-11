@@ -14,7 +14,7 @@ const payload = plan => JSON.parse(plan.messages[1].content.slice(plan.messages[
 
 test('new sessions initialize disabled auto memory and select a nonempty alternate greeting without changing the card', () => {
   const fresh = createTavernSession(character);
-  assert.equal(fresh.contextChars, 24000);
+  assert.equal(fresh.contextChars, 48000);
   assert.equal(fresh.autoMemory, false);
   assert.equal(fresh.summary, null);
   assert.deepEqual(fresh.summaryHistory, []);
@@ -139,7 +139,7 @@ test('context status counts actual empty input, included/omitted history, and ig
   assert.equal(status.includedHistoryCount, 40);
   assert.equal(status.omittedHistoryCount, 10);
   assert.equal(status.summarizedCount, 0);
-  assert.equal(getTavernContextStatus(character, source, '问').usedChars, status.usedChars + 1);
+  assert.equal(getTavernContextStatus(character, source, '问').usedChars, buildTavernMessages(character, source, '问').reduce((n, m) => n + m.content.length, 0));
   const stale = { ...source, summary: { text: '这份失效摘要不应进入提示词', throughMessageId: 'deleted', createdAt: 1 } };
   assert.equal(getTavernContextStatus(character, stale).summarizedCount, 0);
   assert.ok(!buildTavernMessages(character, stale, '继续')[0].content.includes(stale.summary.text));

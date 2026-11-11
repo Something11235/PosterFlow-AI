@@ -20,6 +20,7 @@ function ResolveForm({ request, onCancel, onResolved, authHeaders }) {
     if (action === 'settle') {
       usage = { status: 'confirmed', cache_miss_tokens: null, reasoning_tokens: null };
       for (const [key, label] of usageFields) {
+        if (key === 'cache_read_tokens' && values[key] === '') { usage[key] = null; continue; }
         if (!/^\d+$/.test(values[key]) || !Number.isSafeInteger(Number(values[key]))) { setError(`${label}需填写服务商确认的非负整数，不能用 0 代替未知用量。`); return; }
         usage[key] = Number(values[key]);
       }

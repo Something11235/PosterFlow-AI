@@ -57,14 +57,16 @@ class TavernPricingTests(unittest.TestCase):
         self.assertEqual(self.quote(usage(incoming=1000000, outgoing=0, cached=1000000)), "0.1200")
         self.assertEqual(self.quote(usage(incoming=0, outgoing=1000000, cached=0, reasoning_tokens=1000000)), "24.0000")
 
-    def test_missing_usage_or_cache_is_unpriceable_never_zero(self):
+    def test_missing_input_output_is_unpriceable_but_missing_cache_uses_standard_rate(self):
         for value in (None, {}, [], "usage", usage(status="missing"), usage(status="invalid"), usage(status="partial"),
-                      usage(cache_read_tokens=None), usage(input_tokens=None), usage(output_tokens=None), usage(total_tokens=None)):
+                      usage(input_tokens=None), usage(output_tokens=None), usage(total_tokens=None)):
             with self.subTest(value=value):
                 self.assertIsNone(self.quote(value))
         without_cache = usage(incoming=0, outgoing=0)
         del without_cache["cache_read_tokens"]
-        self.assertIsNone(self.quote(without_cache))
+        self.assertEqual(self.quote(without_cache), "0.0000")
+        self.assertEqual(self.quote(usage(incoming=2850, outgoing=237, cached=None)), "0.0228")
+        self.assertEqual(self.quote(usage(cached=None, cache_miss_tokens=2000)), "0.0370")
         self.assertEqual(self.quote(usage(incoming=0, outgoing=0, cached=0)), "0.0000")
 
     def test_contradictory_or_unsupported_usage_is_unpriceable(self):

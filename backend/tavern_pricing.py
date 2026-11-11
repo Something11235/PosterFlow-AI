@@ -22,8 +22,9 @@ def _safe_count(value):
 def quote_tavern_credits(model, normalized_usage):
     """Return a four-decimal quote, or None when actual usage is unpriceable.
 
-    Only fully confirmed normalized usage can produce a quote. Cache reads
-    must be explicitly reported, including a real zero. Optional miss/reasoning
+    Confirmed input/output counts produce a quote. Unreported cache reads get
+    no cache discount; a reported miss count can determine the cached portion.
+    Optional miss/reasoning
     details are checked when present, but are never charged a second time.
     """
     if model != PRICING_MODEL or not isinstance(normalized_usage, dict):
@@ -34,12 +35,18 @@ def quote_tavern_credits(model, normalized_usage):
     outgoing = normalized_usage.get("output_tokens")
     total = normalized_usage.get("total_tokens")
     cached = normalized_usage.get("cache_read_tokens")
-    if not all(_safe_count(value) for value in (incoming, outgoing, total, cached)):
+    missed = normalized_usage.get("cache_miss_tokens")
+    if not all(_safe_count(value) for value in (incoming, outgoing, total)):
+        return None
+    if cached is None:
+        if missed is not None and (not _safe_count(missed) or missed > incoming):
+            return None
+        cached = incoming - missed if missed is not None else 0
+    if not _safe_count(cached):
         return None
     if incoming + outgoing > MAX_SAFE_TOKENS or total != incoming + outgoing or cached > incoming:
         return None
     uncached = incoming - cached
-    missed = normalized_usage.get("cache_miss_tokens")
     reasoning = normalized_usage.get("reasoning_tokens")
     if missed is not None and (not _safe_count(missed) or missed != uncached):
         return None

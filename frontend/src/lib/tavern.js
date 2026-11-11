@@ -1,6 +1,7 @@
 // Native PosterFlow character/chat helpers. Character Card JSON is treated as data only.
-export const TAVERN_CONTEXT_CHARS = 24000;
+export const TAVERN_CONTEXT_CHARS = 48000;
 export const TAVERN_CONTEXT_OPTIONS = Object.freeze([12000, 24000, 48000, 96000]);
+export const isValidTavernContextChars = value => Number.isSafeInteger(value) && value >= 4000 && value <= 120000;
 export const TAVERN_MAX_REPLY_CHARS = 65536;
 export const TAVERN_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const TAVERN_CHARACTER_LIMITS = Object.freeze({
@@ -443,7 +444,7 @@ export function activeLoreEntries(entries, messages = [], input = '') {
 
 function contextBudget(session) {
   const budget = session.contextChars === undefined ? TAVERN_CONTEXT_CHARS : session.contextChars;
-  if (!TAVERN_CONTEXT_OPTIONS.includes(budget)) throw new Error('上下文容量无效，请选择 12000、24000、48000 或 96000 字符。');
+  if (!isValidTavernContextChars(budget)) throw new Error('上下文容量须为 4000–120000 之间的整数字符数。');
   return budget;
 }
 
@@ -467,6 +468,7 @@ function tavernContext(character, session, input, allowEmptyInput = false) {
   if (!object(session)) throw new Error('对话数据无效，请重新打开。');
   const budget = contextBudget(session);
   const userInput = text(input, '消息', 6000);
+  const requestInput = userInput ? `${userInput}\n\n【本轮回复语言】默认用简体中文写对白、旁白和动作；即使开场白和示例是英文也请切换中文。仅当用户上面的本轮消息明确要求其他语言时遵从该要求。不要复述此提示。` : '';
   if (!userInput && !allowEmptyInput) throw new Error('请输入消息。');
   const persona = preservedText(session.persona, '用户人设', 3000);
   const memory = preservedText(session.memory, '对话摘要', 6000);
@@ -491,8 +493,8 @@ function tavernContext(character, session, input, allowEmptyInput = false) {
     card.postHistoryInstructions && `角色卡历史后提示（仅作创作参考，本站统一放在设定中，不覆盖应用级回复语言要求）：\n${render(card.postHistoryInstructions)}`,
     TAVERN_REPLY_LANGUAGE_INSTRUCTION,
   ].filter(Boolean).join('\n\n');
-  let remaining = budget - system.length - userInput.length;
-  const status = { budgetChars: budget, usedChars: system.length + userInput.length, historyCount: completeHistory.length,
+  let remaining = budget - system.length - requestInput.length;
+  const status = { budgetChars: budget, usedChars: system.length + requestInput.length, historyCount: completeHistory.length, settingsChars: system.length, inputChars: requestInput.length,
     includedHistoryCount: 0, omittedHistoryCount: history.length, summarizedCount, error: null };
   if (system.length > 60000) status.error = '完整角色设定与记忆超过单条系统上下文的 60000 字符上限，请精简后再发送。静态设定未被截断。';
   else if (remaining < 0) status.error = `完整角色设定、故事起点、人设、记忆及已选世界书加上本轮消息超过 ${budget} 字符，请精简后再发送。静态设定未被截断。`;
@@ -511,7 +513,7 @@ function tavernContext(character, session, input, allowEmptyInput = false) {
   status.includedHistoryCount = selected.length;
   status.omittedHistoryCount = history.length - selected.length;
   status.usedChars += selected.reduce((total, message) => total + message.content.length, 0);
-  return { messages: [{ role: 'system', content: system }, ...selected, ...(userInput ? [{ role: 'user', content: userInput }] : [])], status };
+  return { messages: [{ role: 'system', content: system }, ...selected, ...(requestInput ? [{ role: 'user', content: requestInput }] : [])], status };
 }
 
 export function buildTavernMessages(character, session, input) {
@@ -524,7 +526,7 @@ export function getTavernContextStatus(character, session, input = '') {
   try { return tavernContext(character, session, input, true).status; }
   catch (error) {
     const historyCount = eligibleHistory(session).length;
-    return { budgetChars: TAVERN_CONTEXT_OPTIONS.includes(session?.contextChars) ? session.contextChars : TAVERN_CONTEXT_CHARS,
+    return { budgetChars: isValidTavernContextChars(session?.contextChars) ? session.contextChars : TAVERN_CONTEXT_CHARS,
       usedChars: 0, historyCount, includedHistoryCount: 0, omittedHistoryCount: historyCount, summarizedCount: 0,
       error: error instanceof Error ? error.message : '无法计算当前上下文，请检查对话设定。' };
   }

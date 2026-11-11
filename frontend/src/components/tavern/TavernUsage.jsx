@@ -35,6 +35,7 @@ export function TavernMessageUsage({ record }) {
     </dl></details>}
     {record.outcome === 'unknown' && <p className="tavern-usage-note">调用结果待确认，请核对服务商记录。</p>}
     {record.outcome !== 'unknown' && usage.status === 'invalid' && <p className="tavern-usage-note">服务商返回的用量无效，未计入已知用量。</p>}
+    {known && usage.cache_read_tokens === null && record.billingMode === 'platform' && record.billing?.status === 'settled' && <p className="tavern-usage-note">缓存明细未返回，输入按标准价计费。</p>}
     <TavernBillingSummary billing={record.billing} />
   </div>;
 }

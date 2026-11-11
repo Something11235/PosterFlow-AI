@@ -13,7 +13,7 @@ export function TavernContextMeter({ status }) {
     <div className="tavern-context-meter-heading"><span><Gauge size={14} aria-hidden="true" />上下文</span><strong>{count(status.usedChars)} / {count(status.budgetChars)} 字符</strong></div>
     {measurable && <progress max={status.budgetChars} value={Math.min(status.usedChars, status.budgetChars)} aria-label="已使用上下文字符" aria-valuetext={`${count(status.usedChars)} / ${count(status.budgetChars)} 字符，不是 Token`} />}
     <p className="tavern-context-meter-counts"><span>纳入 {count(status.includedHistoryCount)} 条</span><span>略过 {count(status.omittedHistoryCount)} 条</span><span>摘要覆盖 {count(status.summarizedCount)} 条</span></p>
-    <p className="tavern-context-meter-note">按消息条数与字符统计，字符容量不等于模型 Token 上限。</p>
+    <p className="tavern-context-meter-note">角色设定与记忆 {count(status.settingsChars)} 字符；纳入的历史对话 {count(isCount(status.usedChars) && isCount(status.settingsChars) && isCount(status.inputChars) ? status.usedChars - status.settingsChars - status.inputChars : null)} 字符。角色卡、开场白和世界书也占用上下文，字符容量不等于模型 Token 上限。</p>
     {status.error && <p className="tavern-context-meter-error" role="alert">{status.error}</p>}
     {!status.error && overBudget && <p className="tavern-context-meter-error" role="alert">当前内容超过字符容量，请精简设定或调整上下文容量。</p>}
   </section>;

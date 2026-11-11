@@ -55,7 +55,11 @@ export default function TavernBillingPanel({ authHeaders, onClose, onAccountRefr
     lock.current = true; const turn = ++sequence.current; setBusy('list'); setError('');
     try {
       const data = await fetchTavernRequests(callbacks.current.authHeaders, { admin: false });
-      if (alive.current && turn === sequence.current) setRequests(Array.isArray(data.requests) ? data.requests : []);
+      if (alive.current && turn === sequence.current) {
+        const records = Array.isArray(data.requests) ? data.requests : [];
+        setRequests(records);
+        for (const record of records) await callbacks.current.onReconcile?.(record);
+      }
     } catch (reason) { if (alive.current && turn === sequence.current) setError(reason.message || '账单读取失败，请重试。'); }
     finally { lock.current = false; if (alive.current && turn === sequence.current) { setBusy(''); void refreshBalance(); } }
   }
@@ -69,7 +73,7 @@ export default function TavernBillingPanel({ authHeaders, onClose, onAccountRefr
       if (!data.request) throw new Error('未取得请求记录，请稍后再核对。');
       setRequests(previous => [data.request, ...previous.filter(item => item.request_id !== id)]);
       await callbacks.current.onReconcile?.(data.request);
-      if (alive.current) setNotice('已核对服务端账单，没有重新发送模型请求。');
+      if (alive.current) setNotice('已更新账单状态，没有重新发送模型请求。');
     } catch (reason) { if (alive.current) setError(reason.message || '核对失败，请稍后重试。'); }
     finally { lock.current = false; if (alive.current) { setBusy(''); void refreshBalance(); } }
   }
@@ -77,13 +81,13 @@ export default function TavernBillingPanel({ authHeaders, onClose, onAccountRefr
   return <TavernDialog title="平台账单" eyebrow="TAVERN BILLING" icon={ReceiptText} onClose={onClose} className="tv-billing-dialog">
     <div className="tv-dialog-body tv-billing-panel">
       <p className="tv-billing-note">这里只展示平台积分请求。提交先预留，结算后退回差额；待核对不代表扣费为 0。自带 API 不扣网站积分。</p>
-      <p className="tv-billing-note">回复与摘要可在请求创建后 12 小时内尝试恢复；请及时复制或导出。核对只读取记录，不会重发请求。</p>
+      <p className="tv-billing-note">回复与摘要可在请求创建后 12 小时内尝试恢复；请及时复制或导出。更新状态只读取记录，不会重发请求。</p>
       <div className="tv-billing-toolbar"><span>最近平台请求</span><button type="button" onClick={load} disabled={Boolean(busy)}><RefreshCw size={15} className={busy === 'list' ? 'tv-spin' : ''} />刷新账单</button></div>
       {error && <p className="tv-form-error" role="alert">{error}</p>}{notice && <p className="tv-billing-notice" role="status">{notice}</p>}
       {busy === 'list' && <p className="tv-billing-note" role="status"><LoaderCircle size={16} className="tv-spin" />正在读取账单…</p>}
       {absentIds.length > 0 && <section className="tv-billing-unresolved" aria-label="本地待确认请求"><h3>本地还有待确认请求</h3>{absentIds.map(id => <div key={id}><code>{id}</code><button type="button" disabled={Boolean(busy)} onClick={() => verify(id)}>{busy === id ? '核对中…' : '核对请求'}</button></div>)}</section>}
       {!busy && !error && !requests.length && <p className="tv-billing-empty">暂时没有平台账单。</p>}
-      <div className="tv-billing-records">{requests.map(request => <TavernBillingRecord key={request.request_id} request={request}><div className="tv-billing-actions"><button type="button" disabled={Boolean(busy)} onClick={() => verify(request.request_id)}><RefreshCw size={15} />{busy === request.request_id ? '核对中…' : '核对 / 恢复内容'}</button></div><RecoveredContent request={request} onNotice={setNotice} /></TavernBillingRecord>)}</div>
+      <div className="tv-billing-records">{requests.map(request => <TavernBillingRecord key={request.request_id} request={request}><div className="tv-billing-actions"><button type="button" disabled={Boolean(busy)} onClick={() => verify(request.request_id)}><RefreshCw size={15} />{busy === request.request_id ? '核对中…' : '更新状态 / 恢复内容'}</button></div><RecoveredContent request={request} onNotice={setNotice} /></TavernBillingRecord>)}</div>
     </div>
   </TavernDialog>;
 }

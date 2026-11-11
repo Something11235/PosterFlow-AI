@@ -141,12 +141,12 @@
 .tavern-conversations > .tavern-button { width: 100%; background: #18253a; border-color: #334b6e; color: #bdd5ff; }
 .tavern-conversations > .tavern-eyebrow { margin: 28px 7px 12px; font-size: 10px; }
 .tavern-session-list { display: flex; flex: 1; flex-direction: column; gap: 5px; min-height: 50px; padding: 3px 0; overflow-y: auto; scrollbar-width: thin; }
-.tavern-session-list > button { display: flex; align-items: flex-start; gap: 8px; min-height: 61px; padding: 12px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #96a9c4; font-size: 11px; text-align: left; cursor: pointer; }
-.tavern-session-list > button > svg { margin-top: 1px; }
-.tavern-session-list > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tavern-session-entry > button { display: flex; align-items: flex-start; gap: 8px; min-height: 61px; padding: 12px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #96a9c4; font-size: 11px; text-align: left; cursor: pointer; }
+.tavern-session-entry > button > svg { margin-top: 1px; }
+.tavern-session-entry > button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern-session-list small { display: block; margin-top: 6px; color: #91a3bc; font-size: 9px; }
-.tavern-session-list > button:hover:not(:disabled) { background: #152236; color: #dce7f8; }
-.tavern-session-list > button[aria-current="true"] { border-color: #2a446b; background: #182b47; color: #c9ddff; }
+.tavern-session-entry > button:hover:not(:disabled) { background: #152236; color: #dce7f8; }
+.tavern-session-entry > button[aria-current="true"] { border-color: #2a446b; background: #182b47; color: #c9ddff; }
 .tavern-save-label { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding: 11px 5px 0; border-top: 1px solid var(--tavern-border); color: var(--tavern-muted); font-size: 9px; line-height: 1.7; }
 .tavern-save-label svg { color: #8dbaaf; }
 .tavern-chat-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -362,3 +362,20 @@
 .tavern-platform-balance button:disabled { opacity: .5; cursor: not-allowed; }
 .tavern-platform-balance button:focus-visible { outline: 2px solid #4f8cff; outline-offset: 3px; }
 @media (max-width: 480px) { .tavern-page-bar { flex-wrap: wrap; gap: 12px; } .tavern-page-actions { width: 100%; } .tavern-page-actions > button { flex: 1; } .tavern-platform-balance { padding-inline: 14px; } }
+.tavern-session-entry { display: flex; position: relative; align-items: center; min-width: 0; }
+.tavern-session-entry > button { flex: 1; min-width: 0; padding-right: 30px; }
+.tavern-session-entry > button > span { overflow-wrap: anywhere; }
+.tavern-session-menu { position: relative; flex: 0 0 26px; z-index: 3; }
+.tavern-session-entry > .tavern-session-menu { position: absolute; right: 4px; top: 10px; }
+.tavern-session-menu > summary { cursor: pointer; list-style: none; padding: 5px; color: #9bb5d6; }
+.tavern-session-menu > summary::-webkit-details-marker { display: none; }
+.tavern-session-menu[open] { z-index: 20; }
+.tavern-session-menu > div { position: absolute; right: 0; top: 28px; width: 145px; padding: 6px; background: #121e2d; border: 1px solid #30445f; border-radius: 10px; box-shadow: 0 10px 25px #0006; }
+.tavern-session-menu > div > button { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 10px; color: #d9e6f6; background: transparent; border: 0; border-radius: 6px; text-align: left; cursor: pointer; }
+.tavern-session-menu > div > button:hover { background: #21344e; }
+.tavern-story-name { width: 100%; padding: 12px; margin-top: 10px; border: 1px solid #30445f; border-radius: 10px; color: #e2eaf4; background: #080e16; }
+.tavern-chat-information { flex: 0 0 auto; border-bottom: 1px solid #25354a; }
+.tavern-chat-information > summary { display: flex; gap: 8px; align-items: center; cursor: pointer; min-height: 34px; padding: 6px 20px; font-size: 11px; color: #a9bfdc; list-style: none; }
+.tavern-chat-information > summary > span { margin-left: auto; color: #8296b1; font-size: 10px; }
+.tavern-message-statistics > summary { cursor: pointer; margin-top: 7px; font-size: 10px; color: #8ca6c9; }
+.tavern-chat-column > .tavern-chat-header { min-height: 64px; padding-top: 10px; padding-bottom: 10px; }

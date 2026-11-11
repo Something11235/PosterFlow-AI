@@ -191,7 +191,7 @@ class TavernPlatformTests(unittest.TestCase):
         body = {"user_id": OWNER, "action": "settle", "usage": {**USAGE, "api_key": "strip"}, "reason": "核对服务商账单"}
         route = "/api/tavern/admin/requests/" + REQUEST + "/resolve"
         self.assertEqual(self.client.post(route, json={**body, "actor_id": OWNER}).status_code, 400)
-        self.assertEqual(self.client.post(route, json={**body, "usage": {**USAGE, "cache_read_tokens": None}}).status_code, 400)
+        self.assertEqual(self.client.post(route, json={**body, "usage": {**USAGE, "input_tokens": None}}).status_code, 400)
         response = self.client.post(route, json=body)
         self.assertEqual(response.status_code, 200)
         args = self.store.rpc.call_args.args[1]

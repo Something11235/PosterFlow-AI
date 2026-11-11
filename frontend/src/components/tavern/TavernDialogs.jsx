@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, ChevronDown, Cpu, Download, Eye, EyeOff, Feather, FileUp, KeyRound, Link2, Loader2, Pencil, Plus, Save, Settings2, Sparkles, Trash2, Upload, UserRound, X } from 'lucide-react';
-import { exportLorebook, normalizeCharacter, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
+import { exportLorebook, isValidTavernContextChars, normalizeCharacter, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
 import { requestTavernImport } from '../../lib/tavernClient.js';
 import { TavernContextMeter } from './TavernConversationTools.jsx';
 import './tavern-dialogs.css';
@@ -228,14 +228,14 @@ function TavernPlatformPricing({ pricing }) {
     <table className="tv-pricing-table"><caption>平台文字对话价目</caption><thead><tr><th scope="col">用量类型</th><th scope="col">积分 / {unit}</th></tr></thead><tbody>
       {[['input_uncached', '未缓存输入'], ['cache_read', '缓存读取'], ['output', '输出']].map(([key, label]) => <tr key={key}><th scope="row">{label}</th><td>{displayPrice(pricing.rates[key])}</td></tr>)}
     </tbody></table>
-    <div className="tv-pricing-notes"><p>每轮合计后向上取至 <strong>{displayPrice(pricing.precision)} 积分</strong>。</p><p>缓存读取已含在输入 Token 中，按缓存价单独计入，不与未缓存输入重复计费。</p><p>提交时先预留积分，完成后按实际用量结算并退回差额。剧情摘要会额外调用模型，也按用量计费。结果不明时保留预留，到账单核对，不会自动重发。</p></div>
+    <div className="tv-pricing-notes"><p>每轮合计后向上取至 <strong>{displayPrice(pricing.precision)} 积分</strong>。</p><p>按实际输入和输出 Token 自动结算；服务商未提供缓存明细时按普通输入价收费，已确认的缓存部分按缓存优惠价，不重复计费。</p><p>提交时先预留积分，完成后自动扣费并退回差额。剧情摘要另计用量；只有输入输出缺失或请求结果不明时保留预留，不自动重发，也不阻断其他对话。</p></div>
     {examples.length > 0 ? <div className="tv-pricing-examples"><h4>单轮示例</h4><dl>{examples.map((example, index) => <div key={index}><dt>{displayTokens(example.input_tokens)} 输入 + {displayTokens(example.output_tokens)} 输出<span>{example.cache_read_tokens ? `其中 ${displayTokens(example.cache_read_tokens)} 输入命中缓存` : '输入无缓存命中'}</span></dt><dd>{displayPrice(example.credits)}<span>积分</span></dd></div>)}</dl><p>示例用于说明计费规则，非实际扣费记录。</p></div> : <p className="tv-pricing-example-unavailable">暂未取得计费示例。</p>}
   </section>;
 }
 
 export function TavernSettings({ value, service, onSave, onClose }) {
   const platformReady = service?.platform_configured === true && service?.pricing?.billing_enabled === true;
-  const [draft, setDraft] = useState(() => ({ billingMode: 'platform', endpoint: '', apiKey: '', model: 'deepseek-v4.1-flash', temperature: 0.8, maxTokens: 1024, ...value }));
+  const [draft, setDraft] = useState(() => ({ billingMode: 'platform', apiKey: '', temperature: 0.8, maxTokens: 1024, ...value, endpoint: value?.ownEndpoint ?? (value?.billingMode === 'own_key' ? value.endpoint : ''), model: value?.ownModel ?? (value?.billingMode === 'own_key' ? value.model : '') }));
   const [showKey, setShowKey] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -257,7 +257,7 @@ export function TavernSettings({ value, service, onSave, onClose }) {
     if (!Number.isInteger(Number(draft.maxTokens)) || Number(draft.maxTokens) < 128 || Number(draft.maxTokens) > 4096) { fail('回复长度上限需填写 128 到 4096 之间的整数。', 'tavern-tokens'); return; }
     try {
       setBusy(true); setError('');
-      await onSave({ billingMode: draft.billingMode, endpoint: draft.endpoint.trim(), apiKey: draft.apiKey.trim(), model: draft.billingMode === 'platform' ? 'deepseek-v4.1-flash' : draft.model.trim(), temperature: Number(draft.temperature), maxTokens: Number(draft.maxTokens) });
+      await onSave({ billingMode: draft.billingMode, endpoint: draft.endpoint.trim(), apiKey: draft.apiKey.trim(), model: draft.billingMode === 'platform' ? 'deepseek-v4.1-flash' : draft.model.trim(), ownEndpoint: draft.endpoint.trim(), ownModel: draft.model.trim(), temperature: Number(draft.temperature), maxTokens: Number(draft.maxTokens) });
     } catch (reason) { setError(reason.message || '设置未能保存，请重试。'); }
     finally { setBusy(false); }
   };
@@ -266,10 +266,10 @@ export function TavernSettings({ value, service, onSave, onClose }) {
       <fieldset className="tv-mode-options"><legend className="tv-field-label">选择使用方式</legend>
         {[{ id: 'platform', title: '平台积分', note: '使用平台提供的文字模型', Icon: Sparkles }, { id: 'own_key', title: '自带 API Key', note: '使用自己的模型服务', Icon: KeyRound }].map(({ id, title, note, Icon }) => <label key={id} className={`tv-mode-option${draft.billingMode === id ? ' is-selected' : ''}`}><input type="radio" name="tavern-billing-mode" value={id} checked={draft.billingMode === id} onChange={() => update({ billingMode: id })} disabled={busy} /><Icon size={20} strokeWidth={1.6} /><span><strong>{title}</strong><small>{note}</small></span><span className="tv-radio-mark">{draft.billingMode === id && <Check size={12} />}</span></label>)}
       </fieldset>
-      {draft.billingMode === 'platform' ? <><div className="tv-platform-info tv-platform-pricing-intro"><span className="tv-provider-monogram"><Cpu size={24} /></span><div><small>BUY TOKEN</small><h3>DeepSeek V4.1 Flash</h3><p>{platformReady ? '平台服务已接入。登录后使用账户积分，按实际 Token 用量结算。' : service ? '平台对话服务待开放，接入后可使用账户积分。' : '正在读取平台服务状态。'}</p></div><span className="tv-status-label">{platformReady ? '可用' : service ? '待开放' : '读取中'}</span></div><TavernPlatformPricing pricing={service?.pricing} /></> : <div className="tv-connection-fields">
-        <Field label="对话接口地址" hint="填写支持 OpenAI 兼容对话格式的完整地址。"><input name="tavern-endpoint" type="url" required maxLength={1000} value={draft.endpoint} onChange={event => update({ endpoint: event.target.value })} placeholder="https://你的服务地址/v1/chat/completions" autoComplete="off" spellCheck={false} disabled={busy} /></Field>
+      {draft.billingMode === 'platform' ? <><div className="tv-platform-info tv-platform-pricing-intro"><span className="tv-provider-monogram"><Cpu size={24} /></span><div><small>PLATFORM SERVICE</small><h3>平台积分服务</h3><p>{platformReady ? '平台服务已接入。登录后使用账户积分，按实际 Token 用量结算。' : service ? '平台对话服务待开放，接入后可使用账户积分。' : '正在读取平台服务状态。'}</p></div><span className="tv-status-label">{platformReady ? '可用' : service ? '待开放' : '读取中'}</span></div><TavernPlatformPricing pricing={service?.pricing} /></> : <div className="tv-connection-fields">
+        <Field label="对话接口地址" hint="填写支持 OpenAI 兼容对话格式的完整地址。"><input name="tavern-endpoint" type="url" required maxLength={1000} value={draft.endpoint} onChange={event => update({ endpoint: event.target.value })} placeholder="例如：https://api.example.com/v1/chat/completions" autoComplete="off" spellCheck={false} disabled={busy} /></Field>
         <Field label="API Key" hint="仅用于当前浏览器会话，不写入角色或聊天记录。"><span className="tv-secret-input"><input name="tavern-key" type={showKey ? 'text' : 'password'} required maxLength={2048} value={draft.apiKey} onChange={event => update({ apiKey: event.target.value })} placeholder="粘贴你的 API Key" autoComplete="off" spellCheck={false} disabled={busy} /><button type="button" className="tv-icon-button" onClick={() => setShowKey(current => !current)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'} aria-pressed={showKey}>{showKey ? <EyeOff size={18} /> : <Eye size={18} />}</button></span></Field>
-        <Field label="文字模型"><input name="tavern-model" required maxLength={120} value={draft.model} onChange={event => update({ model: event.target.value })} placeholder="例如 deepseek-v4.1-flash" autoComplete="off" spellCheck={false} disabled={busy} /></Field>
+        <Field label="文字模型"><input name="tavern-model" required maxLength={120} value={draft.model} onChange={event => update({ model: event.target.value })} placeholder="例如：your-model-name" autoComplete="off" spellCheck={false} disabled={busy} /></Field>
         <p className="tv-service-note"><KeyRound size={15} />自带 Key 不扣网站积分，服务商按实际调用收费。</p>
       </div>}
       <section className="tv-language-note" aria-label="默认回复语言"><div><span>默认回复语言</span><strong>简体中文</strong></div><p>后续 AI 回复默认使用简体中文。导入的设定与开场白保留原文，可在编辑角色中修改。</p></section>
@@ -363,6 +363,8 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
 const EMPTY_LORE = { id: '', name: '', keys: [], content: '', enabled: true, constant: false };
 
 export function TavernContextPanel({ session, onChange, onClose, busy: externalBusy = false, onSummarize, onRestoreSummary, onEditSummary, onSettingsChange, contextStatus }) {
+  const [contextDraft, setContextDraft] = useState(String(session.contextChars ?? 48000));
+  useEffect(() => setContextDraft(String(session.contextChars ?? 48000)), [session.id, session.contextChars]);
   const [tab, setTab] = useState('persona');
   const [persona, setPersona] = useState(session.persona || '');
   const [memory, setMemory] = useState(session.memory || '');
@@ -462,7 +464,7 @@ export function TavernContextPanel({ session, onChange, onClose, busy: externalB
           <div className="tv-auto-memory-actions"><button type="button" className="tv-button tv-button-primary" disabled={busy || summaryEditing || typeof onSummarize !== 'function'} onClick={() => runAction(onSummarize, 'summary', '剧情摘要已更新')}>{action === 'summary' ? <Loader2 size={15} className="tv-spin" /> : <Sparkles size={15} />}立即整理剧情</button><button type="button" className="tv-button tv-button-secondary" disabled={busy || summaryEditing || !session.summaryHistory?.length || typeof onRestoreSummary !== 'function'} onClick={() => runAction(onRestoreSummary, 'restore', '已恢复上一版摘要')}>恢复上一版摘要</button></div>
           <label className="tv-check-field"><input type="checkbox" checked={session.autoMemory === true} disabled={busy || summaryEditing || typeof onSettingsChange !== 'function'} onChange={event => { const autoMemory = event.target.checked; runAction(() => onSettingsChange({ autoMemory }), 'settings', '自动摘要设置已保存'); }} />自动整理剧情</label><p className="tv-field-hint">默认关闭。开启后可在需要时自动发起摘要调用，同样计入 Token 用量。</p>
         </section>
-        <section className="tv-context-capacity" aria-label="上下文设置"><Field label="上下文容量" hint="单位为字符，不是 Token。若超过所用模型的实际限制，请调低容量。"><select name="tavern-context-chars" value={session.contextChars ?? 24000} disabled={busy || typeof onSettingsChange !== 'function'} onChange={event => { const contextChars = Number(event.target.value); runAction(() => onSettingsChange({ contextChars }), 'settings', '上下文容量已保存'); }}>{[12000, 24000, 48000, 96000].map(value => <option key={value} value={value}>{value.toLocaleString('zh-CN')} 字符{value === 24000 ? '（默认）' : ''}</option>)}</select></Field><TavernContextMeter status={contextStatus} /></section>
+        <section className="tv-context-capacity" aria-label="上下文设置"><Field label="常用上下文档位" hint="默认48000字符，也可以在下方自定义；这是本站发送预算，不是模型Token上限。"><select name="tavern-context-chars" value={[12000,24000,48000,96000].includes(session.contextChars ?? 48000) ? session.contextChars ?? 48000 : "custom"} disabled={busy || typeof onSettingsChange !== 'function'} onChange={event => { if (event.target.value === "custom") return; const contextChars = Number(event.target.value); runAction(() => onSettingsChange({ contextChars }), 'settings', '上下文容量已保存'); }}><option value="custom">自定义容量</option>{[12000, 24000, 48000, 96000].map(value => <option key={value} value={value}>{value.toLocaleString('zh-CN')} 字符{value === 48000 ? '（默认）' : ''}</option>)}</select></Field><Field label="自定义上下文容量" hint="4000–120000字符；容量越大，每轮可能重发的历史越多，费用相应增加。请勿超过所用模型的实际限制。"><input name="tavern-custom-context" type="number" min="4000" max="120000" step="1" value={contextDraft} disabled={busy} onChange={event => setContextDraft(event.target.value)} /></Field><button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={() => { const contextChars = Number(contextDraft); if (!isValidTavernContextChars(contextChars)) { setError('上下文容量须为4000–120000之间的整数。'); return; } runAction(() => onSettingsChange({ contextChars }), 'settings', '自定义上下文容量已保存'); }}>保存容量</button><TavernContextMeter status={contextStatus} /></section>
       </>}
       {tab === 'lore' && <>
         <p className="tv-context-intro">为人物、地点和事物补充设定，在相关话题出现时带入对话。</p>

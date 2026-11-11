@@ -139,7 +139,7 @@ test('conversation context, summary snapshots and reply variants save and reload
   for (const field of ['contextChars', 'autoMemory', 'summary', 'summaryHistory']) delete old[field];
   delete old.usageRecords[0].kind;
   const migrated = normalizeTavernState({ characters: [], sessions: [old], favorites: [] }).sessions[0];
-  assert.equal(migrated.contextChars, 24000);
+  assert.equal(migrated.contextChars, 48000);
   assert.equal(migrated.autoMemory, false);
   assert.equal(migrated.summary, null);
   assert.deepEqual(migrated.summaryHistory, []);
@@ -149,8 +149,8 @@ test('conversation context, summary snapshots and reply variants save and reload
 test('summary and context schema rejects malformed boundaries, oversized history and unsupported modes', () => {
   const base = createTavernSession(BUILTIN_CHARACTERS[0]);
   const normalize = patch => normalizeTavernState({ characters: [], sessions: [{ ...base, ...patch }], favorites: [] });
-  for (const contextChars of [null, true, '24000', 0, 23999, 96001]) assert.throws(() => normalize({ contextChars }), /上下文/);
-  for (const contextChars of [12000, 24000, 48000, 96000]) assert.equal(normalize({ contextChars }).sessions[0].contextChars, contextChars);
+  for (const contextChars of [null, true, '24000', 0, 3999, 120001, 5000.5]) assert.throws(() => normalize({ contextChars }), /上下文/);
+  for (const contextChars of [4000, 12000, 23999, 24000, 48000, 77777, 96000, 120000]) assert.equal(normalize({ contextChars }).sessions[0].contextChars, contextChars);
   for (const autoMemory of [null, 0, 1, 'true']) assert.throws(() => normalize({ autoMemory }), /开关/);
   const valid = { text: 'x', throughMessageId: 'safe-boundary', createdAt: 1 };
   for (const summary of [[], '', { ...valid, text: '' }, { ...valid, text: ' \n ' }, { ...valid, text: 'x'.repeat(6001) },
@@ -198,7 +198,7 @@ test('new conversation defaults and legacy usage kinds can grow a compliant arch
   const store = mockStore(t, new Map([['legacy-conversation-owner', state]]));
   const loaded = await loadTavernState('legacy-conversation-owner');
   assert.ok(tavernStateBytes(loaded) > QUOTA);
-  assert.equal(loaded.sessions[0].contextChars, 24000);
+  assert.equal(loaded.sessions[0].contextChars, 48000);
   assert.equal(loaded.sessions[0].autoMemory, false);
   assert.equal(loaded.sessions[0].summary, null);
   assert.equal(loaded.sessions[0].usageRecords[0].kind, 'chat');
@@ -283,4 +283,21 @@ test('loading may recover compliant legacy data expanded by migration, while wri
   } finally {
     if (previous) Object.defineProperty(globalThis, 'indexedDB', previous); else delete globalThis.indexedDB;
   }
+});
+
+
+test('renamed and pinned stories survive reload without changing messages or other owners', async t => {
+  mockStore(t);
+  const character = BUILTIN_CHARACTERS[0];
+  const first = { ...createTavernSession(character), title: '海边的长故事', titleEdited: true, pinned: true, contextChars: 24000 };
+  const second = createTavernSession(character);
+  await saveTavernState('story-owner', { characters: [], sessions: [first, second], favorites: [] });
+  const saved = await loadTavernState('story-owner');
+  assert.equal(saved.sessions[0].title, first.title);
+  assert.equal(saved.sessions[0].titleEdited, true);
+  assert.equal(saved.sessions[0].pinned, true);
+  assert.equal(saved.sessions[0].contextChars, 24000);
+  assert.equal(saved.sessions[1].contextChars, 48000);
+  assert.deepEqual(saved.sessions[0].messages, first.messages);
+  assert.equal((await loadTavernState('another-owner')).sessions.length, 0);
 });

@@ -1,4 +1,4 @@
-import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, TAVERN_CONTEXT_OPTIONS, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
+import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, isValidTavernContextChars, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
 import { normalizeTavernUsageRecords } from './tavernUsage.js';
 import { normalizeTavernMessage, validateTavernMessageIds } from './tavernConversation.js';
 
@@ -68,7 +68,7 @@ function normalizeState(state, allowMigrationGrowth = false) {
       : session.legacyReplyCount;
     if (!Number.isSafeInteger(legacyReplyCount) || legacyReplyCount < 0) throw new Error('历史未统计回复数量无效。');
     const contextChars = session.contextChars === undefined ? TAVERN_CONTEXT_CHARS : session.contextChars;
-    if (!TAVERN_CONTEXT_OPTIONS.includes(contextChars)) throw new Error('上下文长度选项无效。');
+    if (!isValidTavernContextChars(contextChars)) throw new Error('上下文长度选项无效。');
     const autoMemory = session.autoMemory === undefined ? false : session.autoMemory;
     if (typeof autoMemory !== 'boolean') throw new Error('自动记忆开关无效。');
     const summaryHistory = session.summaryHistory === undefined ? [] : session.summaryHistory;
@@ -77,6 +77,8 @@ function normalizeState(state, allowMigrationGrowth = false) {
     return {
       id: identifier(session.id), characterId,
       title: safeText(session.title, 160, '对话标题', '新对话'),
+      ...(session.pinned === true ? { pinned: true } : {}),
+      ...(session.titleEdited === true ? { titleEdited: true } : {}),
       createdAt: time(session.createdAt), updatedAt: time(session.updatedAt),
       persona: session.personaPresetVersion === undefined && !persona.trim() ? DEFAULT_TAVERN_PERSONA : persona,
       personaPresetVersion: 1,

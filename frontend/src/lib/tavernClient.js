@@ -57,7 +57,7 @@ export async function resolveTavernRequest(requestId, { user_id, action, usage, 
   if (!validRequestId(requestId) || !validRequestId(user_id) || !['refund', 'settle'].includes(action)
       || typeof reason !== 'string' || reason.trim().length < 5 || reason.trim().length > 500) throw new Error('请填写有效的核对方式、目标账户和 5–500 字处理原因。');
   const normalized = action === 'settle' ? normalizeTavernUsage(usage) : null;
-  if (action === 'settle' && (normalized.status !== 'confirmed' || normalized.cache_read_tokens === null)) throw new Error('请提供已核实的输入、输出、总量和缓存读取 Token。');
+  if (action === 'settle' && normalized.status !== 'confirmed') throw new Error('请提供已核实的输入、输出和总 Token；缓存明细未返回时按标准输入价。');
   const data = await billingFetch(`/api/tavern/admin/requests/${requestId}/resolve`, authHeaders,
     { user_id, action, reason: reason.trim(), ...(normalized ? { usage: normalized } : {}) });
   return { success: true, request: normalizeBillingRequest(data.request || data.requests?.[0]) };

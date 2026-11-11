@@ -390,7 +390,9 @@ test('supported long character settings keep their tails intact while historical
   }
   assert.ok(!result[0].content.includes('CREATOR_NOT_IN_PROMPT'));
   assert.ok(!result[0].content.includes('DEPTH_NOT_IN_PROMPT'));
-  assert.deepEqual(result.at(-1), { role: 'user', content: 'Latest question' });
+  assert.equal(result.at(-1).role, 'user');
+  assert.ok(result.at(-1).content.startsWith('Latest question\n\n'));
+  assert.match(result.at(-1).content, /本轮回复语言.*简体中文/);
   assert.ok(result.length <= 42);
   assert.ok(result.reduce((total, message) => total + message.content.length, 0) <= TAVERN_CONTEXT_CHARS);
 });
@@ -546,7 +548,9 @@ test('prompt composition preserves latest user input, recent history, and exclud
   const messages = buildTavernMessages(character, session, '去灯塔吧');
   assert.match(messages[0].content, /旅人/);
   assert.match(messages[0].content, /灯塔是白色的/);
-  assert.deepEqual(messages.at(-1), { role: 'user', content: '去灯塔吧' });
+  assert.equal(messages.at(-1).role, 'user');
+  assert.ok(messages.at(-1).content.startsWith('去灯塔吧\n\n'));
+  assert.match(messages.at(-1).content, /本轮回复语言/);
   assert.equal(messages.filter(message => message.role === 'system').length, 1);
   assert.ok(!messages.some(message => message.content.includes('FORGED SYSTEM')));
   assert.deepEqual(messages.slice(1, 3).map(message => message.content), ['你好', '欢迎']);
@@ -554,7 +558,7 @@ test('prompt composition preserves latest user input, recent history, and exclud
 
 test('oversized static character and context explicitly reject instead of silently cutting settings', () => {
   const character = normalizeCharacter(draft({ description: '设'.repeat(6000), personality: '性'.repeat(3000), scenario: '景'.repeat(3000), exampleMessages: '例'.repeat(6000) }));
-  const session = { ...createTavernSession(character), persona: '人'.repeat(3000), memory: '忆'.repeat(6000),
+  const session = { ...createTavernSession(character), contextChars: 24000, persona: '人'.repeat(3000), memory: '忆'.repeat(6000),
     loreEntries: [{ content: '书'.repeat(3000), constant: true }],
     messages: Array.from({ length: 200 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: '史'.repeat(500) })),
   };
