@@ -46,3 +46,5 @@
 .tv-admin-billing-confirm p { margin-top: 0; }
 @media (max-width: 480px) { .tv-billing-record { padding: 11px; } .tv-billing-summary { flex-direction: column; align-items: flex-start; gap: 3px; } .tv-billing-record-head { gap: 4px; } .tv-billing-record-head > span { font-size: 11px; } .tv-admin-billing { padding: 12px; } .tv-admin-usage-fields { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .tv-billing-panel .tv-spin, .tv-admin-billing .tv-spin { animation: none; } }
+
+.tv-billing-toolbar select { padding: 8px; color: #d5e6fc; background: #101b2b; border: 1px solid #30445f; border-radius: 7px; }

@@ -215,7 +215,7 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
         raise TavernPlatformError("TAVERN_INVALID_MODEL", "平台模式只支持当前已定价的模型。", 400)
     request_id = normalize_request_id(data.get("request_id"))
     kind = data.get("kind", "chat")
-    if not isinstance(kind, str) or kind not in {"chat", "summary"}:
+    if not isinstance(kind, str) or kind not in {"chat", "summary", "assist"}:
         raise TavernPlatformError("TAVERN_INVALID_INPUT", "对话请求类型无效。", 400)
     body = build_chat_request({key: value for key, value in data.items() if key not in {"request_id", "kind"}})
     body["model"] = settings["model"]
@@ -303,6 +303,18 @@ def register_platform_routes(bp, server):
             raise TavernPlatformError("TAVERN_NOT_FOUND", "未找到本人的对话请求。", 404)
         return jsonify(success=True, requests=records, request=records[0] if request_id else None,
                        credit_balance=value.get("balance"))
+
+    @bp.get("/admin/overview")
+    def admin_overview():
+        check_origin()
+        actor = _authenticated(server, admin=True)
+        days = request.args.get("days", "30")
+        if days not in {"7", "30", "90"}:
+            raise TavernPlatformError("TAVERN_INVALID_INPUT", "请选择近7、30或90天。", 400)
+        _rate(server, "tavern-admin-overview", actor.id, 30)
+        value = TavernStore().rpc("admin_tavern_overview", {"p_actor_id": actor.id, "p_days": int(days)})
+        return jsonify(success=True, days=value.get("days"), since=value.get("since"), stats=value.get("stats", {}),
+                       requests=[public_request(row, admin=True) for row in value.get("requests", [])[:50]])
 
     @bp.get("/admin/requests")
     def admin_requests():

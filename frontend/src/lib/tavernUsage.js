@@ -72,7 +72,7 @@ export function normalizeTavernUsageRecords(value = []) {
     if (!['own_key', 'platform'].includes(record.billingMode)) throw new Error('用量记录计费方式无效。');
     if (!['completed', 'unknown', 'rejected'].includes(record.outcome)) throw new Error('用量记录结果状态无效。');
     const kind = record.kind === undefined ? 'chat' : record.kind;
-    if (!['chat', 'summary'].includes(kind)) throw new Error('用量记录调用类型无效。');
+    if (!['chat', 'summary', 'assist'].includes(kind)) throw new Error('用量记录调用类型无效。');
     return {
       id: identifier(record.id), messageId: identifier(record.messageId, true), createdAt: record.createdAt,
       model: record.model, billingMode: record.billingMode, outcome: record.outcome, kind,

@@ -1,0 +1,15 @@
+.tv-appearance-preview { min-height: 165px; padding: 20px; display: grid; align-content: space-between; gap: 25px; border: 1px solid #2a405d; border-radius: 15px; background-size: cover; background-position: center; color: #e8f1ff; }
+.tv-appearance-preview > span { font-size: 11px; color: #bacfe9; }
+.tv-appearance-sample { width: fit-content; max-width: 95%; padding: 12px 16px; margin: 0; font-size: 13px; line-height: 1.9; border-radius: 3px 14px 14px; }
+.tavern-message-list.tv-chat-background { background-size: cover; background-position: center; }
+.tavern-message-list.tv-surface-glass .tavern-message .tavern-message-content > p, .tv-surface-glass .tv-appearance-sample { background: linear-gradient(130deg,#2844639e,#0b172a85); border: 1px solid #bbd9ff40; backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: inset 0 1px 0 #fff2,0 8px 25px #0002; color: #edf5ff; }
+.tavern-message-list.tv-surface-solid .tavern-message .tavern-message-content > p, .tv-surface-solid .tv-appearance-sample { background: #111c2b; border: 1px solid #314660; color: #e6f0ff; }
+.tavern-message-list.tv-surface-none .tavern-message .tavern-message-content > p, .tv-surface-none .tv-appearance-sample { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; color: #edf5ff; }
+.tv-appearance-options { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; padding: 0; border: 0; }
+.tv-appearance-options legend { margin-bottom: 10px; font-size: 13px; color: #d3e3f7; }
+.tv-appearance-options label { display: flex; align-items: center; gap: 7px; padding: 10px; font-size: 12px; border: 1px solid #2a405d; border-radius: 8px; cursor: pointer; }
+.tv-appearance-options label:has(input:checked) { border-color: #73a3ec; background: #1d3455; }
+.tv-background-upload, .tv-dim-control { display: grid; gap: 10px; margin: 18px 0 10px; font-size: 13px; color: #d3e3f7; }
+.tv-background-upload input { width: 100%; font-size: 12px; }
+.tv-dim-control input { width: 100%; accent-color: #72a7f6; }
+.tavern-composer-tools { flex-wrap: wrap; }

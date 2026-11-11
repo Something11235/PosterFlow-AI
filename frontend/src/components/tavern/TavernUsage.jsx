@@ -21,7 +21,7 @@ export function TavernMessageUsage({ record }) {
   const reasoning = known && validCount(usage.reasoning_tokens);
   const cacheMiss = known && validCount(usage.cache_miss_tokens);
   return <div className="tavern-usage-message" aria-label="本次调用 Token 用量">
-    <span className="tavern-usage-caption">{record.kind === 'summary' ? '剧情摘要 Token' : '本次 Token'}</span>
+    <span className="tavern-usage-caption">{record.kind === 'assist' ? 'AI 助写 Token' : record.kind === 'summary' ? '剧情摘要 Token' : '本次 Token'}</span>
     {!known && <span className="tavern-usage-badge">用量待确认</span>}
     {known && usage.status === 'partial' && <span className="tavern-usage-badge">部分字段</span>}
     <dl className="tavern-usage-inline">
@@ -86,7 +86,7 @@ export function TavernSessionUsage({ session, pendingRequestId }) {
         const historical = record.messageId && !messageIds.has(record.messageId);
         const date = new Date(record.createdAt);
         const hasDate = Number.isFinite(date.getTime());
-        return <li key={record.id}><div className="tavern-usage-record-heading"><strong>第 {sequence} 次调用{record.kind === 'summary' ? ' · 剧情摘要' : historical ? ' · 历史回复' : ''}</strong>{pending && <span className="tavern-usage-badge is-pending">等待回复</span>}{hasDate && <time dateTime={date.toISOString()}>{date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>}</div>
+        return <li key={record.id}><div className="tavern-usage-record-heading"><strong>第 {sequence} 次调用{record.kind === 'assist' ? ' · AI 助写' : record.kind === 'summary' ? ' · 剧情摘要' : historical ? ' · 历史回复' : ''}</strong>{pending && <span className="tavern-usage-badge is-pending">等待回复</span>}{hasDate && <time dateTime={date.toISOString()}>{date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>}</div>
           <p className="tavern-usage-record-model">{record.model || '模型未记录'} · {record.billingMode === 'platform' ? '平台服务' : '自带 API'}</p>
           {pending ? <p className="tavern-usage-note">回复完成后显示用量。</p> : <TavernMessageUsage record={record} />}
         </li>;

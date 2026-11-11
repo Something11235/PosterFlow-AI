@@ -20,7 +20,7 @@ export function TavernBillingRecord({ request, children }) {
   const date = new Date(request.created_at);
   const usage = request.usage;
   return <article className="tv-billing-record">
-    <div className="tv-billing-record-head"><strong>{request.kind === 'summary' ? '剧情摘要' : '角色对话'}</strong><span>{Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN') : '时间未返回'}</span></div>
+    <div className="tv-billing-record-head"><strong>{request.kind === 'assist' ? 'AI 助写' : request.kind === 'summary' ? '剧情摘要' : '角色对话'}</strong><span>{Number.isFinite(date.getTime()) ? date.toLocaleString('zh-CN') : '时间未返回'}</span></div>
     <p className="tv-billing-model">{request.model || '模型未返回'}</p>
     <TavernBillingSummary billing={request.billing || request} />
     <details className="tv-billing-details"><summary>请求与用量明细</summary><dl><div><dt>请求编号</dt><dd>{request.request_id}</dd></div>{request.user_id && <div><dt>用户编号</dt><dd>{request.user_id}</dd></div>}{[['input_tokens', '输入 Token'], ['output_tokens', '输出 Token'], ['cache_read_tokens', '缓存读取（含在输入内）']].map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{Number.isSafeInteger(usage?.[key]) && usage[key] >= 0 ? usage[key].toLocaleString('zh-CN') : '未返回'}</dd></div>)}</dl>{request.error_code && <p>状态代码：{request.error_code}</p>}</details>
@@ -39,7 +39,7 @@ function RecoveredContent({ request, onNotice }) {
     const link = document.createElement('a'); link.href = url; link.download = `酒馆恢复-${request.request_id}.txt`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return <details className="tv-billing-recovery"><summary>查看可恢复{request.kind === 'summary' ? '摘要' : '回复'}</summary><p>内容仅供核对、复制或导出，不会自动加入当前对话或覆盖剧情摘要。</p><textarea readOnly value={request.content} rows={7} aria-label="可恢复内容" /><div className="tv-billing-actions"><button type="button" onClick={copy}><Copy size={15} />复制内容</button><button type="button" onClick={download}><Download size={15} />导出文字</button></div></details>;
+  return <details className="tv-billing-recovery"><summary>查看可恢复{request.kind === 'assist' ? '助写草稿' : request.kind === 'summary' ? '摘要' : '回复'}</summary><p>内容仅供核对、复制或导出，不会自动加入当前对话或覆盖剧情摘要。</p><textarea readOnly value={request.content} rows={7} aria-label="可恢复内容" /><div className="tv-billing-actions"><button type="button" onClick={copy}><Copy size={15} />复制内容</button><button type="button" onClick={download}><Download size={15} />导出文字</button></div></details>;
 }
 
 export default function TavernBillingPanel({ authHeaders, onClose, onAccountRefresh, onReconcile, pendingRequestIds = [] }) {

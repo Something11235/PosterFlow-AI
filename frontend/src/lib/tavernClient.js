@@ -19,7 +19,7 @@ function normalizeBillingRequest(value) {
   return { request_id: value.request_id.toLowerCase(), billing, status: billing.status,
     request_status: ['reserved', 'completed', 'failed', 'unknown'].includes(value.request_status) ? value.request_status : null,
     model: typeof value.model === 'string' ? value.model.slice(0, 128) : '',
-    kind: value.kind === 'summary' ? 'summary' : 'chat', usage: normalizeTavernUsage(value.usage),
+    kind: ['summary', 'assist'].includes(value.kind) ? value.kind : 'chat', usage: normalizeTavernUsage(value.usage),
     content: typeof value.content === 'string' && value.content.length <= 65536 ? value.content : null,
     created_at: typeof value.created_at === 'string' ? value.created_at.slice(0, 50) : '',
     error_code: typeof value.error_code === 'string' ? value.error_code.slice(0, 100) : null,
@@ -130,7 +130,7 @@ export async function requestTavernImport({ url, kind, signal }) {
 export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, messages, signal, onDelta, authHeaders = {}, requestId, kind = 'chat' }) {
   const mode = settings.billingMode ?? settings.billing_mode ?? "platform";
   if (!['platform', 'own_key'].includes(mode)) throw notSubmitted('请选择平台积分或自带 API Key 模式。');
-  if (mode === 'platform' && (!validRequestId(requestId) || !['chat', 'summary'].includes(kind))) throw notSubmitted('本次平台调用缺少有效请求编号，请重新打开对话。');
+  if (mode === 'platform' && (!validRequestId(requestId) || !['chat', 'summary', 'assist'].includes(kind))) throw notSubmitted('本次平台调用缺少有效请求编号，请重新打开对话。');
   const headers = new Headers({ "Content-Type": "application/json" });
   // Forward only site auth to our own backend, never unrelated provider keys.
   const auth = new Headers(authHeaders);
@@ -226,4 +226,11 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
     activeRequests.delete(intent);
     signal?.removeEventListener("abort", abort);
   }
+}
+
+export async function fetchAdminTavernOverview(authHeaders = {}, days = 30) {
+  if (![7, 30, 90].includes(days)) throw new Error('请选择近7、30或90天。');
+  const data = await billingFetch(`/api/tavern/admin/overview?days=${days}`, authHeaders);
+  if (!data.stats || typeof data.stats !== 'object' || !Array.isArray(data.requests) || data.requests.length > 50) throw new Error('酒馆运营数据格式无效。');
+  return { stats: data.stats, requests: data.requests.map(normalizeBillingRequest) };
 }

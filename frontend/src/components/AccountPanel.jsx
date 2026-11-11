@@ -34,7 +34,7 @@ function Stat({ label, value, accent = false }) { return <div className="rounded
 function TransactionRow({ item }) {
   const tavern = item.metadata?.media_type === "tavern";
   const settled = tavern && item.type === "spend";
-  const title = tavern ? `${item.metadata.kind === "summary" ? "酒馆剧情摘要" : "酒馆角色对话"} · ${item.type === "reserve" ? "积分预留" : item.type === "refund" ? "积分退回" : item.type === "spend" ? "已结算" : "积分变动"}`
+  const title = tavern ? `${item.metadata.kind === "assist" ? "酒馆AI助写" : item.metadata.kind === "summary" ? "酒馆剧情摘要" : "酒馆角色对话"} · ${item.type === "reserve" ? "积分预留" : item.type === "refund" ? "积分退回" : item.type === "spend" ? "已结算" : "积分变动"}`
     : item.type === "signup_bonus" ? "注册奖励" : item.type === "refund" ? "生成退款" : item.type === "purchase" ? "充值到账" : item.type === "spend" ? "创作消费" : item.type === "reserve" ? "生成预扣" : "积分调整";
   return <div className="flex items-center justify-between gap-3 px-3 py-3 text-sm"><span className="min-w-0 text-text-secondary">{title}{settled && <small className="mt-1 block text-xs text-text-muted">从已预留积分中结算</small>}</span><strong className={`flex-shrink-0 text-right ${!settled && Number(item.delta) >= 0 ? "text-mint" : "text-text-primary"}`}>{settled ? <>消费 {displayCredits(item.metadata.charged_credits, "待确认")}</> : <>{Number(item.delta) > 0 ? "+" : ""}{displayCredits(item.delta)}</>}</strong></div>;
 }

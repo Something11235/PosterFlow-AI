@@ -92,6 +92,23 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertEqual(response.json["billing"], {"request_id": REQUEST, "status": "settled", "reserved_credits": "0.1000", "charged_credits": "0.0084"})
         self.assertEqual(response.json["credit_balance"], "9.9916")
 
+    def test_assist_is_independent_billed_request_kind(self):
+        response = self.post({**self.body, "kind": "assist"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.store.begin.call_args.args[:3], (OWNER, REQUEST, "assist"))
+        self.submit.assert_called_once()
+        self.assertNotIn("kind", self.submit.call_args.args[2])
+
+    def test_admin_overview_validates_range_and_uses_authenticated_actor(self):
+        self.store.rpc.return_value = {"ok": True, "days": 30, "stats": {"assist": 1}, "requests": []}
+        response = self.client.get("/api/tavern/admin/overview?days=30")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["stats"]["assist"], 1)
+        self.assertEqual(self.store.rpc.call_args.args, ("admin_tavern_overview", {"p_actor_id": ACTOR, "p_days": 30}))
+        self.store.rpc.reset_mock()
+        self.assertEqual(self.client.get("/api/tavern/admin/overview?days=999").status_code, 400)
+        self.store.rpc.assert_not_called()
+
     def test_bad_parameters_client_credentials_and_auth_fail_before_reservation(self):
         for body in ({**self.body, "request_id": "bad"}, {**self.body, "kind": "image"},
                      {**self.body, "kind": {}},

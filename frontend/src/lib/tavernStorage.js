@@ -1,3 +1,4 @@
+import { normalizeTavernAppearance } from './tavernAppearance.js';
 import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, isValidTavernContextChars, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
 import { normalizeTavernUsageRecords } from './tavernUsage.js';
 import { normalizeTavernMessage, validateTavernMessageIds } from './tavernConversation.js';
@@ -96,7 +97,7 @@ function normalizeState(state, allowMigrationGrowth = false) {
     };
   }), '对话');
   const favorites = [...new Set(state.favorites.map(identifier))].filter(value => known.has(value));
-  const normalized = { characters, sessions, favorites };
+  const normalized = { characters, sessions, favorites, ...(state.appearance === undefined ? {} : { appearance: normalizeTavernAppearance(state.appearance) }) };
   if (tavernStateBytes(normalized) > MAX_BYTES) {
     // Only loading an originally compliant legacy record may cross the quota as
     // known migrations add fields. Editing and saving must still fit the quota.

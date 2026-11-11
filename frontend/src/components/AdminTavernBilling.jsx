@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import AdminTavernOverview from './AdminTavernOverview';
 import { RefreshCw, ShieldCheck } from 'lucide-react';
 import { fetchTavernRequests, resolveTavernRequest } from '../lib/tavernClient';
 import { TavernBillingRecord } from './tavern/TavernBillingPanel';
@@ -64,12 +65,12 @@ export default function AdminTavernBilling({ authHeaders, refreshKey, onResolved
     setRequests(previous => previous.filter(item => item.request_id !== request.request_id)); setEditing(null); setNotice('处理结果已保存，积分变动以服务端账单为准。');
     try { await callbacks.current.onResolved?.(request); } catch { /* The resolution already succeeded; refresh errors do not undo it. */ }
   }
-  return <section className="tv-admin-billing" aria-label="酒馆平台待核对账单">
+  return <><AdminTavernOverview authHeaders={authHeaders} refreshKey={refreshKey} /><section className="tv-admin-billing" aria-label="酒馆平台待核对账单">
     <div className="tv-billing-toolbar"><h3><ShieldCheck size={16} aria-hidden="true" /> AI 酒馆 · 待核对账单</h3><button type="button" onClick={load} disabled={busy || Boolean(editing)}><RefreshCw size={15} className={busy ? 'tv-spin' : ''} />刷新酒馆账单</button></div>
     <p className="tv-billing-note">独立展示最近 50 条已预留或待核对的平台请求，不受上方用户与日期筛选影响。请先核实服务商记录，再退款或补录结算；不要重新发送对话。</p>
     {error && <p className="tv-form-error" role="alert">{error}</p>}{notice && <p className="tv-billing-notice" role="status">{notice}</p>}
     {busy && <p className="tv-billing-note" role="status">正在读取待核对请求…</p>}
     {!busy && !error && !requests.length && <p className="tv-billing-empty">暂无待核对的酒馆账单。</p>}
     <div className="tv-billing-records">{requests.map(request => <TavernBillingRecord key={request.request_id} request={request}>{editing === request.request_id ? <ResolveForm request={request} authHeaders={authHeaders} onCancel={() => setEditing(null)} onResolved={resolved} /> : ['held', 'awaiting_review'].includes(request.status) && <div className="tv-billing-actions"><button type="button" disabled={busy || Boolean(editing)} onClick={() => setEditing(request.request_id)}>核对并处理</button></div>}</TavernBillingRecord>)}</div>
-  </section>;
+  </section></>;
 }
