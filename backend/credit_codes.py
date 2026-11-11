@@ -22,7 +22,7 @@ PACKAGES = [
     {'id':'pf200','credits':200,'price_fen':8000,'name':'80元200积分'},
     {'id':'pf260','credits':260,'price_fen':10000,'name':'100元260积分'},
 ]
-PURCHASE_URL = 'https://wzyp.cn/shop/YG4BMC3P'
+PURCHASE_URL = 'https://wzyp.cn/shop/posterflow-ai'
 CODE = re.compile(r'^PF[A-Z2-7]{26}$')
 
 
