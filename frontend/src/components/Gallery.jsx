@@ -39,6 +39,8 @@ export default function Gallery({
   onDismissDownloadError,
   isExporting = false,
   onAddToCanvas,
+  onSaveTavernBackground,
+  tavernBackgroundImports = [],
   onCopyPrompt,
   onRetry,
   providerModel,
@@ -260,6 +262,7 @@ export default function Gallery({
                     </div>
                   </div>
                   <div className="px-3 pb-3">
+                    {onSaveTavernBackground && <button type="button" onClick={() => onSaveTavernBackground(img.filename)} disabled={tavernBackgroundImports.some(item => item.filename === img.filename)} className="mb-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-accent/35 bg-accent/5 px-3 text-xs text-accent transition hover:bg-accent/10 disabled:opacity-50"><ImagePlus size={15} />{tavernBackgroundImports.some(item => item.filename === img.filename) ? '正在存入背景库…' : '存入酒馆背景库'}</button>}
                     <BackupImageDownload filename={img.filename} authenticated={authenticated} authHeaders={authHeaders} />
                     <p className="mt-2 text-xs leading-5 text-text-muted">若网络不佳或下载失败，请点击“备用下载”。</p>
                   </div>

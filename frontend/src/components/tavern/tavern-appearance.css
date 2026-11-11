@@ -13,3 +13,30 @@
 .tv-background-upload input { width: 100%; font-size: 12px; }
 .tv-dim-control input { width: 100%; accent-color: #72a7f6; }
 .tavern-composer-tools { flex-wrap: wrap; }
+.tv-appearance-dialog { width: min(780px, calc(100vw - 32px)); }
+.tv-background-library { margin: 26px 0; padding-bottom: 24px; border-bottom: 1px solid var(--tv-d-border-subtle); }
+.tv-background-library-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.tv-background-library-heading h3 { font-size: 18px; color: var(--tv-d-text); margin: 5px 0 0; }
+.tv-background-library-heading small, .tv-background-library-heading > span { font-size: 12px; font-weight: 400; color: var(--tv-d-muted); }
+.tv-background-library-tools { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.tv-background-import { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; border: 1px solid var(--tv-d-border); border-radius: 9px; padding: 10px 16px; background: var(--tv-d-surface); color: var(--tv-d-secondary); font-size: 13px; cursor: pointer; }
+.tv-background-import input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.tv-background-import:focus-within { outline: 2px solid var(--tv-d-blue); outline-offset: 3px; }
+.tv-background-import.is-disabled { opacity: .5; cursor: not-allowed; }
+.tv-background-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-top: 18px; }
+.tv-background-card { border: 1px solid var(--tv-d-border); border-radius: 11px; overflow: hidden; background: var(--tv-d-deep); min-width: 0; }
+.tv-background-card.is-selected { border-color: var(--tv-d-blue); box-shadow: 0 0 0 1px var(--tv-d-blue); }
+.tv-background-card > label { position: relative; display: block; cursor: pointer; }
+.tv-background-card input { position: absolute; top: 10px; left: 10px; accent-color: var(--tv-d-blue); width: 18px; height: 18px; }
+.tv-background-card img { width: 100%; height: auto; aspect-ratio: 16/9; object-fit: cover; display: block; }
+.tv-background-card label > span { display: block; padding: 10px 12px 2px; font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-background-selected { position: absolute; right: 8px; top: 8px; padding: 3px; box-sizing: content-box; color: white; background: var(--tv-d-blue); border-radius: 50%; }
+.tv-background-card > div { display: flex; justify-content: space-between; align-items: center; padding: 0 4px 0 12px; }
+.tv-background-card small { font-size: 11px; color: var(--tv-d-muted); }
+.tv-background-card button { display: grid; place-items: center; min-height: 44px; min-width: 44px; color: var(--tv-d-muted); background: transparent; border: 0; cursor: pointer; }
+.tv-background-card button:hover { color: #ffaaaa; }
+.tv-background-empty { display: grid; justify-items: center; gap: 9px; padding: 30px 12px; margin-top: 18px; border: 1px dashed var(--tv-d-border); border-radius: 12px; color: var(--tv-d-muted); text-align: center; }
+.tv-background-empty p { color: var(--tv-d-secondary); font-size: 14px; margin: 0; }.tv-background-empty span { font-size: 12px; }
+.tv-background-delete { margin-top: 16px; padding: 14px; border: 1px solid #f0646450; border-radius: 9px; background: #f0646408; }
+.tv-background-delete p { font-size: 13px; line-height: 1.8; margin: 0 0 12px; }.tv-background-delete button { margin: 0 8px 8px 0; }
+@media (max-width: 540px) { .tv-background-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; } .tv-background-library-tools > * { flex: 1 1 100%; } }

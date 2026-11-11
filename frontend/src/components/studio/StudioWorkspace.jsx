@@ -15,7 +15,7 @@ const ICONS = { image: Image, video: Video, music: Music2, tavern: MessagesSquar
 const HOME_AREAS = [...STUDIO_AREAS, { id: "tavern", en: "AI TAVERN", label: "AI 酒馆", description: "角色对话 · 角色卡导入 · 世界书", status: "全新空间" }];
 const TavernWorkspace = lazy(() => import("../tavern/TavernWorkspace"));
 const PAGE_TITLES = { home: "创作总览", video: "视频创作", music: "音乐创作", materials: "创作素材", models: "模型一览", tavern: "AI 酒馆" };
-export default function StudioWorkspace({ area, onAreaChange, onStartImage, username, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
+export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
   const [idea, setIdea] = useState("");
   const [tavernVisited, setTavernVisited] = useState(area === "tavern");
   useEffect(() => { if (area === "tavern") setTavernVisited(true); }, [area]);
@@ -44,11 +44,11 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
     onAreaChange(kind);
   }
   return <div className="studio-workspace" data-studio-area={area}>
-    <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
+    {area !== "tavern" && <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
       <div><span className="studio-breadcrumb">{['materials','models'].includes(area)?'资料与工具':'工作空间'}</span><ChevronRight size={13} /><strong>{PAGE_TITLES[area]}</strong></div>
       {area === "home" && <a className="studio-github-support" href="https://github.com/Something11235/PosterFlow-AI" target="_blank" rel="noopener noreferrer"><span>AI全功能生成工作台已完全开源至GitHub，如果帮到了你，请点一颗小小的Star，这对我们意义重大</span><ArrowUpRight size={16} aria-hidden="true" /></a>}
       <div><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div>
-    </header>
+    </header>}
     <div ref={scrollRef} className="studio-scroll">
       {area === "home" && <div className="studio-page studio-home">
         <section className="studio-intro"><div><p className="studio-eyebrow">YOUR NEXT IDEA STARTS HERE <span>↗</span></p><h1>让想象，<span>拥有更多表达。</span></h1><p className="studio-intro-copy">{username ? `${username}，欢迎回来。` : "欢迎来到你的创作空间。"}从一段文字出发，探索图像、音乐、视频与角色故事。</p></div><div className="studio-edition"><span>POSTERFLOW STUDIO</span><strong>One idea.<br /><em>More possibilities.</em></strong><small>创作，由你定义。 / 2026</small></div></section>
@@ -62,7 +62,7 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, user
 
       <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} />
 
-      {(area === "tavern" || tavernVisited) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartImage={onStartImage} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
+      {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
 
       {area === "materials" && <CreativeMaterials identity={identity} presetLibrary={presetLibrary} onImportCompanion={onImportCompanion} onUseStylePrompt={onStartImage} />}
 

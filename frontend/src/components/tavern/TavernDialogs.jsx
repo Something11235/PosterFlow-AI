@@ -4,6 +4,8 @@ import { BookOpen, Check, ChevronDown, Cpu, Download, Eye, EyeOff, Feather, File
 import { exportLorebook, isValidTavernContextChars, normalizeCharacter, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
 import { requestTavernImport } from '../../lib/tavernClient.js';
 import { TavernContextMeter } from './TavernConversationTools.jsx';
+import TavernExportActions from './TavernExportActions';
+import TavernUserAvatar from './TavernUserAvatar';
 import './tavern-dialogs.css';
 
 export function TavernDialog({ title, eyebrow, icon: Icon, onClose, children, className = '' }) {
@@ -127,6 +129,7 @@ export function CharacterEditor({ character, onSave, onClose }) {
           <div className="tv-alternate-actions"><span>{draft.alternateGreetings.length} / {TAVERN_CHARACTER_LIMITS.alternateGreetings} 条</span><button type="button" className="tv-button tv-button-secondary" disabled={busy || draft.alternateGreetings.length >= TAVERN_CHARACTER_LIMITS.alternateGreetings} onClick={() => update({ alternateGreetings: [...draft.alternateGreetings, ''] })}><Plus size={16} />添加备用开场</button></div>
         </div></details>
         {error && <p className="tv-form-error" role="alert">{error}</p>}
+        <details className="tv-disclosure"><summary><Download size={16} /><span>导出角色卡 / 世界书</span><ChevronDown size={16} /></summary><div className="tv-disclosure-body"><TavernExportActions disabled={busy || uploading} getCharacter={() => ({ ...draft, tags: tagsEdited.current ? tags.split(/[,，]/).map(value => value.trim()).filter(Boolean) : draft.tags })} /></div></details>
         {discard && <div className="tv-discard" role="alert"><p>角色还有尚未保存的修改。</p><div><button type="button" className="tv-button tv-button-secondary" onClick={() => setDiscard(false)}>继续编辑</button><button type="button" className="tv-button tv-button-danger" onClick={onClose}>放弃修改</button></div></div>}
       </div>
       <footer className="tv-dialog-footer"><span>保存在当前浏览器</span><button type="button" className="tv-button tv-button-secondary" onClick={dismiss} disabled={busy || uploading}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy || uploading}>{busy ? <Loader2 size={16} className="tv-spin" /> : <Check size={16} />}{busy ? '保存中…' : '保存角色'}</button></footer>
@@ -362,7 +365,7 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
 
 const EMPTY_LORE = { id: '', name: '', keys: [], content: '', enabled: true, constant: false };
 
-export function TavernContextPanel({ session, onChange, onClose, busy: externalBusy = false, onSummarize, onRestoreSummary, onEditSummary, onSettingsChange, contextStatus }) {
+export function TavernContextPanel({ session, userAvatar, onUserAvatarChange, onChange, onClose, busy: externalBusy = false, onSummarize, onRestoreSummary, onEditSummary, onSettingsChange, contextStatus }) {
   const [contextDraft, setContextDraft] = useState(String(session.contextChars ?? 48000));
   useEffect(() => setContextDraft(String(session.contextChars ?? 48000)), [session.id, session.contextChars]);
   const [tab, setTab] = useState('persona');
@@ -457,6 +460,7 @@ export function TavernContextPanel({ session, onChange, onClose, busy: externalB
       event.preventDefault(); setTab(tabs[next].id); setError(''); tabsRef.current?.querySelectorAll('[role="tab"]')[next]?.focus();
     }}>{tabs.map(({ id, name, Icon }) => <button key={id} type="button" role="tab" id={`${panelId}-${id}`} aria-controls={`${panelId}-content`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} onClick={() => { setTab(id); setError(''); }}><Icon size={15} />{name}</button>)}</div>
     <div className="tv-context-body" role="tabpanel" id={`${panelId}-content`} aria-labelledby={`${panelId}-${tab}`} tabIndex={0}>
+      {tab === 'persona' && onUserAvatarChange && <TavernUserAvatar value={userAvatar} onChange={onUserAvatarChange} disabled={busy} />}
       {tab === 'persona' && <form onSubmit={event => { event.preventDefault(); commit({ persona }); }}><p className="tv-context-intro">先用这版身份开始聊天，也可以改成你自己的设定。</p><Field label="我在故事中的身份"><textarea maxLength={3000} rows={8} value={persona} onChange={event => { setPersona(event.target.value); setSaved(''); }} placeholder="写下你的称呼、性格，以及你和角色的关系。留空也可以开始对话。" disabled={busy} /></Field><p className="tv-field-hint">可以修改或清空，保存后仅应用于当前这段对话。</p><button type="submit" className="tv-button tv-button-secondary tv-context-save" disabled={busy}><Save size={15} />保存人设</button></form>}
       {tab === 'memory' && <><form onSubmit={event => { event.preventDefault(); commit({ memory }); }}><p className="tv-context-intro">记录初始状态，或补充对话中重要的经历与约定。</p><Field label="剧情摘要与重要记忆"><textarea maxLength={6000} rows={8} value={memory} onChange={event => { setMemory(event.target.value); setSaved(''); }} placeholder="例如：我们约定下一次一起去北方寻找消失的星群。她已经知道我害怕高处。" disabled={busy} /></Field><p className="tv-field-hint">保存后会随下一次对话带入模型。这里由你手动整理，不会被 AI 摘要覆盖。</p><button type="submit" className="tv-button tv-button-secondary tv-context-save" disabled={busy}><Save size={15} />保存记忆</button></form>
         <section className="tv-auto-memory" aria-label="自动剧情摘要"><h3><Sparkles size={16} />自动剧情摘要</h3><p className="tv-field-hint">整理剧情需要额外 API 调用，并计入 Token 用量。原聊天记录保留；AI 摘要可能遗漏细节，请核对内容。</p>

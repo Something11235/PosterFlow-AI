@@ -157,6 +157,8 @@ const MODE_META = {
 export default function App() {
   const [classicWorkspace] = useState(() => new URLSearchParams(window.location.search).get("workspace") === "classic");
   const [studioArea, setStudioArea] = useState(() => new URLSearchParams(window.location.search).get("area") === "tavern" ? "tavern" : "home");
+  const [tavernBackgroundTarget, setTavernBackgroundTarget] = useState(null);
+  const [tavernBackgroundImports, setTavernBackgroundImports] = useState([]);
   const [mode, setMode] = useState("create");
   const [prompt, setPrompt] = useState(DEFAULT_PRESET?.prompt || "");
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);
@@ -207,6 +209,7 @@ export default function App() {
   useEffect(() => {
     selectedTaskRef.current = "";
     setImages([]); setCurrentPrompt(""); setError(null); setSelectedImages(new Set());
+    setTavernBackgroundTarget(null); setTavernBackgroundImports([]);
   }, [imageTaskStore]);
 
   const accountRequestRef = useRef(0);
@@ -481,9 +484,34 @@ export default function App() {
   }, []);
 
   const handleApplyPreset = useCallback((preset) => {
+    setTavernBackgroundTarget(null);
     setActivePreset(preset);
     setPrompt(preset.prompt);
     setNotice(`已载入预设：${preset.name}`);
+  }, []);
+
+  const queueTavernBackgrounds = useCallback((filenames, name = 'AI 生成背景', requestId = crypto.randomUUID(), identity = sessionRef.current?.user?.id || 'guest') => {
+    if (identity !== (sessionRef.current?.user?.id || 'guest')) return;
+    const cleanName = Array.from(name).filter(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127).join('') || 'AI 生成背景';
+    const items = filenames.filter(filename => typeof filename === 'string' && /^[a-zA-Z0-9_.-]{1,200}$/.test(filename))
+      .map((filename, index) => ({ id: `${requestId}:${filename}`, identity, filename, name: `${cleanName}${filenames.length > 1 ? ` ${index + 1}` : ''}`.slice(0,80) }));
+    setTavernBackgroundImports(previous => [...previous, ...items.filter(item => !previous.some(existing => existing.id === item.id))]);
+  }, []);
+  const handleBackgroundImportHandled = useCallback((id, result) => {
+    setTavernBackgroundImports(previous => previous.filter(item => item.id !== id));
+    setNotice(result.ok ? '图片已存入酒馆背景库，可返回酒馆切换使用。' : `背景入库未完成：${result.error} 生成原图仍在画廊，可稍后点击「存入酒馆背景库」重试，不需重新生图。`);
+  }, []);
+  const handleStartImage = useCallback((text, context) => {
+    const identity = sessionRef.current?.user?.id || 'guest';
+    const background = context?.target === 'tavern-background' && context.identity === identity;
+    setTavernBackgroundTarget(background ? { identity, name: context.name || 'AI 生成背景' } : null);
+    if (text?.trim()) { setPrompt(text); setActivePreset(null); setMode('create'); }
+    if (background) {
+      referenceFilesRef.current = []; setReferenceFiles([]); setReferenceFeedback(null);
+      setSize('landscape_16_9'); setCount(1); setImageOutputFormat('png');
+      setNotice('已填入剧情背景提示词；确认模型与价格后生成，成功图片自动存入酒馆背景库。');
+    }
+    setStudioArea('image');
   }, []);
 
   const importCompanion = useCallback(async (id, target) => {
@@ -491,6 +519,7 @@ export default function App() {
     const file = typeof id === "string" ? await companionFile(id) : id;
     if (!(file instanceof File)) throw new Error("请选择有效的图片素材。");
     if (owner !== (sessionRef.current?.user?.id || "guest")) throw new Error("账户已切换，请重新选择素材。");
+    setTavernBackgroundTarget(null);
     if (target === "reference") {
       const spec = materialReferenceSpec.current;
       if (spec.disabled) throw new Error("当前图片模型不支持参考图，请先到图像创作切换支持参考图的模型。");
@@ -523,17 +552,19 @@ export default function App() {
       setNotice(`当前模型最多支持 ${referenceSpec.limit} 张参考图，请先移除多余素材。`); return;
     }
     const requestId = createRequestId(), store = imageTaskStore;
+    const backgroundTarget = !previousImage && tavernBackgroundTarget?.identity === store.identity ? tavernBackgroundTarget : null;
     if (!store.start(requestId, { prompt: taskPrompt.trim(), model: activeImageModel, billingMode })) {
       setNotice("已有 3 个生图任务正在运行，完成一个后可继续提交。"); return;
     }
     selectedTaskRef.current = requestId;
     setError(null); setNotice("任务已开始，可修改提示词继续提交，或切换到音乐创作。");
     setImages([]); setSelectedImages(new Set()); setCurrentPrompt(taskPrompt.trim());
-    const live = () => imageTaskStoreRef.current === store;
+    const live = () => imageTaskStoreRef.current === store && (sessionRef.current?.user?.id || 'guest') === store.identity;
     const selected = () => live() && selectedTaskRef.current === requestId;
     const show = data => {
       store.finish(requestId, { images: data.images || [], prompt: data.prompt || taskPrompt });
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
+      if (live() && backgroundTarget && data.images?.length) queueTavernBackgrounds(data.images.map(image => image.filename), backgroundTarget.name, requestId, backgroundTarget.identity);
     };
     if (routedImageSpec) store.registerRecovery(requestId, async () => {
       const data = await readImageTask(requestId, providerHeaders, undefined, activeImageModel);
@@ -590,7 +621,7 @@ export default function App() {
     }
   }, [activeImageModel, apimartSpec, routedImageSpec, authHeaders, billingMode, count, customSize.height, customSize.width,
     imageResolution, imageOutputFormat, gifMode, imageTaskStore, platformModel, providerConfigured, providerHeaders, referenceFiles,
-    referenceSpec.disabled, referenceSpec.limit, referenceUploadHeaders, refreshAccount, requireGenerationAccess, session?.user?.id, size]);
+    referenceSpec.disabled, referenceSpec.limit, referenceUploadHeaders, refreshAccount, requireGenerationAccess, session?.user?.id, size, tavernBackgroundTarget, queueTavernBackgrounds]);
 
   const handleGenerate = useCallback(() => runImageTask(prompt,
     mode === "iterative" && images.length ? images[0].filename : null), [runImageTask, prompt, mode, images]);
@@ -864,6 +895,7 @@ export default function App() {
             }
           >
             <section className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pr-1">
+              {tavernBackgroundTarget && <div className="rounded-lg border border-accent/35 bg-accent/5 p-4" role="region" aria-label="酒馆背景创作"><p className="text-sm font-semibold text-text-primary">为故事生成一处风景</p><p className="mt-2 text-xs leading-6 text-text-secondary">已带入当前剧情。可修改提示词、模型和参数，生成按当前生图价格收费；成功图片自动存入你的酒馆背景库。失败入库可从画廊重试，无需再次生成。</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setStudioArea('tavern')} className="min-h-11 rounded-md border border-accent/40 px-3 text-xs text-accent">返回 AI 酒馆</button><button type="button" onClick={() => setTavernBackgroundTarget(null)} className="min-h-11 rounded-md px-3 text-xs text-text-muted">结束背景创作</button></div></div>}
               {classicWorkspace && <PresetLibrary activePresetId={activePreset?.id} onApplyPreset={handleApplyPreset} />}
               <PromptEditor
                 imageModel={activeImageModel}
@@ -915,6 +947,8 @@ export default function App() {
 
             <section className="flex min-h-[620px] min-w-0 flex-col gap-3 lg:min-h-0">
               <Gallery
+                onSaveTavernBackground={classicWorkspace ? undefined : filename => queueTavernBackgrounds([filename])}
+                tavernBackgroundImports={tavernBackgroundImports}
                 billingMode={billingMode}
                 images={images}
                 isGenerating={isGenerating}
@@ -952,7 +986,7 @@ export default function App() {
           </div>
           {!classicWorkspace && <div className={`studio-workspace-host ${studioArea === "image" ? "studio-is-hidden" : ""}`}>
             <Suspense fallback={<div className="flex flex-1 items-center justify-center p-16 text-text-muted">正在打开创作空间…</div>}>
-              <StudioWorkspace key={session?.user?.id || "guest"} area={studioArea} onAreaChange={setStudioArea} username={account?.profile?.username} identity={session?.user?.id || "guest"} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={() => setAuthOpen(true)} onAccountRefresh={refreshAccount} onTaskActivity={setMusicActiveCount} onVideoTaskActivity={setVideoActiveCount} musicHistoryRestore={musicHistoryRestore} videoHistoryRestore={videoHistoryRestore} onImportCompanion={importCompanion} presetLibrary={<PresetLibrary activePresetId={activePreset?.id} onApplyPreset={preset => { handleApplyPreset(preset); setMode("create"); setStudioArea("image"); }} />} onStartImage={text => { if (text?.trim()) { setPrompt(text); setActivePreset(null); setMode("create"); } setStudioArea("image"); }} />
+              <StudioWorkspace key={session?.user?.id || "guest"} area={studioArea} onAreaChange={setStudioArea} username={account?.profile?.username} identity={session?.user?.id || "guest"} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={() => setAuthOpen(true)} onAccountRefresh={refreshAccount} onTaskActivity={setMusicActiveCount} onVideoTaskActivity={setVideoActiveCount} musicHistoryRestore={musicHistoryRestore} videoHistoryRestore={videoHistoryRestore} onImportCompanion={importCompanion} presetLibrary={<PresetLibrary activePresetId={activePreset?.id} onApplyPreset={preset => { handleApplyPreset(preset); setMode("create"); setStudioArea("image"); }} />} onStartImage={handleStartImage} backgroundImport={tavernBackgroundImports[0]} onBackgroundImportHandled={handleBackgroundImportHandled} />
             </Suspense>
           </div>}
         </main>

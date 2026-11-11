@@ -1,4 +1,5 @@
-import { normalizeTavernAppearance } from './tavernAppearance.js';
+import { normalizeTavernAppearance, normalizeTavernBackgrounds } from './tavernAppearance.js';
+import { normalizeTavernUserAvatar } from './tavernUserAvatar.js';
 import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, isValidTavernContextChars, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
 import { normalizeTavernUsageRecords } from './tavernUsage.js';
 import { normalizeTavernMessage, validateTavernMessageIds } from './tavernConversation.js';
@@ -97,13 +98,22 @@ function normalizeState(state, allowMigrationGrowth = false) {
     };
   }), '对话');
   const favorites = [...new Set(state.favorites.map(identifier))].filter(value => known.has(value));
-  const normalized = { characters, sessions, favorites, ...(state.appearance === undefined ? {} : { appearance: normalizeTavernAppearance(state.appearance) }) };
+  let appearance = state.appearance === undefined ? undefined : normalizeTavernAppearance(state.appearance);
+  let backgrounds = state.backgrounds === undefined ? undefined : normalizeTavernBackgrounds(state.backgrounds);
+  const migratingBackground = appearance?.preset === 'image' && backgrounds === undefined;
+  if (migratingBackground) {
+    backgrounds = [{ id: 'legacy-background', name: '原聊天背景', image: appearance.image, source: 'local', createdAt: 0 }];
+    appearance = { ...appearance, preset: 'library', image: '', backgroundId: 'legacy-background' };
+  }
+  if (appearance?.preset === 'library' && !backgrounds?.some(item => item.id === appearance.backgroundId)) throw new Error('所选背景不存在，请重新选择。');
+  const normalized = { characters, sessions, favorites, ...(appearance ? { appearance } : {}), ...(backgrounds ? { backgrounds } : {}),
+    ...(state.userAvatar === undefined ? {} : { userAvatar: normalizeTavernUserAvatar(state.userAvatar) }) };
   if (tavernStateBytes(normalized) > MAX_BYTES) {
     // Only loading an originally compliant legacy record may cross the quota as
     // known migrations add fields. Editing and saving must still fit the quota.
     const pendingMigration = state.sessions.some(session => ['personaPresetVersion', 'contextPresetVersion', 'scenario', 'usageRecords', 'legacyReplyCount', 'contextChars', 'autoMemory', 'summary', 'summaryHistory']
       .some(field => session[field] === undefined) || session.usageRecords?.some(record => record.kind === undefined))
-      || state.characters.some(character => ['creatorNotes', 'creator', 'characterVersion', 'systemPrompt',
+      || migratingBackground || state.characters.some(character => ['creatorNotes', 'creator', 'characterVersion', 'systemPrompt',
         'postHistoryInstructions', 'alternateGreetings', 'depthPrompt'].some(field => character[field] === undefined));
     if (!allowMigrationGrowth || !pendingMigration || tavernStateBytes(state) > MAX_BYTES) {
       throw new Error('酒馆本地资料最多 20 MB，请删除部分头像或对话。');
