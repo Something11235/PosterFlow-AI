@@ -2,7 +2,7 @@
 .tv-appearance-preview > span { font-size: 11px; color: #bacfe9; }
 .tv-appearance-sample { width: fit-content; max-width: 95%; padding: 12px 16px; margin: 0; font-size: 13px; line-height: 1.9; border-radius: 3px 14px 14px; }
 .tavern-message-list.tv-chat-background { background-size: cover; background-position: center; }
-.tavern-message-list.tv-surface-glass .tavern-message .tavern-message-content > p, .tv-surface-glass .tv-appearance-sample { background: linear-gradient(130deg,#2844639e,#0b172a85); border: 1px solid #bbd9ff40; backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: inset 0 1px 0 #fff2,0 8px 25px #0002; color: #edf5ff; }
+.tavern-message-list.tv-surface-glass .tavern-message .tavern-message-content > p, .tv-surface-glass .tv-appearance-sample { background: linear-gradient(130deg,#2844639e,#0b172a85); border: 1px solid #bbd9ff40; -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); box-shadow: inset 0 1px 0 #fff2,0 8px 25px #0002; color: #edf5ff; }
 .tavern-message-list.tv-surface-solid .tavern-message .tavern-message-content > p, .tv-surface-solid .tv-appearance-sample { background: #111c2b; border: 1px solid #314660; color: #e6f0ff; }
 .tavern-message-list.tv-surface-none .tavern-message .tavern-message-content > p, .tv-surface-none .tv-appearance-sample { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; color: #edf5ff; }
 .tv-appearance-options { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; padding: 0; border: 0; }
