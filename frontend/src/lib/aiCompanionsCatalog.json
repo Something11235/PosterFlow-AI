@@ -14,10 +14,10 @@
       {
         "id": "deepseek-01",
         "label": "图片 01",
-        "url": "/ai-companions/deepseek-01.jpg",
-        "width": 1273,
-        "height": 1739,
-        "bytes": 348249
+        "url": "/ai-companions/deepseek-01-clean.png",
+        "width": 1073,
+        "height": 1466,
+        "bytes": 1804375
       },
       {
         "id": "deepseek-02",

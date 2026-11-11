@@ -169,6 +169,8 @@ CORS(
         "X-Video-Model",
         "X-Video-Endpoint",
         "X-Video-Query-Template",
+        "X-Tavern-Api-Key",
+        "X-Tavern-Endpoint",
         "X-Provider-Endpoint",
         "X-Provider-Model",
         "X-Provider-Auth-Type",
@@ -2696,6 +2698,11 @@ try:
 except ModuleNotFoundError:
     from model_badges import create_model_badge_blueprint
 app.register_blueprint(create_model_badge_blueprint(sys.modules[__name__]))
+try:
+    from backend.tavern_routes import create_tavern_blueprint
+except ModuleNotFoundError:
+    from tavern_routes import create_tavern_blueprint
+app.register_blueprint(create_tavern_blueprint(sys.modules[__name__]))
 
 
 if os.path.exists(FRONTEND_BUILD):

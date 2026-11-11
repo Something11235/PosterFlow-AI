@@ -1,0 +1,48 @@
+.tv-billing-dialog { width: min(720px, calc(100vw - 24px)); }
+.tv-billing-panel, .tv-admin-billing { color: #cbd5e1; font-size: 13px; line-height: 1.65; }
+.tv-billing-note { margin: 0 0 10px; color: #8796aa; display: flex; align-items: flex-start; gap: 8px; }
+.tv-billing-toolbar, .tv-billing-record-head, .tv-billing-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tv-billing-toolbar { margin: 18px 0 12px; }
+.tv-billing-toolbar > span { font-weight: 600; color: #f8fafc; }
+.tv-billing-panel button, .tv-admin-billing button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 7px; border: 1px solid #2b3b52; border-radius: 7px; background: #152034; padding: 8px 12px; color: #cbd5e1; font: inherit; cursor: pointer; }
+.tv-billing-panel button:hover, .tv-admin-billing button:hover { border-color: #4f8cff; color: #f8fafc; }
+.tv-billing-panel button:disabled, .tv-admin-billing button:disabled { opacity: .5; cursor: not-allowed; }
+.tv-billing-panel :focus-visible, .tv-admin-billing :focus-visible { outline: 2px solid #4f8cff; outline-offset: 3px; }
+.tv-billing-records { display: grid; gap: 12px; }
+.tv-billing-record { min-width: 0; border: 1px solid #243142; border-radius: 9px; background: #090d14; padding: 14px; }
+.tv-billing-record-head { align-items: baseline; }
+.tv-billing-record-head strong { color: #f8fafc; }
+.tv-billing-record-head > span, .tv-billing-model { color: #8796aa; font-size: 12px; }
+.tv-billing-model { margin: 5px 0 10px; overflow-wrap: anywhere; }
+.tv-billing-summary { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; font-size: 12px; line-height: 1.7; }
+.tv-billing-summary strong { color: #a8c7ff; font-weight: 500; }
+.tv-billing-summary.is-settled strong, .tv-billing-summary.is-refunded strong { color: #86d9bf; }
+.tv-billing-summary.is-awaiting_review strong, .tv-billing-summary.is-held strong { color: #e4c18b; }
+.tv-billing-details, .tv-billing-recovery { margin-top: 10px; }
+.tv-billing-details summary, .tv-billing-recovery summary { cursor: pointer; min-height: 44px; align-content: center; color: #a8c7ff; }
+.tv-billing-details dl { margin: 0 0 8px; }
+.tv-billing-details dl > div { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr); gap: 12px; margin: 6px 0; }
+.tv-billing-details dt { color: #8796aa; }
+.tv-billing-details dd { margin: 0; overflow-wrap: anywhere; }
+.tv-billing-actions { justify-content: flex-start; margin-top: 10px; }
+.tv-billing-recovery p, .tv-billing-details p { color: #8796aa; font-size: 12px; overflow-wrap: anywhere; }
+.tv-billing-recovery textarea, .tv-admin-billing input, .tv-admin-billing textarea, .tv-admin-billing select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; border: 1px solid #243142; border-radius: 6px; background: #0f1623; color: #f8fafc; padding: 10px; font: inherit; }
+.tv-billing-recovery textarea, .tv-admin-billing textarea { resize: vertical; }
+.tv-billing-empty { padding: 24px 0; text-align: center; color: #8796aa; }
+.tv-billing-notice { color: #86d9bf; }
+.tv-billing-unresolved { border: 1px solid #62513a; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.tv-billing-unresolved h3 { margin: 0 0 8px; color: #e4c18b; font-size: 13px; }
+.tv-billing-unresolved > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.tv-billing-unresolved code { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.tv-billing-unresolved button { flex-shrink: 0; }
+.tv-admin-billing { margin: 20px 0; padding: 16px; border: 1px solid #243142; border-radius: 9px; background: #0f1623; }
+.tv-admin-billing h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; color: #f8fafc; margin: 0; }
+.tv-admin-billing .tv-billing-records { max-height: 640px; overflow-y: auto; overscroll-behavior: contain; }
+.tv-admin-billing-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid #243142; }
+.tv-admin-billing-form > label { display: grid; gap: 6px; margin-bottom: 12px; }
+.tv-admin-usage-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+.tv-admin-usage-fields label { display: grid; gap: 6px; }
+.tv-admin-billing-confirm { padding: 12px; border: 1px solid #62513a; border-radius: 7px; }
+.tv-admin-billing-confirm p { margin-top: 0; }
+@media (max-width: 480px) { .tv-billing-record { padding: 11px; } .tv-billing-summary { flex-direction: column; align-items: flex-start; gap: 3px; } .tv-billing-record-head { gap: 4px; } .tv-billing-record-head > span { font-size: 11px; } .tv-admin-billing { padding: 12px; } .tv-admin-usage-fields { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .tv-billing-panel .tv-spin, .tv-admin-billing .tv-spin { animation: none; } }

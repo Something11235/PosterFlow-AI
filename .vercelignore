@@ -5,6 +5,7 @@
 .vercel/
 .vercel_python_packages/
 artifacts/
+frontend/artifacts/
 docs/
 scripts/
 tests/

@@ -2,6 +2,12 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const localBackendPort = process.env.POSTERFLOW_LOCAL_OWN_KEY === '1'
+  ? Number(process.env.POSTERFLOW_LOCAL_BACKEND_PORT || 5001) : 5001;
+if (!Number.isInteger(localBackendPort) || localBackendPort < 1024 || localBackendPort > 65535) {
+  throw new Error('POSTERFLOW_LOCAL_BACKEND_PORT must be between 1024 and 65535.');
+}
+
 export default defineConfig({
   ...(process.env.POSTERFLOW_LOCAL_OWN_KEY === "1" ? {
     envDir: false,
@@ -16,7 +22,7 @@ export default defineConfig({
     port: 3001,
     proxy: {
       "/api": {
-        target: "http://localhost:5001",
+        target: `http://127.0.0.1:${localBackendPort}`,
         changeOrigin: true,
       },
     },

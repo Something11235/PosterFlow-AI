@@ -156,7 +156,7 @@ const MODE_META = {
 
 export default function App() {
   const [classicWorkspace] = useState(() => new URLSearchParams(window.location.search).get("workspace") === "classic");
-  const [studioArea, setStudioArea] = useState("home");
+  const [studioArea, setStudioArea] = useState(() => new URLSearchParams(window.location.search).get("area") === "tavern" ? "tavern" : "home");
   const [mode, setMode] = useState("create");
   const [prompt, setPrompt] = useState(DEFAULT_PRESET?.prompt || "");
   const [activePreset, setActivePreset] = useState(DEFAULT_PRESET);

@@ -171,6 +171,8 @@ GPT Image 2.6 的 1K 平台价格为无图片输入 **1 积分 / 张**、有图�
 
 `--local-own-key` 使用同一套完整工作台界面，隔离真实环境文件和 Supabase 配置，供手动填写 BuyToken Key 验收 GPT2.6。任务、参考素材和结果只保存到本机忽略目录 `artifacts/local-own-key/`；不扣网站积分，上游按实际调用计费。参考图、局部编辑和画布可通过实际上游验证，尚未实测的能力不作保证。该开发入口只允许本机访问，不作为正式部署入口。
 
+若 Windows 占用或保留默认后端端口 `5001`，可在启动隔离后端与前端的环境中同时设置 `POSTERFLOW_LOCAL_BACKEND_PORT=5151`，更换本地代理端口。
+
 ```powershell
 npm --prefix frontend test
 npm --prefix frontend run lint
@@ -179,6 +181,25 @@ git diff --check
 ```
 
 本地 `.env`、会话、私有媒体和部署凭据不提交到仓库。前端 `VITE_*` 会进入浏览器构建，只放可公开的配置。
+
+### AI 酒馆平台积分配置
+
+酒馆支持自带 API Key 和平台积分两种模式。平台模式默认关闭；先在目标数据库应用并验证 [`20261111115503_tavern_billing.sql`](supabase/migrations/20261111115503_tavern_billing.sql)，再为 Flask / Vercel Functions 配置下列服务端变量。数据库仍使用现有 Supabase 配置。
+
+| 变量 | 值 |
+| --- | --- |
+| `PLATFORM_TAVERN_ENABLED` | `true` 开启；默认 `false` |
+| `PLATFORM_TAVERN_API_KEY` | 平台专用对话 Key |
+| `PLATFORM_TAVERN_API_ENDPOINT` | 默认 `https://api.buytoken.work/v1/chat/completions` |
+| `PLATFORM_TAVERN_MODEL` | 当前支持 `deepseek-v4.1-flash` |
+
+这些变量不能使用 `VITE_` 前缀，不覆盖现有图片、音乐或视频配置。自带 Key 模式无需上述变量，也不扣平台积分。平台开关、密钥或账务迁移尚未就绪时，网站不会开放平台对话。
+
+平台每次先根据请求大小和最大回复长度估算预留积分；这不是实际 Token 用量或最终费用。返回可信用量后，按每百万未缓存输入 6、输出 24、缓存读取 0.12 积分结算，合计后向上取四位小数，退还预留差额。缓存属于输入，推理属于输出，不重复收费。自动剧情摘要与普通聊天分别计费。
+
+确定未提交或被拒绝的请求退款；超时、用量缺失或实际费用超过预留进入待核对，不自动重发、不额外补扣。用户可在酒馆的「平台账单」查询，管理员可核对供应商记录后填写原因结算或退款；仍在处理的请求暂不允许人工退款。管理员只能按已核实且不超过预留的费用结算，不能通过该功能追加扣款。
+
+服务端保存请求编号、用量和账单，不保存输入提示词或用户自带 Key。平台回复支持本人在 12 小时内查询恢复，过期后不可取回；迁移包含正文清理函数，已有 `pg_cron` 的环境会注册定时清理，未安装该扩展的环境须另行调度 `private.prune_tavern_responses()`。清理不删除财务记录，管理员账单接口不返回对话正文。关闭 `PLATFORM_TAVERN_ENABLED` 可停止新的平台调用，旧账查询与核对仍可用。
 
 </details>
 

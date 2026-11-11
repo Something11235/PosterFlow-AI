@@ -1,0 +1,58 @@
+.tavern-usage-session, .tavern-usage-message { --usage-text: #cbd5e1; --usage-muted: #92a4bd; --usage-line: #263950; color: var(--usage-text); font-variant-numeric: tabular-nums; }
+.tavern-usage-session { flex: 0 0 auto; min-width: 0; border-bottom: 1px solid #243142; background: #0d1623; }
+.tavern-usage-session > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-height: 44px; padding: 10px 25px; color: #a3bada; font-size: 11px; line-height: 1.6; list-style: none; cursor: pointer; }
+.tavern-usage-session > summary::-webkit-details-marker, .tavern-usage-extra > summary::-webkit-details-marker { display: none; }
+.tavern-usage-session > summary:hover { background: #4f8cff0a; }
+.tavern-usage-session > summary > strong { color: #d2e2fb; font-size: 11px; font-weight: 500; }
+.tavern-usage-session > summary > svg:first-child { color: #80a9e7; }
+.tavern-usage-session > summary > svg:last-child { margin-left: auto; flex: 0 0 auto; transition: transform 160ms; }
+.tavern-usage-session[open] > summary > svg:last-child, .tavern-usage-extra[open] > summary > svg { transform: rotate(180deg); }
+.tavern-usage-session summary:focus-visible, .tavern-usage-extra > summary:focus-visible, .tavern-usage-body:focus-visible { outline: 2px solid #91b6ff; outline-offset: -3px; border-radius: 4px; }
+.tavern-usage-badge { display: inline-flex; align-items: center; gap: 4px; color: #ddc593; font-size: 10px; line-height: 1.6; }
+.tavern-usage-badge.is-pending { color: #a8c7f8; }
+.tavern-usage-body { max-height: min(330px, 35dvh); padding: 4px 25px 19px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #334762 transparent; }
+.tavern-usage-note { margin: 9px 0; color: var(--usage-muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.tavern-usage-note.is-warning { color: #ddc593; }
+.tavern-usage-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 14px 0; }
+.tavern-usage-totals > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--usage-line); border-radius: 7px; background: #111d2d; }
+.tavern-usage-totals dt { margin: 0; color: #a0b5d0; font-size: 10px; line-height: 1.7; }
+.tavern-usage-totals dd { margin: 6px 0 0; color: #e3edfd; font-size: 16px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.tavern-usage-totals dd > small { margin-left: 5px; color: var(--usage-muted); font-size: 9px; font-weight: 400; }
+.tavern-usage-totals dt > small { display: block; font-size: 9px; color: var(--usage-muted); }
+.tavern-usage-recent-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 15px; margin: 19px 0 5px; }
+.tavern-usage-recent-title h3 { margin: 0; color: #bed1ec; font-size: 12px; font-weight: 500; }
+.tavern-usage-recent-title > span { color: var(--usage-muted); font-size: 10px; }
+.tavern-usage-history { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.tavern-usage-history > li { min-width: 0; padding: 12px 0 10px; border-bottom: 1px solid #223247; }
+.tavern-usage-history > li:last-child { border-bottom: 0; }
+.tavern-usage-record-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px; font-size: 10px; line-height: 1.8; }
+.tavern-usage-record-heading > strong { color: #c1d4f0; font-size: 11px; font-weight: 500; }
+.tavern-usage-record-heading > time { margin-left: auto; color: var(--usage-muted); font-size: 9px; }
+.tavern-usage-record-model { min-width: 0; margin: 5px 0 0; color: var(--usage-muted); font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.tavern-usage-message { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 11px; min-width: 0; margin-top: 10px; font-size: 10px; line-height: 1.8; }
+.tavern-usage-caption { color: #9fb6d7; font-size: 10px; }
+.tavern-usage-inline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; min-width: 0; margin: 0; }
+.tavern-usage-inline > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 5px; min-width: 0; }
+.tavern-usage-inline dt { color: var(--usage-muted); }
+.tavern-usage-inline dd { margin: 0; color: #bfd3f2; overflow-wrap: anywhere; }
+.tavern-usage-inline dt > small { font-size: inherit; }
+.tavern-usage-extra { width: 100%; margin-top: -3px; }
+.tavern-usage-extra > summary { display: inline-flex; align-items: center; gap: 5px; min-height: 44px; padding: 7px 3px 7px 0; color: #9bb7df; font-size: 10px; list-style: none; cursor: pointer; }
+.tavern-usage-extra > summary > svg { transition: transform 160ms; }
+.tavern-usage-extra > dl { padding: 3px 0 7px; }
+.tavern-usage-message .tavern-usage-note { width: 100%; margin: 0; font-size: 10px; }
+.tavern-usage-history .tavern-usage-message { margin-top: 6px; }
+@media (max-width: 760px) {
+  .tavern-usage-session > summary { gap: 5px 8px; padding-right: 16px; padding-left: 16px; font-size: 10px; }
+  .tavern-usage-session > summary > strong { font-size: 10px; }
+  .tavern-usage-body { max-height: min(300px, 32dvh); padding-right: 16px; padding-left: 16px; }
+  .tavern-usage-totals { gap: 6px; }
+  .tavern-usage-totals > div { padding: 9px 8px; }
+  .tavern-usage-totals dd { font-size: 14px; }
+  .tavern-usage-totals dd > small { display: block; margin: 2px 0 0; }
+  .tavern-usage-record-heading > time { margin-left: 0; }
+  .tavern-usage-inline { gap: 3px 9px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tavern-usage-session *, .tavern-usage-extra * { transition: none !important; }
+}

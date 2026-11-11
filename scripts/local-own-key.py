@@ -12,10 +12,13 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+LOCAL_PORT = int(os.environ.get('POSTERFLOW_LOCAL_BACKEND_PORT', '5001'))
+if not 1024 <= LOCAL_PORT <= 65535:
+    raise SystemExit('POSTERFLOW_LOCAL_BACKEND_PORT must be between 1024 and 65535.')
 if os.environ.get('VERCEL') or os.environ.get('POSTERFLOW_LOCAL_OWN_KEY') != '1':
     raise SystemExit('Use start-dev.bat --local-own-key for loopback development only.')
 for name in list(os.environ):
-    if name.startswith(('SUPABASE_', 'PLATFORM_IMAGE_', 'APIMART_', 'BLOB_', 'VITE_SUPABASE_', 'PAYMENT_')) or name in ('OPENROUTER_API_KEY', 'IMAGE_API_KEY', 'IMAGE_API_ENDPOINT', 'IMAGE_API_MODEL', 'ADMIN_USER_IDS'):
+    if name.startswith(('SUPABASE_', 'PLATFORM_IMAGE_', 'PLATFORM_TAVERN_', 'APIMART_', 'BLOB_', 'VITE_SUPABASE_', 'PAYMENT_')) or name in ('OPENROUTER_API_KEY', 'IMAGE_API_KEY', 'IMAGE_API_ENDPOINT', 'IMAGE_API_MODEL', 'ADMIN_USER_IDS'):
         os.environ.pop(name, None)
 DATA = ROOT / 'artifacts' / 'local-own-key'
 DATA.mkdir(parents=True, exist_ok=True)
@@ -38,7 +41,7 @@ from flask import jsonify, request
 
 LocalOwnKeyStore.database = DATA / 'jobs.sqlite3'
 buytoken_image_routes.BuyTokenStore = LocalOwnKeyStore
-server.ALLOWED_ORIGINS += ['http://127.0.0.1:3002', 'http://localhost:3002', 'http://127.0.0.1:5001', 'http://localhost:5001']
+server.ALLOWED_ORIGINS += ['http://127.0.0.1:3002', 'http://localhost:3002', f'http://127.0.0.1:{LOCAL_PORT}', f'http://localhost:{LOCAL_PORT}']
 REFERENCES = DATA / 'temporary-references'
 REFERENCES.mkdir(exist_ok=True)
 tickets = {}
@@ -70,7 +73,7 @@ server.cleanup_reference_storage_paths = cleanup
 
 @server.app.before_request
 def local_guard():
-    if request.remote_addr not in ('127.0.0.1', '::1') or request.host not in ('127.0.0.1:5001', 'localhost:5001'):
+    if request.remote_addr not in ('127.0.0.1', '::1') or request.host not in (f'127.0.0.1:{LOCAL_PORT}', f'localhost:{LOCAL_PORT}'):
         return jsonify(error='此开发入口仅允许本机访问。'), 403
     if request.method in ('POST', 'PUT', 'DELETE') and request.headers.get('Origin') not in server.ALLOWED_ORIGINS:
         return jsonify(error='请求来源不受支持。'), 403
@@ -119,5 +122,5 @@ def upload(token):
 
 
 if __name__ == '__main__':
-    print('Full PosterFlow local own-key mode: backend 5001; frontend 3002. No environment files or hosted database.', flush=True)
-    server.app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False, threaded=True, load_dotenv=False)
+    print(f'Full PosterFlow local own-key mode: backend {LOCAL_PORT}; frontend 3001/3002. No environment files or hosted database.', flush=True)
+    server.app.run(host='127.0.0.1', port=LOCAL_PORT, debug=False, use_reloader=False, threaded=True, load_dotenv=False)

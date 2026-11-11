@@ -1,0 +1,25 @@
+.tavern-context-meter { flex: 0 0 auto; min-width: 0; padding: 11px 25px 12px; border-bottom: 1px solid #243142; background: #0d1623; color: #b8cae3; font-variant-numeric: tabular-nums; }
+.tavern-context-meter-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 5px 14px; }
+.tavern-context-meter-heading > span { display: inline-flex; align-items: center; gap: 6px; color: #9cb5d7; font-size: 11px; }
+.tavern-context-meter-heading > strong { color: #c4d9fa; font-size: 11px; font-weight: 500; overflow-wrap: anywhere; }
+.tavern-context-meter progress { display: block; appearance: none; width: 100%; height: 4px; margin: 9px 0 8px; overflow: hidden; border: 0; border-radius: 3px; background: #25354b; color: #6699ea; accent-color: #6699ea; }
+.tavern-context-meter progress::-webkit-progress-bar { background: #25354b; border-radius: 3px; }
+.tavern-context-meter progress::-webkit-progress-value { background: #6699ea; border-radius: 3px; }
+.tavern-context-meter progress::-moz-progress-bar { background: #6699ea; border-radius: 3px; }
+.tavern-context-meter.has-error progress { color: #e8b573; accent-color: #e8b573; }
+.tavern-context-meter.has-error progress::-webkit-progress-value { background: #e8b573; }
+.tavern-context-meter.has-error progress::-moz-progress-bar { background: #e8b573; }
+.tavern-context-meter-counts { display: flex; flex-wrap: wrap; gap: 3px 14px; margin: 5px 0 0; color: #a6bbd9; font-size: 10px; line-height: 1.7; }
+.tavern-context-meter-note { margin: 4px 0 0; color: #91a3bb; font-size: 10px; line-height: 1.7; }
+.tavern-context-meter-error { margin: 8px 0 0; color: #ffd0a6; font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.tavern-reply-variants { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; max-width: 100%; min-height: 44px; color: #a6bddf; font-size: 10px; font-variant-numeric: tabular-nums; }
+.tavern-reply-variants > span { margin-right: 4px; color: #91a9cb; }
+.tavern-reply-variants > button { display: inline-grid; place-items: center; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 7px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #b6d0f9; cursor: pointer; }
+.tavern-reply-variants > button:hover:not(:disabled) { border-color: #3e587e; background: #172840; }
+.tavern-reply-variants > button:disabled { opacity: .4; cursor: not-allowed; }
+.tavern-reply-variants > button:focus-visible { outline: 2px solid #91b6ff; outline-offset: -3px; }
+.tavern-reply-variants > output { min-width: 35px; color: #c1d6f6; text-align: center; }
+@media (max-width: 760px) {
+  .tavern-context-meter { padding-right: 16px; padding-left: 16px; }
+  .tavern-context-meter-counts { gap: 3px 10px; }
+}

@@ -1,19 +1,44 @@
 import { displayCredits } from "../../lib/credits";
-import React, {useEffect,useState} from "react";
+import React, {useEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
-import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronRight, Grid2X2, History, Image, Layers3, LayoutGrid, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video } from "lucide-react";
+import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video } from "lucide-react";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
   { id: "image", label: "图像创作", icon: Image },
   { id: "music", label: "音乐创作", icon: Music2 },
   { id: "video", label: "视频创作", icon: Video },
+  { id: "tavern", label: "AI 酒馆", icon: MessagesSquare },
 ];
+
+const TAVERN_RESOURCES = [
+  { label: "Chub 热门广场", href: "https://chub.ai/home?segment=trending&page=1" },
+  { label: "Chub 世界书", href: "https://chub.ai/lorebooks?excludetopics=&first=20&page=1&namespace=*&search=&include_forks=true&nsfw=false&nsfw_only=false&require_custom_prompt=false&require_example_dialogues=false&require_images=false&require_expressions=false&nsfl=false&asc=false&min_ai_rating=0&min_tokens=50&max_tokens=100000&chub=true&require_lore=false&exclude_mine=true&require_lore_embedded=false&require_lore_linked=false&language=&sort=trending&min_tags=2&topics=&special_mode=&name_like=&only_mine=&inclusive_or=false&recommended_verified=false&require_alternate_greetings=false&max_days_ago=&min_users_chatted=" },
+  { label: "JanitorAI", href: "https://janitorai.com/zh/" },
+  { label: "AI Character Cards", href: "https://aicharactercards.com/" },
+  { label: "Pygmalion", href: "https://pygmalion.chat/explore" },
+];
+
+function TavernResources({ detailsRef }) {
+  return <details ref={detailsRef} className="studio-prompt-library studio-tavern-resources">
+    <summary><LibraryBig size={18} aria-hidden="true" /><span>酒馆资源</span><ChevronDown size={14} className="studio-prompt-chevron" aria-hidden="true" /></summary>
+    <div id="studio-tavern-resource-links">
+      <p className="studio-resource-note"><Globe2 size={13} aria-hidden="true" /><span>部分网站需要代理访问</span></p>
+      {TAVERN_RESOURCES.map(link => <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer"><span>{link.label}</span><ExternalLink size={14} aria-hidden="true" /></a>)}
+    </div>
+  </details>;
+}
 
 export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenHistory, onOpenCommunity }) {
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
+  const tavernResources = useRef(null);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
   const accountName = account?.profile?.username || session?.user?.email || "登录 / 注册";
+  function openTavernResources() {
+    setCollapsed(false);
+    if (tavernResources.current) tavernResources.current.open = true;
+    requestAnimationFrame(() => tavernResources.current?.querySelector("summary")?.focus());
+  }
   return (
     <aside className={`studio-nav${collapsed?' is-collapsed':''}`}>
       <div className="studio-brand"><span className="studio-brand-mark"><Aperture size={26} strokeWidth={1.4} /></span><div><strong>PosterFlow<span>AI</span></strong><small>THE CREATIVE STUDIO</small></div></div>
@@ -28,6 +53,8 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
         <button type="button" title="创作素材" aria-label="创作素材" aria-current={area === "materials" ? "page" : undefined} onClick={() => onAreaChange("materials")}><Layers3 size={18} />创作素材</button>
         <PromptReferences />
         <button type="button" className="studio-collapse-inspiration" title="创作灵感" aria-label="展开创作灵感" onClick={()=>setCollapsed(false)}><BookOpen size={18}/></button>
+        <TavernResources detailsRef={tavernResources} />
+        <button type="button" className="studio-collapse-resources" title="酒馆资源" aria-label="展开酒馆资源" aria-controls="studio-tavern-resource-links" onClick={openTavernResources}><LibraryBig size={18} aria-hidden="true" /></button>
         <button type="button" title="模型一览" aria-label="模型一览" aria-current={area === "models" ? "page" : undefined} onClick={() => onAreaChange("models")}><Grid2X2 size={18} />模型一览</button>
         <button type="button" title="历史记录" aria-label="历史记录" onClick={onOpenHistory}><History size={18} />历史记录</button>
         <button type="button" title="QQ交流群" aria-label="QQ交流群" onClick={onOpenCommunity}><Users size={18} />QQ交流群</button>
