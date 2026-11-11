@@ -81,7 +81,7 @@ test('saved background libraries remain isolated by owner and survive reload', a
   const descriptor = Object.getOwnPropertyDescriptor(globalThis,'indexedDB');
   Object.defineProperty(globalThis,'indexedDB',{ configurable:true,value:{ open() { const q={}; queueMicrotask(() => { q.result=db; q.onsuccess?.(); }); return q; } } });
   t.after(() => { if(descriptor) Object.defineProperty(globalThis,'indexedDB',descriptor); else delete globalThis.indexedDB; });
-  const state = { ...addTavernBackground(blank(),item()).state, userAvatar:item().image };
+  const state = { ...addTavernBackground(blank(),item()).state, userAvatar:item().image, imageTemplates:{portrait:'我的专属肖像模板 {{char}}'} };
   await saveTavernState('owner-one',state);
   assert.deepEqual(await loadTavernState('owner-one'),state);
   assert.deepEqual(await loadTavernState('owner-two'),blank());

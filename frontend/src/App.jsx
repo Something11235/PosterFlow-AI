@@ -504,12 +504,13 @@ export default function App() {
   const handleStartImage = useCallback((text, context) => {
     const identity = sessionRef.current?.user?.id || 'guest';
     const background = context?.target === 'tavern-background' && context.identity === identity;
+    const tavernImage = context?.target === 'tavern-image' && context.identity === identity;
     setTavernBackgroundTarget(background ? { identity, name: context.name || 'AI 生成背景' } : null);
     if (text?.trim()) { setPrompt(text); setActivePreset(null); setMode('create'); }
-    if (background) {
+    if (background || tavernImage) {
       referenceFilesRef.current = []; setReferenceFiles([]); setReferenceFeedback(null);
-      setSize('landscape_16_9'); setCount(1); setImageOutputFormat('png');
-      setNotice('已填入剧情背景提示词；确认模型与价格后生成，成功图片自动存入酒馆背景库。');
+      setSize(tavernImage && context.size === 'portrait_3_4' ? 'portrait_3_4' : 'landscape_16_9'); setCount(1); setImageOutputFormat('png');
+      setNotice(background ? '已填入剧情背景提示词；确认模型与价格后生成，成功图片自动存入酒馆背景库。' : '中文画面提示词已填入；确认模型、参考图与价格后再生成。');
     }
     setStudioArea('image');
   }, []);

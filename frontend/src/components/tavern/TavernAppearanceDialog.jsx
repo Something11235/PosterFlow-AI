@@ -1,10 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { Check, ImagePlus, Sparkles, Trash2, Upload } from 'lucide-react';
 import { TavernDialog } from './TavernDialogs';
-import { DEFAULT_TAVERN_APPEARANCE, TAVERN_BACKGROUND_LIMIT, normalizeTavernAppearance, prepareTavernBackground, tavernBackgroundStyle } from '../../lib/tavernAppearance';
+import { DEFAULT_TAVERN_APPEARANCE, TAVERN_BACKGROUND_LIMIT, TAVERN_BACKGROUND_FITS, normalizeTavernAppearance, prepareTavernBackground, tavernBackgroundStyle } from '../../lib/tavernAppearance';
 import './tavern-appearance.css';
 
-export default function TavernAppearanceDialog({ value, backgrounds = [], onAdd, onDelete, onGenerate, onSave, onClose }) {
+export default function TavernAppearanceDialog({ value, backgrounds = [], onAdd, onDelete, onGenerate, onTemplates, onSave, onClose }) {
   const [draft, setDraft] = useState(value || { ...DEFAULT_TAVERN_APPEARANCE });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [deleting, setDeleting] = useState(null);
@@ -26,7 +26,7 @@ export default function TavernAppearanceDialog({ value, backgrounds = [], onAdd,
     try {
       await onDelete(deleting.id);
       if (turn !== sequence.current) return;
-      setDraft(previous => previous.backgroundId === deleting.id ? { ...DEFAULT_TAVERN_APPEARANCE, surface: previous.surface, dim: previous.dim } : previous);
+      setDraft(previous => previous.backgroundId === deleting.id ? { ...DEFAULT_TAVERN_APPEARANCE, surface: previous.surface, dim: previous.dim, ...(previous.fit?{fit:previous.fit}:{}) } : previous);
       setDeleting(null);
     } catch (reason) { if (turn === sequence.current) setError(reason.message); }
     finally { if (turn === sequence.current) setBusy(false); }
@@ -38,6 +38,7 @@ export default function TavernAppearanceDialog({ value, backgrounds = [], onAdd,
         <div className="tv-background-library-heading"><div><span className="tv-dialog-eyebrow">MY SCENES</span><h3>我的背景库 <small>{backgrounds.length} / {TAVERN_BACKGROUND_LIMIT}</small></h3></div><span>仅自己可见</span></div>
         <div className="tv-background-library-tools">
           {onGenerate && <button type="button" className="tv-button tv-button-primary" disabled={busy || backgrounds.length >= TAVERN_BACKGROUND_LIMIT} onClick={onGenerate}><Sparkles size={15} />按剧情生成背景</button>}
+          {onTemplates && <button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={onTemplates}><ImagePlus size={15} />图像提示词模板</button>}
           <label className={`tv-background-import${busy || backgrounds.length >= TAVERN_BACKGROUND_LIMIT ? ' is-disabled' : ''}`}><Upload size={15} />导入本地图片<input aria-label="导入背景图片" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy || backgrounds.length >= TAVERN_BACKGROUND_LIMIT} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }} /></label>
         </div>
         <p className="tv-field-hint">生成前可修改提示词与参数，点击生成后按生图价格计费；成功后自动存入本库。导入和删除立即保存，选择背景后点击「保存外观」应用。</p>
@@ -50,6 +51,7 @@ export default function TavernAppearanceDialog({ value, backgrounds = [], onAdd,
       </section>
       <fieldset className="tv-appearance-options"><legend>聊天背景</legend>{[['none','默认深色'],['ocean','夜海'],['stars','星夜'],['warm','暖灯']].map(([preset,label]) => <label key={preset}><input type="radio" name="tavern-background" checked={draft.preset === preset} disabled={busy} onChange={() => setDraft(previous => ({ ...previous, preset, image: '' }))} />{label}</label>)}</fieldset>
       <p className="tv-field-hint">PNG、JPG、WebP，最多12MB。图片缩小后仅存本机浏览器，计入酒馆20MB容量，不上传服务商。</p>
+      <label className="tv-background-fitting">背景显示方式<select aria-label="背景显示方式" value={draft.fit || 'cover'} disabled={busy} onChange={event=>setDraft(previous=>({...previous,fit:event.target.value}))}>{TAVERN_BACKGROUND_FITS.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><p className="tv-field-hint">{TAVERN_BACKGROUND_FITS.find(item=>item.id===(draft.fit || 'cover'))?.note} 此设置用于图片背景，文字托底和背景压暗不受影响。</p>
       <fieldset className="tv-appearance-options"><legend>文字托底</legend>{[['glass','半透明液态玻璃'],['solid','完全不透明'],['none','无底色']].map(([surface,label]) => <label key={surface}><input type="radio" name="tavern-surface" checked={draft.surface === surface} onChange={() => setDraft(previous => ({ ...previous, surface }))} />{label}</label>)}</fieldset>
       <label className="tv-dim-control">背景压暗 {draft.dim}%<input type="range" min="0" max="80" step="1" value={draft.dim} aria-label="背景压暗程度" onChange={event => setDraft(previous => ({ ...previous, dim: Number(event.target.value) }))} /></label>
       <p className="tv-field-hint">无底色时可提高压暗程度，让文字更清楚。外观应用于当前账号在本机的酒馆对话，不修改聊天内容。</p>

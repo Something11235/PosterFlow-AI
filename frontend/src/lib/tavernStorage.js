@@ -1,5 +1,6 @@
 import { normalizeTavernAppearance, normalizeTavernBackgrounds } from './tavernAppearance.js';
 import { normalizeTavernUserAvatar } from './tavernUserAvatar.js';
+import { normalizeTavernImageTemplates } from './tavernImageTemplates.js';
 import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, isValidTavernContextChars, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
 import { normalizeTavernUsageRecords } from './tavernUsage.js';
 import { normalizeTavernMessage, validateTavernMessageIds } from './tavernConversation.js';
@@ -107,7 +108,8 @@ function normalizeState(state, allowMigrationGrowth = false) {
   }
   if (appearance?.preset === 'library' && !backgrounds?.some(item => item.id === appearance.backgroundId)) throw new Error('所选背景不存在，请重新选择。');
   const normalized = { characters, sessions, favorites, ...(appearance ? { appearance } : {}), ...(backgrounds ? { backgrounds } : {}),
-    ...(state.userAvatar === undefined ? {} : { userAvatar: normalizeTavernUserAvatar(state.userAvatar) }) };
+    ...(state.userAvatar === undefined ? {} : { userAvatar: normalizeTavernUserAvatar(state.userAvatar) }),
+    ...(state.imageTemplates === undefined ? {} : { imageTemplates: normalizeTavernImageTemplates(state.imageTemplates) }) };
   if (tavernStateBytes(normalized) > MAX_BYTES) {
     // Only loading an originally compliant legacy record may cross the quota as
     // known migrations add fields. Editing and saving must still fit the quota.
