@@ -264,6 +264,33 @@ test("a stalled upstream original times out after eight seconds and uses its sto
  assert.equal(await (await pending).text(),'original-backup');assert.equal(backups,1);
 });
 
+test('gallery recovery switches from stalled Storage to the authenticated same-origin relay after eight seconds', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+  let directSignal, relayReads = 0;
+  mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(init.method || 'GET', 'GET');
+    if (url.includes('/url')) {
+      assert.ok(url.includes('source=backup'));
+      assert.equal(init.headers.Authorization, options.headers.Authorization);
+      return signed();
+    }
+    if (url.includes('/content?')) {
+      relayReads += 1;
+      assert.equal(init.headers.Authorization, options.headers.Authorization);
+      assert.equal(init.credentials, 'include');
+      return new Response(png, { headers: { 'X-Image-Size': String(png.length), 'X-Image-Offset': '0', ETag: '"fixture-v1"' } });
+    }
+    assert.equal(init.credentials, 'omit'); assert.equal(init.headers, undefined);
+    directSignal = init.signal; return new Promise(() => {});
+  });
+  const pending = fetchImageBlob('preview.png', { ...options, forceBackup: true, directReadTimeoutMs: 8000 });
+  await waitFor(() => directSignal); t.mock.timers.tick(7999);
+  assert.equal(relayReads, 0); t.mock.timers.tick(1);
+  assert.deepEqual(new Uint8Array(await (await pending).arrayBuffer()), png);
+  assert.equal(relayReads, 1); assert.equal(directSignal.aborted, true);
+});
+
 test("a stalled signing request is aborted and releases callers to the authenticated fallback", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let signingSignal;

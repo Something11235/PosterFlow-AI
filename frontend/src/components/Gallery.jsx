@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -13,8 +13,8 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { fetchImageUrl } from "../lib/client";
 import BackupImageDownload from "./BackupImageDownload";
+import GalleryImagePreview from "./GalleryImagePreview";
 
 const PLATFORM_FAILURE_DETAIL = "一般为以下原因：\n1.提示词有模型不支持的参数或违规用词触发审核拒绝\n2.余额不足\n3.高峰期使用人数过多";
 
@@ -52,24 +52,9 @@ export default function Gallery({
 }) {
   const [modifyTarget, setModifyTarget] = useState(null);
   const [modifyText, setModifyText] = useState("");
-  const [assetUrls, setAssetUrls] = useState({});
 
   const hasImages = images.length > 0;
   const visibleDownloadError = hasImages && downloadError?.filenames?.some(filename => images.some(image => image.filename === filename)) ? downloadError : null;
-
-  useEffect(() => {
-    let alive = true;
-    const currentFilenames = new Set(images.map((image) => image.filename));
-    setAssetUrls((previous) => Object.fromEntries(Object.entries(previous).filter(([filename]) => currentFilenames.has(filename))));
-    Promise.all(
-      images.map(async (image) => [image.filename, await fetchImageUrl(image.filename, { authenticated, headers: authHeaders, variant: image.filename.toLowerCase().endsWith(".gif") ? "original" : "thumbnail" })]),
-    ).then((entries) => {
-      if (alive) setAssetUrls((previous) => ({ ...previous, ...Object.fromEntries(entries) }));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [authHeaders, authenticated, images]);
 
   return (
     <div className="surface flex min-h-0 flex-1 flex-col rounded-lg">
@@ -169,22 +154,7 @@ export default function Gallery({
                   }`}
                 >
                   <div className="relative aspect-[16/10] overflow-hidden bg-bg-primary">
-                    <img
-                      src={assetUrls[img.filename] || undefined}
-                      alt={`AI生成图片 ${index + 1}`}
-                      className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.025]"
-                      loading="lazy"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                      onError={(event) => {
-                        const target = event.currentTarget;
-                        if (target.dataset.originalFallback) return;
-                        target.dataset.originalFallback = "true";
-                        const failedSource = target.src;
-                        fetchImageUrl(img.filename, { authenticated, headers: authHeaders })
-                          .then((url) => { if (target.isConnected && target.src === failedSource) target.src = url; });
-                      }}
-                    />
+                    <GalleryImagePreview filename={img.filename} index={index} authenticated={authenticated} authHeaders={authHeaders} />
                     <div className="absolute inset-x-0 top-0 flex items-center justify-between p-3">
                       <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md bg-bg-primary/78 px-2.5 text-xs text-text-secondary backdrop-blur">
                         <input
@@ -384,8 +354,9 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
     : referenceLinkUnavailable ? ["稍后重试", "持续失败请联系站主"] : null;
   const timedOut = errorInfo?.code === 'IMAGE_PROVIDER_TIMEOUT';
   const pricingChanged = ['IMAGE_PRICING_CHANGED', 'IMAGE_PROVIDER_CHANGED', 'IMAGE_FEATURE_UNSUPPORTED', 'BUYTOKEN_ENDPOINT_INVALID', 'BUYTOKEN_REQUEST_REJECTED'].includes(errorInfo?.code);
-  const pending = Boolean(errorInfo?.submission_unknown);
-  const recovery = pending ? errorInfo?.recovery || ["查询原任务，请勿重复生成"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
+  const processing = errorInfo?.code === 'IMAGE_TASK_PENDING';
+  const pending = processing || Boolean(errorInfo?.submission_unknown);
+  const recovery = pending ? ["查询原任务，不会重复扣积分", "请勿重复生成"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"]);
   const upstream = platform ? errorInfo?.upstream_error : null;
@@ -395,13 +366,13 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
       <div className="max-w-xl">
         <div className="mb-4 inline-flex items-center gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-sm font-medium text-warning">
           <AlertTriangle size={16} />
-          {platform ? "本次生成未完成" : "服务状态需要处理"}
+          {processing ? "任务仍在处理中" : pending ? "任务仍待确认" : platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
+          {processing ? "图片仍在生成，请查询原任务进度" : pending ? "暂未取得最终结果，请查询原任务" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
         <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {uploadLimitDetail || ((pricingChanged || pending) ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
+          {pending ? processing ? "本次等待时间已到，后台任务仍可能继续。结果完成后会更新到生图任务记录；查询原任务不会重新生图。" : "暂时无法确认最终结果，不代表生成失败。请查询原任务或稍后查看生图任务记录，避免重复提交。" : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
             "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。")}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -412,7 +383,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
           ))}
         </div>
         {pending && onQueryTask && <button type="button" disabled={querying} onClick={async()=>{setQuerying(true);try{await onQueryTask();}finally{setQuerying(false);}}} className="mt-5 inline-flex min-h-12 items-center gap-2 rounded-lg bg-accent px-5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"><RefreshCw size={17} className={querying?'animate-spin':''}/>{querying?'正在查询原任务…':'查询原任务 · 找回图片'}</button>}
-        {!errorInfo?.submission_unknown && <button
+        {!pending && <button
           type="button"
           onClick={onRetry}
           className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
@@ -426,15 +397,15 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
         <div className="flex items-center justify-between gap-3 border-b border-border-subtle pb-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
             <ShieldCheck size={17} className="text-mint" />
-            {platform ? "错误详情" : "运行诊断"}
+            {pending ? "查询进度" : platform ? "错误详情" : "运行诊断"}
           </div>
-          <span className="rounded-md border border-error/30 bg-error/10 px-2 py-1 text-xs font-medium text-error">
-            未完成
+          <span className={`rounded-md border px-2 py-1 text-xs font-medium ${pending ? 'border-accent/30 bg-accent/10 text-accent' : 'border-error/30 bg-error/10 text-error'}`}>
+            {processing ? '处理中' : pending ? '待确认' : '未完成'}
           </span>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <div className="flex items-start justify-between gap-4">
-            <dt className="shrink-0 text-text-muted">{platform ? "错误类别" : "当前状态"}</dt>
+            <dt className="shrink-0 text-text-muted">{pending ? "任务状态" : platform ? "错误类别" : "当前状态"}</dt>
             <dd className="min-w-0 break-all text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
           </div>
           {upstream?.message && <div>
@@ -459,11 +430,11 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
           </div>}
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">恢复动作</dt>
-            <dd className="text-right font-medium text-text-primary">按建议处理后重试</dd>
+            <dd className="text-right font-medium text-text-primary">{pending ? '等待结果并查询原任务' : '按建议处理后重试'}</dd>
           </div>
           <div>
             <dt className="mb-2 text-text-muted">建议说明</dt>
-            <dd className="rounded-lg border border-error/25 bg-error/8 p-3 text-sm leading-6 text-text-secondary">
+            <dd className={`rounded-lg border p-3 text-sm leading-6 text-text-secondary ${pending ? 'border-accent/25 bg-accent/8' : 'border-error/25 bg-error/8'}`}>
               {recovery.join(" / ")}
             </dd>
           </div>

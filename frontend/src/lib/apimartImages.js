@@ -61,9 +61,11 @@ export async function listImageTasks(headers, signal) {
 
 export function imageJobMetadata(job, route) {
   const status = job.status === 'completed' ? 'completed' : job.status === 'failed' ? 'failed' : 'pending';
+  const pendingCode = ['submitting', 'submission_unknown'].includes(job.status) ? 'IMAGE_SUBMISSION_UNKNOWN'
+    : ['submitted', 'processing'].includes(job.status) ? job.error_code || 'IMAGE_TASK_PENDING' : job.error_code || 'IMAGE_TASK_REVIEW_REQUIRED';
   return {id:job.request_id, model:job.model, billingMode:job.billing_mode, createdAt:Date.parse(job.created_at), route,
     status, images:(Array.isArray(job.image_keys) ? job.image_keys : []).map(filename => ({filename})),
-    ...(['pending','failed'].includes(status) ? {error:{code:job.error_code || (status==='failed'?'IMAGE_TASK_FAILED':'IMAGE_TASK_PENDING'),submission_unknown:status==='pending'}} : {})};
+    ...(['pending','failed'].includes(status) ? {error:{code:status==='failed'?job.error_code || 'IMAGE_TASK_FAILED':pendingCode,submission_unknown:status==='pending'}} : {})};
 }
 
 // Legacy requests remain byte-for-byte on their existing routes. New model

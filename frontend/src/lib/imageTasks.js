@@ -55,3 +55,21 @@ export function referenceCapability(spec) {
   const limit = spec?.maxReferences ?? spec?.references ?? 8;
   return { limit, disabled: limit === 0 };
 }
+
+// A late successful result must update the selected gallery as well as the list.
+// Ignore responses from an old account/store, even after switching back to it.
+export function syncImageTaskSelection(store, jobs, { currentStore, currentOwner, selectedId }) {
+  if (store !== currentStore || store.identity !== currentOwner) return null;
+  const before = getCompletedImageTask(store, selectedId);
+  store.importJobs(jobs);
+  if (!jobs.some(job => job.id === selectedId)) return null;
+  const after = getCompletedImageTask(store, selectedId);
+  if (!after || (before && before.images.length === after.images.length
+    && before.images.every((image, index) => image.filename === after.images[index].filename))) return null;
+  return after;
+}
+
+export function getCompletedImageTask(store, requestId) {
+  const task = store.getSnapshot().find(item => item.id === requestId);
+  return task?.status === "completed" && !task.active && task.images.length ? task : null;
+}

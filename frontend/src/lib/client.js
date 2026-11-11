@@ -161,6 +161,8 @@ export async function fetchImageBlob(filename, options = {}) {
   }
   const pending = (async () => {
     let useBackup = Boolean(options.forceBackup);
+    const directReadTimeoutMs = Number.isFinite(options.directReadTimeoutMs)
+      ? Math.max(1000, Math.min(IMAGE_READ_TIMEOUT_MS, options.directReadTimeoutMs)) : IMAGE_READ_TIMEOUT_MS;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const url = await fetchImageUrl(filename, { ...options, forceBackup: useBackup, forceRefresh: Boolean(options.forceRefresh) || attempt > 0 });
       const upstream = imageUrlSources.get(url) === "upstream";
@@ -194,7 +196,7 @@ export async function fetchImageBlob(filename, options = {}) {
           }
         }
         return content;
-      }, upstream ? 8000 : IMAGE_READ_TIMEOUT_MS, "原图读取超时，请检查网络连接后重试。");
+      }, upstream ? Math.min(8000, directReadTimeoutMs) : directReadTimeoutMs, "原图读取超时，请检查网络连接后重试。");
       } catch (reason) {
         if (upstream && attempt === 0) { useBackup = true; continue; }
         if (!options.authenticated || options.variant === "thumbnail") throw reason;

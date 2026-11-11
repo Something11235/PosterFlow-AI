@@ -13,7 +13,8 @@ import Gallery from "./components/Gallery";
 import { canvasEditCapability } from "./lib/canvasImageEditing";
 import ImageTaskQueue from "./components/ImageTaskQueue";
 import ImageTasksPanel from "./components/ImageTasksPanel";
-import { createImageTaskStore, IMAGE_TASK_LIMIT, referenceCapability } from "./lib/imageTasks";
+import { createImageTaskStore, getCompletedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
+import { canAutoQueryImageTask, startImageTaskRecovery } from "./lib/imageTaskRecovery";
 import { imageGenerationFetch, readImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
@@ -202,17 +203,20 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [account, setAccount] = useState(null);
   const [accountLoading, setAccountLoading] = useState(false);
+  const [accountError, setAccountError] = useState("");
   const sessionRef = useRef(null);
   const imageTaskStore = useMemo(() => createImageTaskStore(IMAGE_TASK_LIMIT, session?.user?.id || "guest"), [session?.user?.id]);
   const imageTaskStoreRef = useRef(imageTaskStore);
   imageTaskStoreRef.current = imageTaskStore;
   const imageTasks = useSyncExternalStore(imageTaskStore.subscribe, imageTaskStore.getSnapshot);
   const imageActiveCount = imageTasks.filter(task => task.active).length;
-  const isGenerating = Boolean(imageTasks.find(task => task.id === selectedTaskRef.current)?.active);
+  const selectedImageTask = imageTasks.find(task => task.id === selectedTaskRef.current);
+  const isGenerating = Boolean(selectedImageTask?.active);
   useEffect(() => {
     selectedTaskRef.current = "";
     setImages([]); setCurrentPrompt(""); setError(null); setSelectedImages(new Set());
     setTavernBackgroundTarget(null); setTavernBackgroundImports([]);
+    setAccountError("");
   }, [imageTaskStore]);
 
   const accountRequestRef = useRef(0);
@@ -265,8 +269,11 @@ export default function App() {
     if (!targetSession?.access_token) {
       setAccount(null);
       setAccountLoading(false);
+      setAccountError("");
       return null;
     }
+    const live = () => requestNumber === accountRequestRef.current
+      && targetSession.user?.id === sessionRef.current?.user?.id;
     setAccountLoading(true);
     try {
       const response = await fetch(`${API_BASE}/account`, {
@@ -275,15 +282,17 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok || data.error) throw new Error(data.detail || data.error || "账户信息加载失败");
-      if (requestNumber === accountRequestRef.current) setAccount(data);
+      if (live()) { setAccount(data); setAccountError(""); }
       return data;
-    } catch (reason) {
-      if (requestNumber === accountRequestRef.current) {
-        setError({ message: "账户信息暂时不可用", code: "ACCOUNT_LOAD_FAILED", detail: reason.message, recovery: ["检查 Supabase 配置", "刷新页面", "稍后重试"] });
+    } catch {
+      if (live()) {
+        // Account synchronization is independent of a finished image request.
+        // Keep its images and task outcome visible, rather than suggesting a new generation.
+        setAccountError("账户与积分暂时未同步，已有生成结果仍可查看。");
       }
       return null;
     } finally {
-      if (requestNumber === accountRequestRef.current) setAccountLoading(false);
+      if (live()) setAccountLoading(false);
     }
   }, []);
 
@@ -455,8 +464,10 @@ export default function App() {
   }, []);
 
   const handleCanvasGenerated = useCallback(({ image, prompt: generatedPrompt }) => {
+    selectedTaskRef.current = "";
     setImages([image]);
     setCurrentPrompt(generatedPrompt);
+    setError(null); setSelectedImages(new Set());
   }, []);
 
   const handleReferenceAdd = useCallback((files) => {
@@ -572,6 +583,12 @@ export default function App() {
     setImages([]); setSelectedImages(new Set()); setCurrentPrompt(taskPrompt.trim());
     const live = () => imageTaskStoreRef.current === store && (sessionRef.current?.user?.id || 'guest') === store.identity;
     const selected = () => live() && selectedTaskRef.current === requestId;
+    const showFailure = failure => {
+      if (!selected()) return;
+      const completed = getCompletedImageTask(store, requestId);
+      if (completed) { setImages(completed.images); setCurrentPrompt(completed.prompt); setError(null); }
+      else setError(failure);
+    };
     const show = data => {
       store.finish(requestId, { images: data.images || [], prompt: data.prompt || taskPrompt });
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
@@ -604,7 +621,7 @@ export default function App() {
         const pending = Boolean(routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || "")));
         const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown) };
         store.finish(requestId, { error: failure, pending });
-        if (selected()) setError(failure);
+        showFailure(failure);
       } else show(data);
     } catch (reason) {
       // Existing synchronous models have their original GET-only recovery.
@@ -616,7 +633,7 @@ export default function App() {
           code: reason?.code || "BACKEND_OFFLINE", billing_mode: billingMode, submission_unknown:started,
           detail: reason?.detail || reason?.message || "请查询原任务状态，避免重复提交。" };
         store.finish(requestId, { error: failure, pending: started });
-        if (selected()) setError(failure);
+        showFailure(failure);
       }
     } finally {
       if (live()) await refreshAccount();
@@ -655,7 +672,12 @@ export default function App() {
     try {
       const data=await listImageTasks({...authHeaders,'X-Billing-Mode':'platform'},signal);
       if(!live())return;
-      store.importJobs(data.jobs);
+      const selected = syncImageTaskSelection(store, data.jobs, {
+        currentStore: imageTaskStoreRef.current,
+        currentOwner: sessionRef.current?.user?.id || 'guest',
+        selectedId: selectedTaskRef.current,
+      });
+      if (selected) { setImages(selected.images); setCurrentPrompt(selected.prompt); setError(null); }
       if(data.unavailable)setImageTasksWarning('部分任务暂未同步，请稍后刷新；已有记录仍可查询。');
     } finally {if(live())setImageTasksLoading(false);}
   },[imageTaskStore,session?.user?.id,authHeaders]);
@@ -667,7 +689,7 @@ export default function App() {
     return()=>controller.abort();
   },[syncImageTasks]);
 
-  const queryImageTask = useCallback(async task => {
+  const queryImageTask = useCallback(async (task, { silent = false } = {}) => {
     const store=imageTaskStore, key=store.identity+':'+task.id;
     if(task.active || imageQueries.current.has(key))return;
     const live=()=>imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
@@ -677,25 +699,52 @@ export default function App() {
       headers=providerHeaders;
     }
     imageQueries.current.add(key);
-    const announce=message=>{setNotice(message);setImageTasksWarning(message);};
+    const announce=message=>{if (!silent) {setNotice(message);setImageTasksWarning(message);}};
+    let terminal = false;
     try {
       const data=task.route==='legacy' ? await recoverGeneration(task.id,{headers,attempts:1})
         : await readImageTask(task.id,headers,undefined,task.model,task.route);
       if(!live())return;
       if((data?.job?.status==='completed' || data?.status==='succeeded') && data?.images?.length){
+        terminal = true;
         store.finish(task.id,{images:data.images,prompt:task.prompt});
         if(selectedTaskRef.current===task.id){setImages(data.images);setError(null);}
         if(task.backgroundName)queueTavernBackgrounds(data.images.map(image=>image.filename),task.backgroundName,task.id,store.identity);
         announce('已找回原任务图片，可点击“查看结果”并下载；没有重新生图。');
       }else if(data?.job?.status==='failed'){
+        terminal = true;
         const failure={message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode};
-        store.finish(task.id,{error:failure});if(selectedTaskRef.current===task.id)setError(failure);
+        store.finish(task.id,{error:failure});
+        const completed = getCompletedImageTask(store, task.id);
+        if(selectedTaskRef.current===task.id){
+          if(completed){setImages(completed.images);setError(null);}
+          else setError(failure);
+        }
         announce(failure.message);
-      }else announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform'?'原请求尚无图片返回，需要管理员核对服务商记录；预留积分保持不变，请勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
-      await refreshAccount();
+      }else {
+        if (['submission_unknown', 'submitting'].includes(data?.job?.status)) {
+          const pending = {code:'IMAGE_SUBMISSION_UNKNOWN',message:'原任务提交结果待核实，请查询原任务，不要重新生成。',submission_unknown:true,billing_mode:task.billingMode};
+          store.finish(task.id,{error:pending,pending:true});
+          if(selectedTaskRef.current===task.id && !getCompletedImageTask(store,task.id))setError(pending);
+        }
+        announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform'?'原请求尚无图片返回，需要管理员核对服务商记录；预留积分保持不变，请勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
+      }
+      if (!silent || terminal) await refreshAccount();
     }catch{if(live())announce('原任务暂时无法查询，请稍后再试，不要重复生成。');}
     finally{imageQueries.current.delete(key);}
   },[imageTaskStore,authHeaders,billingMode,providerConfigured,providerConfig.model,providerHeaders,queueTavernBackgrounds,refreshAccount]);
+
+  useEffect(() => {
+    if (!canAutoQueryImageTask(selectedImageTask)) return;
+    const store = imageTaskStore, requestId = selectedImageTask.id;
+    return startImageTaskRecovery({
+      readTask: () => store === imageTaskStoreRef.current
+        && store.identity === (sessionRef.current?.user?.id || 'guest')
+        && selectedTaskRef.current === requestId
+        ? store.getSnapshot().find(task => task.id === requestId) : null,
+      query: task => queryImageTask(task, { silent: true }),
+    });
+  }, [selectedImageTask, imageTaskStore, queryImageTask]);
 
   const handleSaveProvider = useCallback((nextConfig) => {
     saveProviderConfig(nextConfig);
@@ -848,6 +897,7 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <AnnouncementBanner />
+          {accountError && <div role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gold/25 bg-gold/5 px-4 py-2 text-xs text-text-secondary"><span>{accountError}</span><button type="button" disabled={accountLoading} onClick={() => void refreshAccount()} className="min-h-10 rounded-md border border-border-default px-3 text-accent disabled:opacity-50">{accountLoading ? "正在同步账户…" : "重试同步账户"}</button></div>}
           {(imageActiveCount > 0 || musicActiveCount > 0 || videoActiveCount > 0) && <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-accent/20 bg-accent/8 px-4 py-2 text-xs text-text-secondary" role="status">
             <Activity size={14} className="text-accent" />任务进行中
             <button type="button" className="min-h-7 text-accent" onClick={() => setStudioArea("image")}>图像 {imageActiveCount}</button>
