@@ -5,6 +5,7 @@ are persisted by the route before download so a failed save can be resumed.
 """
 import io
 import json
+import logging
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -87,29 +88,37 @@ def submit(server, config, body, request_id):
         kwargs["json"] = payload
     kwargs["headers"]["X-Request-Id"] = request_id
     response = None
+    stage = "connect"
     try:
         response = requests.post(endpoint, **kwargs)
         # Only unequivocal validation/auth rejections are safe to refund.
         # Timeouts, redirects, 429 and 5xx may occur after upstream acceptance.
+        stage = "response"
         if response.status_code in (400, 401, 403, 404, 405, 413, 415, 422):
             raise ImageTaskError("BUYTOKEN_REQUEST_REJECTED", "图片服务未接受本次请求，请核对模型权限、参数或服务余额。", 502)
         if response.status_code != 200:
             raise ImageTaskError("IMAGE_SUBMISSION_UNKNOWN", "图片提交结果尚未确认，请查询原任务，勿重复生成。", 503, True)
+        stage = "read_json"
         raw = bytearray()
         for chunk in response.iter_content(16384):
             raw.extend(chunk)
             if len(raw) > MAX_JSON:
                 raise ValueError("oversized result")
+        stage = "parse_json"
         result = json.loads(raw)
         items = result.get("data") if isinstance(result, dict) else None
         if not isinstance(items, list) or not 1 <= len(items) <= payload["n"]:
             raise ValueError("unconfirmed output count")
         # BuyToken explicitly documents stored URL results. Never silently
         # convert an unexpected synchronous response into a retryable failure.
+        stage = "validate_results"
         return [validate_result_url(server, item.get("url") if isinstance(item, dict) else None, resolve_dns=False) for item in items]
-    except ImageTaskError:
+    except ImageTaskError as error:
+        logging.getLogger(__name__).warning("image_submit request_id=%s stage=%s http_status=%s error_code=%s", request_id, stage, response.status_code if response is not None else None, error.code)
         raise
-    except Exception:
+    except Exception as error:
+        # No exception text: requests exceptions can contain credentialed URLs.
+        logging.getLogger(__name__).warning("image_submit request_id=%s stage=%s http_status=%s error_class=%s", request_id, stage, response.status_code if response is not None else None, type(error).__name__)
         raise ImageTaskError("IMAGE_SUBMISSION_UNKNOWN", "图片提交结果尚未确认，请保留原任务并核对服务记录，勿重复生成。", 503, True) from None
     finally:
         if response is not None:

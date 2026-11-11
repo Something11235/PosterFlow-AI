@@ -1,6 +1,7 @@
 """Durable single-submit BuyToken jobs; legacy APIMart tasks stay on their routes."""
 import hashlib
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -98,18 +99,23 @@ def create_buytoken_image_blueprint(server):
         claim = store.apply(owner, job["request_id"], "claim", p_token=token)
         if not claim.get("claimed"):
             return result(claim["job"], claim.get("balance"))
+        stage = "prepare"
         try:
             prefix = datetime.fromisoformat(job["created_at"].replace("Z", "+00:00")).strftime("%Y%m%d_%H%M%S")
             names = []
             for index, url in enumerate(job["provider_result_urls"], 1):
+                stage = "download"
                 content = provider.download(server, url)
                 extension = "gif" if content[:6] in (b"GIF87a", b"GIF89a") else "png"
                 name = f"{prefix}_{job['id'].replace('-', '')[:12]}_{index}.{extension}"
+                stage = "storage"
                 server.store_generated_image(name, content)
                 names.append(name)
+            stage = "settle"
             saved = store.apply(owner, job["request_id"], "completed", p_token=token, p_images=names)
             return result(saved["job"], saved.get("balance"))
-        except Exception:
+        except Exception as error:
+            logging.getLogger(__name__).warning("image_save request_id=%s stage=%s error_class=%s", job["request_id"], stage, type(error).__name__)
             try:
                 store.apply(owner, job["request_id"], "retry", p_token=token, p_error="IMAGE_SAVE_PENDING")
             except (ImageTaskError, SupabaseError):
@@ -189,5 +195,12 @@ def create_buytoken_image_blueprint(server):
         if not rows:
             raise ImageTaskError("IMAGE_TASK_NOT_FOUND", "未找到本人的图片任务。", 404)
         return jsonify(reconcile(store, owner, rows[0]))
+
+    @bp.get("/tasks")
+    def tasks():
+        _mode, owner, _user = context()
+        server.enforce_rate_limit("buytoken-image-list", owner, 30, 60)
+        # Listing never downloads results, settles credits or submits a model.
+        return jsonify(success=True, jobs=[public_job(job) for job in BuyTokenStore().jobs(owner)])
 
     return bp

@@ -3,7 +3,7 @@ import { Check, ChevronRight, Copy, History, Loader2, RefreshCw, SquarePen, X } 
 import { cleanPromptHistory, readGuestPrompts, HISTORY_PREVIEW_WINDOW_MS } from "../lib/promptHistory";
 import HistoryImagePreviews from "./HistoryImagePreviews";
 
-export default function PromptHistoryPanel({ open, userId, authHeaders, onClose, onUsePrompt }) {
+export default function PromptHistoryPanel({ open, userId, authHeaders, onClose, onUsePrompt, onOpenImageTasks }) {
   const [entries, setEntries] = useState([]);
   const [cursor, setCursor] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -55,6 +55,7 @@ export default function PromptHistoryPanel({ open, userId, authHeaders, onClose,
     <section className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-lg border border-border-default bg-bg-secondary shadow-2xl sm:rounded-lg">
       <header className="flex items-start justify-between gap-3 border-b border-border-subtle p-5"><div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-accent/30 bg-accent/10 text-accent"><History size={20} /></span><div><p className="mb-1 flex items-center gap-1 text-xs text-text-muted">资料与工具<ChevronRight size={12} /></p><h2 id="prompt-history-title" className="text-base font-semibold text-text-primary">历史记录</h2><p className="mt-1 text-xs leading-5 text-text-muted">近七天的图像、音乐与视频提示词 · {userId ? "当前账号" : "当前浏览器"}</p></div></div><div className="flex shrink-0 gap-1"><button type="button" aria-label="刷新提示词历史" disabled={loading} onClick={() => load()} className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-muted hover:bg-bg-elevated disabled:opacity-50"><RefreshCw size={17} className={loading ? "animate-spin-soft" : ""} /></button><button type="button" aria-label="关闭历史记录" onClick={onClose} className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-muted hover:bg-bg-elevated"><X size={18} /></button></div></header>
       <div className="min-h-0 space-y-3 overflow-y-auto p-4 sm:p-5">
+        {onOpenImageTasks && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/8 p-3"><p className="text-sm leading-6 text-text-secondary">生成未完成或刷新后找不到图片？</p><button type="button" onClick={onOpenImageTasks} className="min-h-11 rounded-md bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">生图任务 · 查询与查看结果</button></div>}
         <p className="rounded-md border border-accent/20 bg-accent/5 p-3 text-xs leading-6 text-text-secondary">{userId ? "图片预览仅保留 12 小时，点击后加载小尺寸缩略图，不读取原图。提示词仍保留 7 天。" : "当前浏览器保留近 7 天提示词；登录后可查看账号最近 12 小时的图片预览。"}</p>
         {previewWarning && <p role="status" className="text-xs leading-6 text-text-muted">{previewWarning}</p>}
         {error && <p role="alert" className="rounded-md border border-error/30 bg-error/10 p-3 text-sm text-error">{error}<button type="button" disabled={loading} onClick={() => load(cursor && entries.length ? cursor : null)} className="ml-3 underline">重试</button></p>}

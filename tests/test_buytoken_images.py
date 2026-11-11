@@ -277,3 +277,31 @@ class BuyTokenImagesTests(unittest.TestCase):
         self.assertNotIn('p_price', values)
         store.jobs('owner', RID)
         self.assertEqual(store.gateway._request.call_args.kwargs['params']['submission_provider'], 'eq.buytoken')
+
+    def test_task_listing_is_owned_private_metadata_and_never_settles_or_generates(self):
+        self.job.update(status='submission_unknown', provider_result_urls=[URL], api_key='secret', prompt='private prompt')
+        result = self.client.get('/api/buytoken-images/tasks', headers={'X-Billing-Mode': 'platform'})
+        self.assertEqual(result.status_code, 200, result.json)
+        self.store.jobs.assert_called_once_with('user-' + USER)
+        self.assertEqual(result.json['jobs'][0]['request_id'], RID)
+        self.assertEqual(result.json['jobs'][0]['status'], 'submission_unknown')
+        for private in ('secret', URL, 'private prompt'):
+            self.assertNotIn(private, json.dumps(result.json))
+        self.assertIn('no-store', result.headers['Cache-Control'])
+        self.store.apply.assert_not_called()
+        self.post.assert_not_called()
+        self.get.assert_not_called()
+        self.saved.assert_not_called()
+
+    def test_safe_diagnostics_record_stage_and_http_without_credentials_or_provider_bodies(self):
+        self.post.return_value = response(b'private body key=secret', status=503)
+        with self.assertLogs('backend.buytoken_image_provider', level='WARNING') as logs:
+            result = self.generate()
+        self.assertEqual(result.json['code'], 'IMAGE_SUBMISSION_UNKNOWN')
+        joined = '\n'.join(logs.output)
+        self.assertIn('http_status=503', joined)
+        self.assertIn('stage=response', joined)
+        for private in ('private body', 'secret', URL, CONFIG.endpoint):
+            self.assertNotIn(private, joined)
+        self.assertEqual(self.job['status'], 'submission_unknown')
+        self.assertNotIn('failed', self.events)

@@ -29,7 +29,7 @@ function TavernResources({ detailsRef }) {
   </details>;
 }
 
-export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenHistory, onOpenCommunity }) {
+export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
   const tavernResources = useRef(null);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
@@ -57,6 +57,7 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
         <button type="button" className="studio-collapse-resources" title="酒馆资源" aria-label="展开酒馆资源" aria-controls="studio-tavern-resource-links" onClick={openTavernResources}><LibraryBig size={18} aria-hidden="true" /></button>
         <button type="button" title="模型一览" aria-label="模型一览" aria-current={area === "models" ? "page" : undefined} onClick={() => onAreaChange("models")}><Grid2X2 size={18} />模型一览</button>
         <button type="button" title="历史记录" aria-label="历史记录" onClick={onOpenHistory}><History size={18} />历史记录</button>
+        <button type="button" title="生图任务" aria-label="生图任务" onClick={onOpenImageTasks}><Image size={18} />生图任务</button>
         <button type="button" title="QQ交流群" aria-label="QQ交流群" onClick={onOpenCommunity}><Users size={18} />QQ交流群</button>
         <button type="button" title="购买积分" aria-label="购买积分" className="studio-mobile-tool" onClick={onOpenRecharge}><ArrowUpRight size={18} />购买积分</button>
       </nav>

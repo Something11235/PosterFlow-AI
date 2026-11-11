@@ -41,3 +41,43 @@ test("model choices omit retired Nano Banana Pro and reference inputs follow act
   }
   assert.deepEqual(referenceCapability(null), { limit: 8, disabled: false });
 });
+
+const memoryStorage=()=>{const data=new Map();return {getItem:key=>data.get(key),setItem:(key,value)=>data.set(key,value),data};};
+test('refresh retains original intent and result filenames without credentials or running slots',()=>{
+  const storage=memoryStorage(),store=createImageTaskStore(3,'owner',{storage});
+  store.start('pending',{prompt:'original',model:'gpt-image-2.6-flare',billingMode:'platform',route:'buytoken',apiKey:'never-store',backgroundName:'海湾'});
+  store.start('done',{prompt:'completed',model:'gpt-image-2.6-flare',billingMode:'platform',route:'buytoken'});
+  store.finish('done',{images:[{filename:'result.png',url:'https://secret.invalid/?token=secret'}]});
+  const raw=storage.getItem('posterflow.image-tasks.v2:owner');
+  assert.ok(!/never-store|secret|https:/.test(raw));
+  const restored=createImageTaskStore(3,'owner',{storage}).getSnapshot();
+  assert.equal(restored.find(x=>x.id==='pending').status,'pending');
+  assert.equal(restored.find(x=>x.id==='pending').active,false);
+  assert.equal(restored.find(x=>x.id==='pending').backgroundName,'海湾');
+  assert.deepEqual(restored.find(x=>x.id==='done').images,[{filename:'result.png'}]);
+  assert.deepEqual(createImageTaskStore(3,'other',{storage}).getSnapshot(),[]);
+});
+test('owned remote completed results recover pending tasks, preserve prompts and ignore late failures',()=>{
+  const store=createImageTaskStore(3,'owner',{storage:memoryStorage()});
+  store.start('original',{prompt:'my prompt',model:'model',billingMode:'platform',route:'buytoken'});
+  store.finish('original',{error:{code:'IMAGE_SUBMISSION_UNKNOWN'},pending:true});
+  const remote={id:'original',model:'model',createdAt:Date.now(),status:'completed',images:[{filename:'restored.png'}],route:'buytoken'};
+  store.importJobs([remote]);
+  store.finish('original',{error:{code:'LATE_ERROR'}});
+  store.importJobs([{...remote,status:'pending',images:[]}]);
+  assert.equal(store.getSnapshot()[0].status,'completed');
+  assert.equal(store.getSnapshot()[0].prompt,'my prompt');
+  assert.deepEqual(store.getSnapshot()[0].images,[{filename:'restored.png'}]);
+});
+test('expired, malformed and oversized archives cannot leak arbitrary fields or break task creation',()=>{
+  const storage=memoryStorage(),key='posterflow.image-tasks.v2:owner';
+  storage.setItem(key,JSON.stringify([{id:'old',createdAt:Date.now()-8*86400000},{id:'../foreign',createdAt:Date.now()}]));
+  assert.deepEqual(createImageTaskStore(3,'owner',{storage}).getSnapshot(),[]);
+  storage.setItem(key,'not JSON');
+  const store=createImageTaskStore(3,'owner',{storage});
+  for(let i=0;i<60;i++)store.importJobs([{id:'task'+i,createdAt:Date.now(),status:'completed',images:[{filename:'../../foreign.png'}],apiKey:'secret'}]);
+  assert.equal(store.getSnapshot().length,50);
+  assert.ok(store.getSnapshot().every(x=>x.images.length===0));
+  assert.ok(!storage.getItem(key).includes('secret'));
+  assert.doesNotThrow(()=>createImageTaskStore(3,'owner',{storage:{getItem(){throw Error();},setItem(){throw Error();}}}).start('safe',{prompt:'safe'}));
+});

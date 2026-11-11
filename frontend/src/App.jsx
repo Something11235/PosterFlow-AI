@@ -12,8 +12,9 @@ import {
 import Gallery from "./components/Gallery";
 import { canvasEditCapability } from "./lib/canvasImageEditing";
 import ImageTaskQueue from "./components/ImageTaskQueue";
+import ImageTasksPanel from "./components/ImageTasksPanel";
 import { createImageTaskStore, IMAGE_TASK_LIMIT, referenceCapability } from "./lib/imageTasks";
-import { imageGenerationFetch, readImageTask } from "./lib/apimartImages";
+import { imageGenerationFetch, readImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
@@ -218,6 +219,11 @@ export default function App() {
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [imageTasksOpen, setImageTasksOpen] = useState(false);
+  const [imageTasksLoading, setImageTasksLoading] = useState(false);
+  const [imageTasksWarning, setImageTasksWarning] = useState('');
+  const imageQueries = useRef(new Set());
+  const closeImageTasks = useCallback(()=>setImageTasksOpen(false),[]);
   const [communityOpen, setCommunityOpen] = useState(false);
 
   useEffect(() => {
@@ -554,7 +560,9 @@ export default function App() {
     }
     const requestId = createRequestId(), store = imageTaskStore;
     const backgroundTarget = !previousImage && tavernBackgroundTarget?.identity === store.identity ? tavernBackgroundTarget : null;
-    if (!store.start(requestId, { prompt: taskPrompt.trim(), model: activeImageModel, billingMode })) {
+    if (!store.start(requestId, { prompt: taskPrompt.trim(), model: activeImageModel, billingMode,
+      route:routedImageSpec ? usesBuyToken(activeImageModel,providerHeaders)?'buytoken':'apimart' : 'legacy',
+      backgroundName:backgroundTarget?.name })) {
       setNotice("已有 3 个生图任务正在运行，完成一个后可继续提交。"); return;
     }
     selectedTaskRef.current = requestId;
@@ -567,15 +575,6 @@ export default function App() {
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
       if (live() && backgroundTarget && data.images?.length) queueTavernBackgrounds(data.images.map(image => image.filename), backgroundTarget.name, requestId, backgroundTarget.identity);
     };
-    if (routedImageSpec) store.registerRecovery(requestId, async () => {
-      const data = await readImageTask(requestId, providerHeaders, undefined, activeImageModel);
-      if (!live()) return;
-      if (data.job?.status === "completed") show(data);
-      else if (data.job?.status === "failed") {
-        store.finish(requestId, { error: { message: "本次任务未完成，预留积分已按实际结果处理。", billing_mode: billingMode } });
-      } else setNotice("原任务仍在处理中，可以稍后再次查询；不会重新生图。");
-      await refreshAccount();
-    });
     let paths = [], started = false;
     try {
       const body = { prompt: taskPrompt.trim(), request_id: requestId,
@@ -600,8 +599,9 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
-        const failure = { ...normalizeApiError(data), billing_mode: billingMode };
-        store.finish(requestId, { error: failure, pending: Boolean(routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))) });
+        const pending = Boolean(routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || "")));
+        const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown) };
+        store.finish(requestId, { error: failure, pending });
         if (selected()) setError(failure);
       } else show(data);
     } catch (reason) {
@@ -611,7 +611,7 @@ export default function App() {
       if (recovered?.images?.length) show(recovered);
       else {
         const failure = { message: reason?.code?.startsWith("REFERENCE_") ? "参考图上传失败" : "生成请求暂未完成",
-          code: reason?.code || "BACKEND_OFFLINE", billing_mode: billingMode,
+          code: reason?.code || "BACKEND_OFFLINE", billing_mode: billingMode, submission_unknown:started,
           detail: reason?.detail || reason?.message || "请查询原任务状态，避免重复提交。" };
         store.finish(requestId, { error: failure, pending: started });
         if (selected()) setError(failure);
@@ -630,8 +630,58 @@ export default function App() {
   const viewImageTask = useCallback(task => {
     selectedTaskRef.current = task.id;
     setImages(task.images || []); setCurrentPrompt(task.prompt); setError(task.error || null);
-    setSelectedImages(new Set()); setStudioArea("image");
+    setSelectedImages(new Set()); setMode('create'); setStudioArea("image"); setImageTasksOpen(false);
   }, []);
+
+  const syncImageTasks = useCallback(async signal => {
+    const store=imageTaskStore;
+    const live=()=>!signal?.aborted && imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
+    if(!session?.user?.id){setImageTasksWarning('登录后可同步本人平台任务；当前仅显示本机记录。');return;}
+    setImageTasksLoading(true);setImageTasksWarning('');
+    try {
+      const data=await listImageTasks({...authHeaders,'X-Billing-Mode':'platform'},signal);
+      if(!live())return;
+      store.importJobs(data.jobs);
+      if(data.unavailable)setImageTasksWarning('部分任务暂未同步，请稍后刷新；已有记录仍可查询。');
+    } finally {if(live())setImageTasksLoading(false);}
+  },[imageTaskStore,session?.user?.id,authHeaders]);
+
+  useEffect(()=>{
+    const controller=new AbortController();
+    setImageTasksLoading(false);setImageTasksWarning('');
+    void syncImageTasks(controller.signal);
+    return()=>controller.abort();
+  },[syncImageTasks]);
+
+  const queryImageTask = useCallback(async task => {
+    const store=imageTaskStore, key=store.identity+':'+task.id;
+    if(task.active || imageQueries.current.has(key))return;
+    const live=()=>imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
+    let headers={...authHeaders,'X-Billing-Mode':'platform'};
+    if(task.billingMode==='own_key'){
+      if(billingMode!=='own_key' || !providerConfigured || providerConfig.model!==task.model){setNotice('请先在图片服务配置中填写原任务使用的模型和 API Key，再查询原任务。');setImageTasksOpen(false);setShowProviderSettings(true);return;}
+      headers=providerHeaders;
+    }
+    imageQueries.current.add(key);
+    const announce=message=>{setNotice(message);setImageTasksWarning(message);};
+    try {
+      const data=task.route==='legacy' ? await recoverGeneration(task.id,{headers,attempts:1})
+        : await readImageTask(task.id,headers,undefined,task.model,task.route);
+      if(!live())return;
+      if((data?.job?.status==='completed' || data?.status==='succeeded') && data?.images?.length){
+        store.finish(task.id,{images:data.images,prompt:task.prompt});
+        if(selectedTaskRef.current===task.id){setImages(data.images);setError(null);}
+        if(task.backgroundName)queueTavernBackgrounds(data.images.map(image=>image.filename),task.backgroundName,task.id,store.identity);
+        announce('已找回原任务图片，可点击“查看结果”并下载；没有重新生图。');
+      }else if(data?.job?.status==='failed'){
+        const failure={message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode};
+        store.finish(task.id,{error:failure});if(selectedTaskRef.current===task.id)setError(failure);
+        announce(failure.message);
+      }else announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform'?'原请求尚无图片返回，需要管理员核对服务商记录；预留积分保持不变，请勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
+      await refreshAccount();
+    }catch{if(live())announce('原任务暂时无法查询，请稍后再试，不要重复生成。');}
+    finally{imageQueries.current.delete(key);}
+  },[imageTaskStore,authHeaders,billingMode,providerConfigured,providerConfig.model,providerHeaders,queueTavernBackgrounds,refreshAccount]);
 
   const handleSaveProvider = useCallback((nextConfig) => {
     saveProviderConfig(nextConfig);
@@ -764,6 +814,7 @@ export default function App() {
           onOpenRecharge={() => setRechargeOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
           onOpenHistory={() => setHistoryOpen(true)}
+          onOpenImageTasks={() => setImageTasksOpen(true)}
           onOpenCommunity={() => setCommunityOpen(true)}
         /> : <StudioNavigation
           area={studioArea}
@@ -776,6 +827,7 @@ export default function App() {
           onOpenRecharge={() => setRechargeOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
           onOpenHistory={() => setHistoryOpen(true)}
+          onOpenImageTasks={() => setImageTasksOpen(true)}
           onOpenCommunity={() => setCommunityOpen(true)}
           onOpenProvider={() => setShowProviderSettings(true)}
         />}
@@ -972,16 +1024,14 @@ export default function App() {
                 onAddToCanvas={handleAddToCanvas}
                 onCopyPrompt={handleCopyPrompt}
                 onRetry={handleGenerate}
+                onQueryTask={() => {const task=imageTasks.find(item=>item.id===selectedTaskRef.current);if(task)return queryImageTask(task);setImageTasksOpen(true);}}
                 providerModel={hasBrowserProvider ? providerConfig.model : "服务器默认模型"}
                 presetName={activePreset?.name}
                 presetCategory={activePreset?.category}
                 authenticated={Boolean(session)}
                 authHeaders={authHeaders}
               />
-              <ImageTaskQueue key={imageTaskStore.identity} tasks={imageTasks} onView={viewImageTask} onQuery={async task => {
-                try { await imageTaskStore.recover(task.id); }
-                catch { setNotice("原任务暂时无法查询，请稍后再试，不要重复生成。"); }
-              }} />
+              <ImageTaskQueue key={imageTaskStore.identity} tasks={imageTasks} onView={viewImageTask} onQuery={queryImageTask} />
             </section>
           </div>
           </div>
@@ -1029,7 +1079,9 @@ export default function App() {
       <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
       <RechargePanel key={`recharge:${session?.user?.id || "guest"}`} open={rechargeOpen} onClose={() => setRechargeOpen(false)} session={session} account={account} authHeaders={authHeaders} onLogin={() => {setRechargeOpen(false);setAuthOpen(true);}} onAccountRefresh={refreshAccount} />
-      <PromptHistoryPanel key={session?.user?.id || "guest"} open={historyOpen} userId={session?.user?.id} authHeaders={authHeaders} onClose={() => setHistoryOpen(false)} onUsePrompt={(value, item) => { if (item?.kind === "video") { setVideoHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("video"); } else if (item?.kind === "music") { setMusicHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("music"); } else { setPrompt(value); setActivePreset(null); setMode("create"); setStudioArea("image"); } setHistoryOpen(false); setNotice("历史提示词已填入，请核对模型与参数后生成"); }} />
+      <PromptHistoryPanel key={session?.user?.id || "guest"} open={historyOpen} onOpenImageTasks={() => {setHistoryOpen(false);setImageTasksOpen(true);}} userId={session?.user?.id} authHeaders={authHeaders} onClose={() => setHistoryOpen(false)} onUsePrompt={(value, item) => { if (item?.kind === "video") { setVideoHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("video"); } else if (item?.kind === "music") { setMusicHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("music"); } else { setPrompt(value); setActivePreset(null); setMode("create"); setStudioArea("image"); } setHistoryOpen(false); setNotice("历史提示词已填入，请核对模型与参数后生成"); }} />
+
+      <ImageTasksPanel key={imageTaskStore.identity} open={imageTasksOpen} tasks={imageTasks} loading={imageTasksLoading} warning={imageTasksWarning} onClose={closeImageTasks} onRefresh={() => void syncImageTasks()} onView={viewImageTask} onQuery={queryImageTask} />
 
       {(notice || selectedCount > 0) && (
         <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-border-default bg-bg-secondary px-4 py-3 text-sm text-text-secondary shadow-2xl">

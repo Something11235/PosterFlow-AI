@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { imageGenerationFetch, readImageTask } from "../src/lib/apimartImages.js";
+import { imageGenerationFetch, readImageTask, listImageTasks, imageJobMetadata } from "../src/lib/apimartImages.js";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const requestId = "11111111-1111-4111-8111-111111111111";
+
+test('refresh lists both owned providers using GET only and keeps the healthy provider when another is down',async t=>{
+  const calls=[];
+  install(t,async(url,init)=>{calls.push({url,init});if(url.includes('apimart-images'))return json({error:'unavailable'},503);
+    return json({jobs:[{request_id:requestId,status:'completed',created_at:new Date().toISOString(),model:'gpt-image-2.6-flare',billing_mode:'platform',image_keys:['restored.png'],provider_result_urls:['https://secret.invalid'],api_key:'never'}]});});
+  const data=await listImageTasks({'X-Billing-Mode':'platform',Authorization:'Bearer synthetic'});
+  assert.equal(data.unavailable,true);assert.equal(data.jobs.length,1);assert.equal(data.jobs[0].route,'buytoken');
+  assert.equal(data.jobs[0].status,'completed');assert.ok(!JSON.stringify(data).includes('never'));assert.ok(!JSON.stringify(data).includes('secret.invalid'));
+  assert.ok(calls.every(x=>!x.init.method || x.init.method==='GET'));assert.equal(calls.length,2);
+});
+test('restored task queries retain their original provider even after a model configuration change',async t=>{
+  const calls=[];install(t,async(url,init)=>{calls.push({url,method:init.method||'GET'});return json({job:{status:'submission_unknown'}});});
+  await readImageTask(requestId,{'X-Billing-Mode':'platform'},undefined,'gpt-image-2.6-flare','apimart');
+  assert.match(calls[0].url,/apimart-images\/tasks/);assert.equal(calls[0].method,'GET');
+  const meta=imageJobMetadata({request_id:requestId,status:'submission_unknown',error_code:'IMAGE_SUBMISSION_UNKNOWN',created_at:new Date().toISOString()},'buytoken');
+  assert.equal(meta.status,'pending');assert.equal(meta.error.submission_unknown,true);
+});
 
 test('recognized gateway timeout preserves its Chinese reason and never repeats a paid submission', async t => {
   const calls=[];

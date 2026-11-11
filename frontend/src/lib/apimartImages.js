@@ -32,8 +32,8 @@ async function boundedFetch(url, init, milliseconds) {
   }
 }
 
-export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model")) {
-  const buytoken = usesBuyToken(model, headers);
+export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model"), route) {
+  const buytoken = route ? route === 'buytoken' : usesBuyToken(model, headers);
   let response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, 230000);
   // Pre-migration GPT2.6 tasks keep their original APIMart query path and Key.
   // This is a GET-only recovery fallback, never another generation submission.
@@ -44,6 +44,26 @@ export async function readImageTask(requestId, headers, signal, model = new Head
   const data = await response.json();
   if (!response.ok || data.error) throw Object.assign(new Error(data.detail || data.error || "图片任务暂时无法查询。"), { code: data.code });
   return data;
+}
+
+// Read owned metadata only. Each provider can fail independently; never submit
+// or reconcile a task while listing. No provider credentials are needed here.
+export async function listImageTasks(headers, signal) {
+  const results = await Promise.allSettled(['buytoken', 'apimart'].map(async route => {
+    const base = route === 'buytoken' ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE;
+    const response = await boundedFetch(`${base}/tasks`, {headers, signal, cache:'no-store'}, 20000);
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.jobs)) throw new Error('TASK_LIST_UNAVAILABLE');
+    return data.jobs.map(job => imageJobMetadata(job, route));
+  }));
+  return {jobs:results.flatMap(result => result.status === 'fulfilled' ? result.value : []), unavailable:results.some(result => result.status === 'rejected')};
+}
+
+export function imageJobMetadata(job, route) {
+  const status = job.status === 'completed' ? 'completed' : job.status === 'failed' ? 'failed' : 'pending';
+  return {id:job.request_id, model:job.model, billingMode:job.billing_mode, createdAt:Date.parse(job.created_at), route,
+    status, images:(Array.isArray(job.image_keys) ? job.image_keys : []).map(filename => ({filename})),
+    ...(['pending','failed'].includes(status) ? {error:{code:job.error_code || (status==='failed'?'IMAGE_TASK_FAILED':'IMAGE_TASK_PENDING'),submission_unknown:status==='pending'}} : {})};
 }
 
 // Legacy requests remain byte-for-byte on their existing routes. New model

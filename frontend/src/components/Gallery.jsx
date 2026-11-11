@@ -43,6 +43,7 @@ export default function Gallery({
   tavernBackgroundImports = [],
   onCopyPrompt,
   onRetry,
+  onQueryTask,
   providerModel,
   presetName,
   presetCategory,
@@ -154,7 +155,7 @@ export default function Gallery({
           </div>
         </div>}
         {isGenerating && <LoadingState />}
-        {!isGenerating && error && <ErrorState error={error} billingMode={billingMode} onRetry={onRetry} />}
+        {!isGenerating && error && <ErrorState error={error} billingMode={billingMode} onRetry={onRetry} onQueryTask={onQueryTask} />}
         {!isGenerating && !error && !hasImages && <EmptyState mode={mode} presetName={presetName} presetCategory={presetCategory} />}
         {!isGenerating && !error && hasImages && (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -357,7 +358,8 @@ function LoadingState() {
   );
 }
 
-function ErrorState({ error, billingMode, onRetry }) {
+function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
+  const [querying,setQuerying]=useState(false);
   const errorInfo =
     typeof error === "string"
       ? {
@@ -409,6 +411,7 @@ function ErrorState({ error, billingMode, onRetry }) {
             </span>
           ))}
         </div>
+        {pending && onQueryTask && <button type="button" disabled={querying} onClick={async()=>{setQuerying(true);try{await onQueryTask();}finally{setQuerying(false);}}} className="mt-5 inline-flex min-h-12 items-center gap-2 rounded-lg bg-accent px-5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"><RefreshCw size={17} className={querying?'animate-spin':''}/>{querying?'正在查询原任务…':'查询原任务 · 找回图片'}</button>}
         {!errorInfo?.submission_unknown && <button
           type="button"
           onClick={onRetry}
