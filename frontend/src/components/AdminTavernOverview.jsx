@@ -1,26 +1,23 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { fetchAdminTavernOverview } from '../lib/tavernClient';
+import { fetchAdminTavernTotals } from '../lib/tavernClient';
 import { displayCredits } from '../lib/credits';
-import { TavernBillingRecord } from './tavern/TavernBillingPanel';
-import './tavern/tavern-usage.css';
 
 const count = value => value === null || value === undefined ? '未返回' : /^\d+$/.test(String(value)) ? BigInt(value).toLocaleString('zh-CN') : '—';
 export default function AdminTavernOverview({ authHeaders, refreshKey }) {
-  const [days, setDays] = useState(30), [data, setData] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [data, setData] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const seq = useRef(0), alive = useRef(true), headers = useRef(authHeaders); headers.current = authHeaders;
   const load = useCallback(async () => {
     const turn = ++seq.current; setBusy(true); setError('');
-    try { const value = await fetchAdminTavernOverview(headers.current, days); if (alive.current && turn === seq.current) setData(value); }
+    try { const value = await fetchAdminTavernTotals(headers.current); if (alive.current && turn === seq.current) setData(value); }
     catch (failure) { if (alive.current && turn === seq.current) { setData(null); setError(failure.message); } }
     finally { if (alive.current && turn === seq.current) setBusy(false); }
-  }, [days]);
-  useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; }; }, [load, refreshKey]);
+  }, []);
+  useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; }; }, [load, refreshKey, authHeaders]);
   const stats = data?.stats;
-  return <section className="tv-admin-billing" aria-label="AI 酒馆运营">
-    <div className="tv-billing-toolbar"><h3>AI 酒馆 · 运营总览</h3><label>统计时间 <select aria-label="酒馆统计时间" value={days} onChange={event => setDays(Number(event.target.value))}>{[7,30,90].map(value => <option key={value} value={value}>近{value}天</option>)}</select></label><button type="button" onClick={load} disabled={busy}><RefreshCw size={15} />刷新运营数据</button></div>
-    <p className="tv-billing-note">按北京时间统计平台积分调用，包含聊天、剧情摘要和AI助写；自带API调用只保存在用户浏览器。积分消耗不等于充值收入，预留不计为实扣。不展示聊天正文。</p>
-    {error && <p className="tv-form-error" role="alert">{error}</p>}{busy && <p role="status">正在读取酒馆运营数据…</p>}
-    {!busy && stats && <><dl className="tavern-usage-totals">{[['requests','总调用'],['users','使用用户'],['chat','角色对话'],['summary','剧情摘要'],['assist','AI助写'],['settled','已结算'],['refunded','已退款'],['unresolved','未结算'],['input_tokens','输入Token'],['output_tokens','输出Token'],['cache_read_tokens','已返回的缓存Token'],['missing_cache_calls','未返回缓存明细']].map(([key,label]) => <div key={key}><dt>{label}</dt><dd>{count(stats[key])}</dd></div>)}<div><dt>实际消耗积分</dt><dd>{displayCredits(stats.credits_spent, '未返回')}</dd></div><div><dt>未结算预留积分</dt><dd>{displayCredits(stats.credits_held, '未返回')}</dd></div></dl><details><summary>查看本时段最近50条平台请求</summary><div className="tv-billing-records">{data.requests.map(request => <TavernBillingRecord key={`${request.user_id}-${request.request_id}`} request={request} />)}{!data.requests.length && <p>该时段暂无调用。</p>}</div></details></>}
-  </section>;
+  return <div aria-label="AI 酒馆运营">
+    <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs leading-6 text-text-muted">累计全部历史平台调用，不受日期与用户筛选影响。消耗积分仅计实际扣分，自带 API 调用不计入。</p><button type="button" onClick={load} disabled={busy} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border-subtle px-3 text-xs text-text-secondary hover:bg-bg-elevated disabled:opacity-50"><RefreshCw size={15} className={busy?'animate-spin':''} />刷新酒馆数据</button></div>
+    {error && <p className="mt-3 text-xs text-gold" role="alert">{error}</p>}{busy && <p role="status" className="mt-3 text-xs text-text-muted">正在读取酒馆累计数据…</p>}
+    <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">{[['requests','总调用'],['users','使用用户'],['chat','角色对话'],['summary','剧情摘要'],['assist','AI助写'],['credits_spent','消耗积分']].map(([key,label]) => <div key={key} className="rounded-md border border-border-subtle bg-bg-primary/60 p-3"><dt className="text-xs text-text-muted">{label}</dt><dd className="mt-2 text-xl font-semibold tabular-nums text-text-primary">{busy || !stats?'—':key==='credits_spent'?displayCredits(stats[key],'—'):count(stats[key])}</dd></div>)}</dl>
+  </div>;
 }

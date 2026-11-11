@@ -22,7 +22,7 @@ function Select({ value, onChange, label, options }) {
 }
 const mergeJobs = (previous, jobs) => [...new Map([...previous, ...jobs].map(job => [job.request_id, job])).values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 50);
 
-export default function MusicWorkspace({ active, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, values, onChange, onTaskActivity }) {
+export default function MusicWorkspace({ active, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, values, onChange, onTaskActivity, bgmIntent, onUseTavernBgm }) {
   const [mode, setMode] = useState(() => readMusicSession(identity, "mode") === "own_key" ? "own_key" : "platform");
   const [key, setKey] = useState(() => readMusicSession(identity, "key"));
   const [keyInput, setKeyInput] = useState(key);
@@ -45,6 +45,8 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
   const [downloading, setDownloading] = useState("");
   const [listRevision, setListRevision] = useState(0);
   const pending = useRef(new Map());
+  const consumedBgm = useRef(new Set());
+  const generateBgm = useRef(null);
   const jobsRef = useRef(jobs); jobsRef.current = jobs;
   const lastQueried = useRef(new Map());
   const scope = `${identity}:${mode}:${key}:${endpoint}:${queryTemplate}:${authType}`;
@@ -205,6 +207,16 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
       pending.current.delete(requestId); setBusy(pending.current.size > 0);
     }
   }
+  generateBgm.current = generate;
+  useEffect(()=>{
+    if(!active || !bgmIntent || bgmIntent.identity!==identity || consumedBgm.current.has(bgmIntent.id) || !config || accountLoading)return;
+    consumedBgm.current.add(bgmIntent.id);
+    if(values.prompt!==bgmIntent.prompt || !values.instrumental){setMessage('BGM 描述已修改，请核对后手动生成。');return;}
+    if(mode==='platform' && (!config.platform_configured || !config.database_configured)){setMessage('平台音乐服务暂未就绪，未提交 BGM。');return;}
+    if(mode==='platform' && session && (!account || !account.email_verified || account.profile?.status==='frozen' || Number(account.credits?.balance)<2)){setMessage('请完成邮箱验证并确认至少有 2 积分，未提交 BGM。');return;}
+    void generateBgm.current({preventDefault(){}});
+  },[active,bgmIntent,identity,config,accountLoading,account,session,mode,values.prompt,values.instrumental]);
+
   async function download(track, format) {
     const id = `${track.audio_index}-${format}`;
     setDownloading(id); setMessage("");
@@ -275,7 +287,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
         {current.billing_status === "awaiting_balance" && <p role="status" className="music-config-note">已生成 {current.generated_count} 首，共需 {musicJobCost(current)} 积分，已预留 {current.reserved_credits} 积分。请补足余额后刷新状态领取。</p>}
         {current.status === "failed" && <p role="status" className="music-config-note">{current.failure_reason || "音乐生成未完成，服务未提供可识别的具体原因。请保留任务编号核对。"}{current.billing_status === "refunded" ? "预留的网站积分已退回。" : "请在账户记录中核对网站积分处理结果。"}</p>}
         {current.billing_status === "settled" && <p className="music-settled"><Check size={15} />{current.generated_count} 首 · 已扣 {current.charged_credits} 积分</p>}
-        {tracks.map(track => <article className="music-track" key={track.audio_index}><div className="music-track-title"><span className="music-track-art"><Music2 size={24} /></span><div><h2>{track.title}</h2><p>音轨 {track.audio_index} · {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, "0")}{track.tags ? ` · ${track.tags}` : ""}</p></div></div><audio controls preload="none" crossOrigin="anonymous" src={track.audio_url} aria-label={`播放 ${track.title}`} onPlay={event => { document.querySelectorAll(".music-track audio").forEach(audio => { if (audio !== event.currentTarget) audio.pause(); }); }} /><div className="music-inline-actions"><button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "audio")}><ArrowDownToLine size={15} />下载音频</button>{track.wav_url && <button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "wav")}>下载 WAV</button>}<a href={track.audio_url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">打开音频</a></div>{track.lyrics && <details className="music-lyrics"><summary>查看歌词</summary><pre>{track.lyrics}</pre><button type="button" className="studio-secondary" onClick={async () => { try { await navigator.clipboard.writeText(track.lyrics); setMessage("歌词已复制。"); } catch { setMessage("复制失败，请选择歌词后手动复制。"); } }}><Copy size={15} />复制歌词</button></details>}</article>)}
+        {tracks.map(track => <article className="music-track" key={track.audio_index}><div className="music-track-title"><span className="music-track-art"><Music2 size={24} /></span><div><h2>{track.title}</h2><p>音轨 {track.audio_index} · {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, "0")}{track.tags ? ` · ${track.tags}` : ""}</p></div></div><audio controls preload="none" crossOrigin="anonymous" src={track.audio_url} aria-label={`播放 ${track.title}`} onPlay={event => { document.querySelectorAll(".music-track audio").forEach(audio => { if (audio !== event.currentTarget) audio.pause(); }); }} /><div className="music-inline-actions"><button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "audio")}><ArrowDownToLine size={15} />下载音频</button>{onUseTavernBgm && <button type="button" className="studio-secondary" onClick={()=>{document.querySelectorAll(".music-track audio").forEach(audio=>audio.pause());onUseTavernBgm(track);}}><Music2 size={15}/>用于酒馆 BGM</button>}{track.wav_url && <button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "wav")}>下载 WAV</button>}<a href={track.audio_url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">打开音频</a></div>{track.lyrics && <details className="music-lyrics"><summary>查看歌词</summary><pre>{track.lyrics}</pre><button type="button" className="studio-secondary" onClick={async () => { try { await navigator.clipboard.writeText(track.lyrics); setMessage("歌词已复制。"); } catch { setMessage("复制失败，请选择歌词后手动复制。"); } }}><Copy size={15} />复制歌词</button></details>}</article>)}
       </div> : <div className="music-empty"><span className="music-empty-icon"><Music2 size={44} strokeWidth={1.25} /></span><p className="studio-eyebrow">YOUR NEXT TRACK</p><h2>让脑海里的声音<br />成为一首音乐。</h2><p>选择模型、写下描述或歌词。<br />生成后即可试听、查看歌词和下载。</p><div className="music-empty-steps"><span>01 写下灵感</span><span>02 生成音乐</span><span>03 试听与下载</span></div></div>}
     </section></div>
   </div>;

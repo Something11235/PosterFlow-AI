@@ -16,6 +16,8 @@ const HOME_AREAS = [...STUDIO_AREAS, { id: "tavern", en: "AI TAVERN", label: "AI
 const TavernWorkspace = lazy(() => import("../tavern/TavernWorkspace"));
 const PAGE_TITLES = { home: "创作总览", video: "视频创作", music: "音乐创作", materials: "创作素材", models: "模型一览", tavern: "AI 酒馆" };
 export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
+  const [bgmIntent,setBgmIntent]=useState(null);
+  const [bgmImport,setBgmImport]=useState(null);
   const [idea, setIdea] = useState("");
   const [tavernVisited, setTavernVisited] = useState(area === "tavern");
   useEffect(() => { if (area === "tavern") setTavernVisited(true); }, [area]);
@@ -37,6 +39,15 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
     if (window.matchMedia("(max-width: 1023px)").matches) window.scrollTo({ top: 0, behavior: "instant" });
   }, [area]);
 
+  function startTavernMusic({prompt,sessionId}) {
+    setMusic(previous=>({...previous,prompt,operation:'generate',custom:false,instrumental:true,lyrics:'',sound_prompt:'',title:''}));
+    setBgmIntent({id:crypto.randomUUID(),identity,sessionId,prompt});
+    onAreaChange('music');
+  }
+  function useTavernBgm(track) {
+    setBgmImport({id:crypto.randomUUID(),identity,sessionId:bgmIntent?.identity===identity?bgmIntent.sessionId:null,track});
+    onAreaChange('tavern');
+  }
   function start(kind, text) {
     if (kind === "image") { onStartImage(text); return; }
     if (kind === "video" && text) setVideo({ ...defaultSeedance25(), prompt: text });
@@ -58,11 +69,11 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
         <footer className="studio-footer"><span>POSTERFLOW — A SPACE FOR YOUR IDEAS.</span><span>图像 · 音乐 · 视频 · AI 酒馆</span></footer>
       </div>}
 
-      <MusicWorkspace active={area === "music"} identity={identity} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={music} onChange={setMusic} onTaskActivity={onTaskActivity} />
+      <MusicWorkspace bgmIntent={bgmIntent} onUseTavernBgm={useTavernBgm} active={area === "music"} identity={identity} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={music} onChange={setMusic} onTaskActivity={onTaskActivity} />
 
       <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} />
 
-      {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
+      {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartMusic={startTavernMusic} bgmImport={bgmImport} onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
 
       {area === "materials" && <CreativeMaterials identity={identity} presetLibrary={presetLibrary} onImportCompanion={onImportCompanion} onUseStylePrompt={onStartImage} />}
 

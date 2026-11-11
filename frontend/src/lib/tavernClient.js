@@ -234,3 +234,10 @@ export async function fetchAdminTavernOverview(authHeaders = {}, days = 30) {
   if (!data.stats || typeof data.stats !== 'object' || !Array.isArray(data.requests) || data.requests.length > 50) throw new Error('酒馆运营数据格式无效。');
   return { stats: data.stats, requests: data.requests.map(normalizeBillingRequest) };
 }
+
+export async function fetchAdminTavernTotals(authHeaders = {}) {
+  const data = await billingFetch('/api/tavern/admin/overview?scope=all', authHeaders);
+  const fields = ['requests','users','chat','summary','assist','credits_spent'];
+  if (data.scope !== 'all' || !data.stats || fields.some(key => !/^(?:0|[1-9]\d*)(?:\.\d{1,4})?$/.test(String(data.stats[key]))) || fields.slice(0,5).some(key => !/^\d+$/.test(String(data.stats[key])))) throw new Error('酒馆累计运营数据格式无效。');
+  return {stats:Object.fromEntries(fields.map(key => [key,data.stats[key]]))};
+}

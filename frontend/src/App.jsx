@@ -178,6 +178,8 @@ export default function App() {
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
   const selectedTaskRef = useRef("");
+  const imageGalleryRef = useRef(null);
+  const [imageTaskFocus, setImageTaskFocus] = useState(0);
   const [musicActiveCount, setMusicActiveCount] = useState(0);
   const [videoActiveCount, setVideoActiveCount] = useState(0);
   const [videoHistoryRestore, setVideoHistoryRestore] = useState(null);
@@ -631,7 +633,19 @@ export default function App() {
     selectedTaskRef.current = task.id;
     setImages(task.images || []); setCurrentPrompt(task.prompt); setError(task.error || null);
     setSelectedImages(new Set()); setMode('create'); setStudioArea("image"); setImageTasksOpen(false);
+    setImageTaskFocus(value=>value+1);
   }, []);
+
+  useEffect(()=>{
+    if(!imageTaskFocus)return;
+    // Wait until the dialog has unmounted and restored its previous focus.
+    const frame=requestAnimationFrame(()=>{
+      const gallery=imageGalleryRef.current;
+      gallery?.focus({preventScroll:true});
+      gallery?.scrollIntoView({block:'start',behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    });
+    return()=>cancelAnimationFrame(frame);
+  },[imageTaskFocus]);
 
   const syncImageTasks = useCallback(async signal => {
     const store=imageTaskStore;
@@ -998,7 +1012,7 @@ export default function App() {
               />
             </section>
 
-            <section className="flex min-h-[620px] min-w-0 flex-col gap-3 lg:min-h-0">
+            <section ref={imageGalleryRef} tabIndex={-1} aria-label="当前生图结果与状态" className="flex min-h-[620px] min-w-0 scroll-mt-4 flex-col gap-3 outline-none lg:min-h-0">
               <Gallery
                 onSaveTavernBackground={classicWorkspace ? undefined : filename => queueTavernBackgrounds([filename])}
                 tavernBackgroundImports={tavernBackgroundImports}

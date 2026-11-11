@@ -308,6 +308,14 @@ def register_platform_routes(bp, server):
     def admin_overview():
         check_origin()
         actor = _authenticated(server, admin=True)
+        if request.args.get("scope") == "all":
+            if any(key != "scope" for key in request.args):
+                raise TavernPlatformError("TAVERN_INVALID_INPUT", "累计统计不接受日期或用户筛选。", 400)
+            _rate(server, "tavern-admin-overview", actor.id, 30)
+            value = TavernStore().rpc("admin_tavern_totals", {"p_actor_id": actor.id})
+            stats = value.get("stats", {})
+            fields = ("requests", "users", "chat", "summary", "assist", "credits_spent")
+            return jsonify(success=True, scope="all", stats={key: stats.get(key) for key in fields})
         days = request.args.get("days", "30")
         if days not in {"7", "30", "90"}:
             raise TavernPlatformError("TAVERN_INVALID_INPUT", "请选择近7、30或90天。", 400)

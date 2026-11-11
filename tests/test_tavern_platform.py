@@ -109,6 +109,23 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/tavern/admin/overview?days=999").status_code, 400)
         self.store.rpc.assert_not_called()
 
+    def test_admin_lifetime_totals_use_all_history_and_return_only_six_counters(self):
+        stats = {"requests": 105, "users": 4, "chat": 80, "summary": 10, "assist": 15, "credits_spent": "1.0637"}
+        self.store.rpc.return_value = {"ok": True, "scope": "all", "stats": {**stats, "input_tokens": 999}, "requests": [self.record]}
+        response = self.client.get("/api/tavern/admin/overview?scope=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"success": True, "scope": "all", "stats": stats})
+        self.assertEqual(self.store.rpc.call_args.args, ("admin_tavern_totals", {"p_actor_id": ACTOR}))
+        self.store.rpc.reset_mock()
+        for query in ("scope=all&days=7", "scope=all&user_id=" + OWNER):
+            self.assertEqual(self.client.get("/api/tavern/admin/overview?" + query).status_code, 400)
+        self.store.rpc.assert_not_called()
+
+    def test_non_admin_cannot_read_lifetime_totals(self):
+        self.server.require_admin_user.side_effect = ProviderError("ADMIN_REQUIRED", 403)
+        self.assertEqual(self.client.get("/api/tavern/admin/overview?scope=all").status_code, 403)
+        self.store.rpc.assert_not_called()
+
     def test_bad_parameters_client_credentials_and_auth_fail_before_reservation(self):
         for body in ({**self.body, "request_id": "bad"}, {**self.body, "kind": "image"},
                      {**self.body, "kind": {}},

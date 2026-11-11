@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_TAVERN_SETTINGS, requestTavernReply, requestTavernImport } from '../src/lib/tavernClient.js';
+import { DEFAULT_TAVERN_SETTINGS, requestTavernReply, requestTavernImport, fetchAdminTavernTotals } from '../src/lib/tavernClient.js';
 
 // Every fetch is mocked. No real API keys, network requests or storage.
 const settings = { ...DEFAULT_TAVERN_SETTINGS, billingMode: 'own_key', apiKey: 'synthetic-only-key' };
@@ -9,6 +9,22 @@ const usage = { status: 'confirmed', input_tokens: 100, output_tokens: 20, total
   cache_read_tokens: 80, cache_miss_tokens: 20, reasoning_tokens: 12 };
 const response = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json' },
+});
+
+test('admin lifetime totals have no date filter and expose six counters only',async t=>{
+  const stats={requests:105,users:4,chat:80,summary:10,assist:15,credits_spent:'1.0637'};
+  const fetch=t.mock.method(globalThis,'fetch',async()=>response({success:true,scope:'all',stats:{...stats,input_tokens:999},requests:[{content:'must not expose'}]}));
+  assert.deepEqual(await fetchAdminTavernTotals({Authorization:'Bearer synthetic'}),{stats});
+  const [url,init]=fetch.mock.calls[0].arguments;
+  assert.equal(url,'/api/tavern/admin/overview?scope=all');assert.equal(init.method,'GET');
+  assert.equal(new Headers(init.headers).get('Authorization'),'Bearer synthetic');
+});
+
+test('admin cumulative metrics reject partial data instead of inventing zero',async t=>{
+  const fetch=t.mock.method(globalThis,'fetch',async()=>response({success:true,scope:'all',stats:{requests:1}}));
+  await assert.rejects(fetchAdminTavernTotals(),/数据格式无效/);
+  fetch.mock.mockImplementation(async()=>response({success:true,scope:'all',stats:{requests:1,users:1,chat:1,summary:0,assist:0,credits_spent:null}}));
+  await assert.rejects(fetchAdminTavernTotals(),/数据格式无效/);
 });
 
 test('reply returns structured actual usage and one complete text notification', async t => {
