@@ -4,6 +4,7 @@ import AnnouncementManager from "./AnnouncementManager";
 import AdminBookkeepingPanel from "./AdminBookkeepingPanel";
 import AdminUsageRecords from "./AdminUsageRecords";
 import AdminMusicOverview from "./AdminMusicOverview";
+import { useAdminTavernTotals } from '../lib/useAdminTavernTotals';
 import AdminCreditCodes from "./AdminCreditCodes";
 import AdminModelBadges from "./AdminModelBadges";
 import { beijingDate, initialStatsFrom } from "../lib/adminBookkeeping";
@@ -29,6 +30,7 @@ function dateValue(offset) {
 }
 
 export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
+  const tavernTotals = useAdminTavernTotals(open, authHeaders);
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -219,7 +221,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
           <div className="mt-4 grid gap-3 text-xs leading-5 text-text-muted sm:grid-cols-3"><p className="flex gap-2"><CircleDollarSign size={15} className="mt-0.5 flex-shrink-0 text-accent" />正数代表发放积分，负数代表扣除积分；所有操作都会写入流水。</p><p className="flex gap-2"><CreditCard size={15} className="mt-0.5 flex-shrink-0 text-accent" />管理员调整使用幂等编号，重复提交不会重复到账。</p><p className="flex gap-2"><Activity size={15} className="mt-0.5 flex-shrink-0 text-mint" />这里只展示账户与用量信息，不显示平台图片服务的真实地址。</p></div>
           </section>
           <Suspense fallback={<p role="status" className="text-sm text-text-secondary">正在读取酒馆账务…</p>}><AdminTavernBilling authHeaders={authHeaders} refreshKey={snapshot} onResolved={() => loadSnapshot()} /></Suspense>
-          <AdminMusicOverview authHeaders={authHeaders} refreshKey={snapshot} imageMetrics={snapshot.metrics} data={snapshot.music} error={snapshot.music_error} loading={busy} />
+          <AdminMusicOverview tavernTotals={tavernTotals} imageMetrics={snapshot.metrics} data={snapshot.music} error={snapshot.music_error} loading={busy} />
           <AdminBookkeepingPanel activeDays={snapshot.music?.days || []} activityError={snapshot.music_error} initialData={snapshot.bookkeeping} authHeaders={authHeaders} loading={busy} onSavingChange={setBookkeepingSaving} />
           <section className="mb-4 rounded-lg border border-accent/25 bg-accent/5 p-4">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">

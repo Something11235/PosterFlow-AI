@@ -116,8 +116,13 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"success": True, "scope": "all", "stats": stats})
         self.assertEqual(self.store.rpc.call_args.args, ("admin_tavern_totals", {"p_actor_id": ACTOR}))
+        response = self.client.get("/api/tavern/admin/overview?scope=all&path=tavern%2Fadmin%2Foverview")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["stats"], stats)
         self.store.rpc.reset_mock()
-        for query in ("scope=all&days=7", "scope=all&user_id=" + OWNER):
+        for query in ("scope=all&days=7", "scope=all&user_id=" + OWNER,
+                      "scope=all&path=another-route", "scope=all&path=tavern/admin/overview&path=tavern/admin/overview",
+                      "scope=all&path=tavern/admin/overview&days=7"):
             self.assertEqual(self.client.get("/api/tavern/admin/overview?" + query).status_code, 400)
         self.store.rpc.assert_not_called()
 

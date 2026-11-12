@@ -38,6 +38,16 @@ class Upstream:
 
 
 class AuthProxyTests(unittest.TestCase):
+    def test_vercel_rewrite_capture_is_not_an_auth_parameter(self):
+        response = self.call("token?grant_type=password&path=auth%2Fproxy%2Ftoken", body={"email": "fixture@example.invalid", "password": "synthetic-only"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.upstream.call_args.kwargs["params"], {"grant_type": "password"})
+        for query in ("path=other", "path=auth/proxy/token&path=auth/proxy/token", "path=auth/proxy/token&admin=1"):
+            self.upstream.reset_mock()
+            response = self.call("token?grant_type=password&" + query, body={"password": "synthetic-only"})
+            self.assertEqual(response.status_code, 400)
+            self.upstream.assert_not_called()
+
     def setUp(self):
         env = patch.dict(os.environ, {"SUPABASE_URL": "https://project.supabase.co", "VITE_SUPABASE_ANON_KEY": "sb_publishable_fixture"}, clear=True)
         env.start()

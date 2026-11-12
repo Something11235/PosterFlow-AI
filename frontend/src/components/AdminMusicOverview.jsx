@@ -9,7 +9,7 @@ function valueText(metrics,key,loading) {
   return Number(metrics[key]).toLocaleString('zh-CN')+(key==='success_rate'?'%':'');
 }
 
-export default function AdminMusicOverview({ imageMetrics,data,error,loading,authHeaders,refreshKey }) {
+export default function AdminMusicOverview({ imageMetrics,data,error,loading,tavernTotals }) {
   const [kind,setKind]=useState('image');
   const tavern=kind==='tavern',image=kind==='image',video=kind==='video', metrics=image?imageMetrics:video?data?.video_metrics:data?.metrics;
   const models=image?[]:video?data?.video_models:data?.models;
@@ -18,7 +18,7 @@ export default function AdminMusicOverview({ imageMetrics,data,error,loading,aut
   const diagnostics=data?.failure_counts;
   return <section aria-label="创作运营概览" className="mb-5 min-w-0 rounded-lg border border-accent/25 bg-accent/5 p-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold text-text-primary">创作运营概览</h3><div className="flex flex-wrap gap-2" aria-label="运营类型">{[['image','图像',Image],['music','音乐',Music2],['video','视频',Film],['tavern','AI 酒馆',MessagesSquare]].map(([value,label,Icon])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={`inline-flex min-h-11 items-center gap-2 rounded-md border px-3 text-xs ${kind===value?'border-accent/40 bg-accent/15 text-accent':'border-border-subtle text-text-muted'}`}><Icon size={15}/>{label}</button>)}</div></div>
-    {tavern?<AdminTavernOverview authHeaders={authHeaders} refreshKey={refreshKey}/>:<>
+    {tavern?<AdminTavernOverview {...tavernTotals}/>:<>
     <p className="mt-2 text-xs leading-5 text-text-muted">按所选日期内创建的全部任务统计，用户搜索仅筛选使用记录。{image?'生图指标沿用现有统计口径，消耗积分按实际扣分显示。':<>成功率 = 完成 ÷（完成 + 失败），进行中任务不计入。{video?'素材审核不计生成次数；Mini 按秒计费，2.0、Fast 与 2.5 按实际用量结算。':'平台音乐每次 2 积分，返回两首仍只扣 2 积分。'}</>}自带 Key 不扣网站积分。</p>
     {error&&<p role="alert" className="mt-3 text-xs text-gold">{error}</p>}
     <dl className={`mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 ${image?'xl:grid-cols-5':'xl:grid-cols-6'}`}>{labels.map(([key,label])=><div key={key} className="rounded-md border border-border-subtle bg-bg-primary/60 p-3"><dt className="text-xs text-text-muted">{label}</dt><dd className="mt-2 text-xl font-semibold tabular-nums text-text-primary">{valueText(metrics,key,loading)}</dd></div>)}</dl>

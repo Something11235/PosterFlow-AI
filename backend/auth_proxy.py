@@ -12,6 +12,10 @@ from urllib.parse import urlsplit
 
 import requests
 from flask import Blueprint, jsonify, make_response, request
+try:
+    from backend.routing_query import application_query
+except ModuleNotFoundError:
+    from routing_query import application_query
 
 PATH = "/api/auth/proxy"
 BODY_LIMIT = 32 * 1024
@@ -101,7 +105,8 @@ def create_auth_proxy_blueprint(server):
         elif raw:
             return _reply("auth_proxy_body_invalid", "登录请求格式无效。", 400)
         allowed_query = {"grant_type"} if endpoint == "token" else {"scope"} if endpoint == "logout" else {"redirect_to"} if endpoint in {"signup", "recover", "verify", "resend", "user"} else set()
-        if any(key not in allowed_query or len(request.args.getlist(key)) != 1 for key in request.args):
+        query = application_query()
+        if any(key not in allowed_query or len(query.getlist(key)) != 1 for key in query):
             return _reply("auth_proxy_query_invalid", "登录请求参数无效。", 400)
         if endpoint == "token" and request.args.get("grant_type") not in {"password", "refresh_token", "pkce"}:
             return _reply("auth_proxy_grant_blocked", "该登录方式不受支持。", 400)
@@ -149,7 +154,7 @@ def create_auth_proxy_blueprint(server):
             # A single bounded upstream request; no automatic POST retry or
             # redirect to an arbitrary host, and no browser cookies are relayed.
             with requests.request(request.method, url + "/auth/v1/" + endpoint,
-                                  params=request.args.to_dict(), json=body, headers=headers,
+                                  params=query.to_dict(), json=body, headers=headers,
                                   timeout=(5, 15), allow_redirects=False, stream=True) as upstream:
                 if 300 <= upstream.status_code < 400:
                     return _reply("auth_proxy_bad_response", "登录服务响应异常，请稍后重试。", 502)

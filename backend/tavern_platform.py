@@ -6,6 +6,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from flask import jsonify, request
+try:
+    from backend.routing_query import application_query
+except ModuleNotFoundError:
+    from routing_query import application_query
 
 try:
     from backend.credits import credit_amount
@@ -320,7 +324,7 @@ def register_platform_routes(bp, server):
         check_origin()
         actor = _authenticated(server, admin=True)
         if request.args.get("scope") == "all":
-            if any(key != "scope" for key in request.args):
+            if any(key != "scope" for key in application_query()):
                 raise TavernPlatformError("TAVERN_INVALID_INPUT", "累计统计不接受日期或用户筛选。", 400)
             _rate(server, "tavern-admin-overview", actor.id, 30)
             value = TavernStore().rpc("admin_tavern_totals", {"p_actor_id": actor.id})
