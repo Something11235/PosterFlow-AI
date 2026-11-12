@@ -46,6 +46,15 @@ export async function readImageTask(requestId, headers, signal, model = new Head
   return data;
 }
 
+// The synchronous route has the same owned GET recovery, including terminal
+// states. Keep those states so an already-refunded task is not left pending.
+export async function readLegacyImageTask(requestId, headers) {
+  const response = await boundedFetch(`/api/generations/${encodeURIComponent(requestId)}`, {headers, credentials:'include', cache:'no-store'}, 20000);
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error('原任务暂时无法查询，请稍后重试。');
+  return data;
+}
+
 // Read owned metadata only. Each provider can fail independently; never submit
 // or reconcile a task while listing. No provider credentials are needed here.
 export async function listImageTasks(headers, signal) {

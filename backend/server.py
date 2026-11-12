@@ -1116,10 +1116,9 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                         None,
                     )
                 )
-            job_id = reservation.get("job_id")
             if reservation.get("existing"):
                 status = reservation.get("status")
-                if status == "succeeded":
+                if status == "succeeded" and reservation.get("images"):
                     filenames = [name for name in reservation.get("images", []) if isinstance(name, str)]
                     return {
                         "images": [{"filename": name, "index": index + 1} for index, name in enumerate(filenames)],
@@ -1128,12 +1127,15 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
                         "provider": provider,
                     }
                 raise ProviderError(
-                    "REQUEST_ALREADY_PROCESSED",
-                    "该生成请求已处理，请重新发起",
+                    "REQUEST_ALREADY_PROCESSED" if status in {"failed", "refunded"} else "IMAGE_TASK_PENDING",
+                    "原任务已结束，请查询原任务记录" if status in {"failed", "refunded"} else "原任务仍在处理，请查询原任务进度",
                     409,
-                    "重复请求不会再次扣除积分或重复调用图片服务。",
-                    ["重新点击生成", "刷新账户积分"],
+                    "本次是同一请求的重复到达，不会重新生图、重复扣分或改变原任务账单。",
+                    ["查询原任务", "请勿重复生成"],
                 )
+            # Only the invocation that created this reservation may settle or
+            # refund it. A duplicate must never own the original running job.
+            job_id = reservation.get("job_id")
         else:
             user = optional_authenticated_user()
             if user:

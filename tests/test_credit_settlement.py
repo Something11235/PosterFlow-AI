@@ -118,6 +118,64 @@ class GenerationCreditSettlementTests(unittest.TestCase):
         self.gateway.settle_generation.assert_not_called()
         self.gateway.refund_generation.assert_not_called()
 
+    def test_replayed_reservation_never_generates_settles_or_refunds_original(self):
+        for tier in [False, True]:
+            for status in ['running', 'failed', 'refunded', 'succeeded']:
+                with self.subTest(tier=tier, status=status):
+                    gateway = Mock()
+                    reservation = {'ok': True, 'existing': True, 'job_id': 'original',
+                                   'status': status, 'images': ['saved.png'] if status == 'succeeded' else []}
+                    gateway.reserve_credits.return_value = reservation
+                    gateway.rpc.return_value = reservation
+                    generate = Mock()
+                    provider = server.ProviderConfig(api_key='test-key', endpoint='https://provider.example/v1/images/generations',
+                        model='gpt-image-2.5-flare', auth_type='bearer', source='platform')
+                    with (patch.object(server, 'platform_provider_configured', return_value=True),
+                          patch.object(server, 'require_authenticated_user', return_value=Mock(id='user-1')),
+                          patch.object(server, 'SupabaseGateway', return_value=gateway),
+                          patch.object(server, 'resolve_provider_config', return_value=provider),
+                          patch.object(server, 'enforce_rate_limit')):
+                        data = {'billing_mode': 'platform', 'platform_model': provider.model,
+                                'request_id': '11111111-1111-4111-8111-111111111111'}
+                        if tier:
+                            data['pricing_version'] = server.image_tiers.VERSION
+                        if status == 'succeeded':
+                            result = server.execute_generation(data, requested_count=1, prompt='fixture', generate_callback=generate)
+                            self.assertTrue(result['idempotent'])
+                            self.assertEqual(result['images'], [{'filename': 'saved.png', 'index': 1}])
+                        else:
+                            with self.assertRaises(server.ProviderError) as error:
+                                server.execute_generation(data, requested_count=1, prompt='fixture', generate_callback=generate)
+                            self.assertEqual(error.exception.code, 'IMAGE_TASK_PENDING' if status == 'running' else 'REQUEST_ALREADY_PROCESSED')
+                    generate.assert_not_called()
+                    gateway.refund_generation.assert_not_called()
+                    gateway.settle_generation.assert_not_called()
+                    self.assertEqual([call.args[0] for call in gateway.rpc.call_args_list], ['reserve_legacy_image_tier_credits'] if tier else [])
+
+    def test_duplicate_during_generation_leaves_original_free_to_finish(self):
+        self.gateway.reserve_credits.side_effect = [
+            {'ok': True, 'existing': False, 'job_id': 'original', 'status': 'running'},
+            {'ok': True, 'existing': True, 'job_id': 'original', 'status': 'running'}]
+        self.gateway.settle_generation.return_value = {'ok': True, 'balance': 9}
+        data = {'billing_mode': 'platform', 'request_id': '11111111-1111-4111-8111-111111111111'}
+        duplicate_generate = Mock()
+        def generate(_provider):
+            with self.assertRaises(server.ProviderError) as error:
+                server.execute_generation(data, requested_count=1, prompt='fixture', generate_callback=duplicate_generate)
+            self.assertEqual(error.exception.code, 'IMAGE_TASK_PENDING')
+            self.gateway.refund_generation.assert_not_called()
+            return [{'filename': 'original.png'}]
+        with (patch.object(server, 'platform_provider_configured', return_value=True),
+              patch.object(server, 'require_authenticated_user', return_value=Mock(id='user-1')),
+              patch.object(server, 'SupabaseGateway', return_value=self.gateway),
+              patch.object(server, 'resolve_provider_config', return_value=self.provider),
+              patch.object(server, 'enforce_rate_limit')):
+            result = server.execute_generation(data, requested_count=1, prompt='fixture', generate_callback=generate)
+        self.assertEqual(result['images'], [{'filename': 'original.png'}])
+        duplicate_generate.assert_not_called()
+        self.gateway.refund_generation.assert_not_called()
+        self.gateway.settle_generation.assert_called_once_with('original', 1, unittest.mock.ANY, ['original.png'])
+
     def test_custom_provider_auth_header_is_forwarded(self):
         provider = server.ProviderConfig(
             api_key="test-key",

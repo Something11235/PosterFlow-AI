@@ -15,7 +15,7 @@ import ImageTaskQueue from "./components/ImageTaskQueue";
 import ImageTasksPanel from "./components/ImageTasksPanel";
 import { createImageTaskStore, getCompletedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
 import { canAutoQueryImageTask, startImageTaskRecovery } from "./lib/imageTaskRecovery";
-import { imageGenerationFetch, readImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
+import { imageGenerationFetch, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
@@ -618,7 +618,7 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
-        const pending = Boolean(routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || "")));
+        const pending = Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
         const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown) };
         store.finish(requestId, { error: failure, pending });
         showFailure(failure);
@@ -702,7 +702,7 @@ export default function App() {
     const announce=message=>{if (!silent) {setNotice(message);setImageTasksWarning(message);}};
     let terminal = false;
     try {
-      const data=task.route==='legacy' ? await recoverGeneration(task.id,{headers,attempts:1})
+      const data=task.route==='legacy' ? await readLegacyImageTask(task.id,headers)
         : await readImageTask(task.id,headers,undefined,task.model,task.route);
       if(!live())return;
       if((data?.job?.status==='completed' || data?.status==='succeeded') && data?.images?.length){
@@ -711,9 +711,9 @@ export default function App() {
         if(selectedTaskRef.current===task.id){setImages(data.images);setError(null);}
         if(task.backgroundName)queueTavernBackgrounds(data.images.map(image=>image.filename),task.backgroundName,task.id,store.identity);
         announce('已找回原任务图片，可点击“查看结果”并下载；没有重新生图。');
-      }else if(data?.job?.status==='failed'){
+      }else if(data?.job?.status==='failed' || ['failed','refunded'].includes(data?.status)){
         terminal = true;
-        const failure={message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode};
+        const failure=data?.status ? {message:data.status==='refunded'?'原任务已退款':'原任务已结束',code:'IMAGE_TASK_CLOSED',detail:data.status==='refunded'?'原任务的预留积分已退回。此次查询没有再次生成或扣分。':'原任务已结束，未取得成功图片。此次查询没有再次生成或扣分。',recovery:['查看任务记录与积分明细'],billing_mode:task.billingMode} : {message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode};
         store.finish(task.id,{error:failure});
         const completed = getCompletedImageTask(store, task.id);
         if(selectedTaskRef.current===task.id){

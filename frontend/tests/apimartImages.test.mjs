@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { imageGenerationFetch, readImageTask, listImageTasks, imageJobMetadata } from "../src/lib/apimartImages.js";
+import { imageGenerationFetch, readImageTask, readLegacyImageTask, listImageTasks, imageJobMetadata } from "../src/lib/apimartImages.js";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const requestId = "11111111-1111-4111-8111-111111111111";
@@ -103,3 +103,12 @@ test("failed or unknown free preparation never sends a paid edit", async t => {
   assert.equal((await response.json()).generation_submitted,false);
   assert.equal(calls,1);
 });
+
+ test('legacy original-task recovery preserves refunded and running states without a generation POST',async t=>{
+  const calls=[];let state='refunded';
+  install(t,async(url,init)=>{calls.push({url,init});return json({status:state,images:[],error_code:'REQUEST_ALREADY_PROCESSED'});});
+  assert.equal((await readLegacyImageTask(requestId,{Authorization:'Bearer synthetic'})).status,'refunded');
+  state='running';assert.equal((await readLegacyImageTask(requestId,{})).status,'running');
+  assert.ok(calls.every(({url,init})=>url==='/api/generations/'+requestId && !init.method && init.cache==='no-store'));
+  assert.equal(calls[0].init.headers.Authorization,'Bearer synthetic');
+ });
