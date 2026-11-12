@@ -44,8 +44,8 @@ test('the caller abort signal cancels the direct request without falling back',a
 });
 
 test('credential and network failures have distinct Chinese messages without leaking raw details',()=>{
-  assert.match(authErrorMessage({code:'invalid_credentials'}),/邮箱或密码不匹配/);
-  assert.match(authErrorMessage({message:'Failed to fetch'}),/不表示密码错误/);
+  assert.match(authErrorMessage({code:'invalid_credentials'}),/邮箱或密码错误/);
+  assert.match(authErrorMessage({message:'Failed to fetch'}),/使用科学上网后刷新重试/);
   assert.match(authErrorMessage({name:'AuthRetryableFetchError'}),/暂时无法连接/);
   assert.match(authErrorMessage({code:'email_not_confirmed'}),/邮箱尚未验证/);
   assert.match(authErrorMessage({status:429}),/过于频繁/);
@@ -157,6 +157,6 @@ test('installed SDK signup and password-email requests stay same-origin, and cre
   assert.equal(JSON.parse(calls[0].body).data.username,'fixture');
   rejectCredentials=true;
   const result=await client.auth.signInWithPassword({email:'fixture@example.invalid',password:'synthetic-invalid'});
-  assert.equal(result.error.code,'invalid_credentials');assert.match(authErrorMessage(result.error),/邮箱或密码不匹配/);
+  assert.equal(result.error.code,'invalid_credentials');assert.match(authErrorMessage(result.error),/邮箱或密码错误/);
   assert.equal(calls.length,3);
 });

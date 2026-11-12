@@ -50,12 +50,12 @@ export function createAuthProxyFetch(supabaseUrl, {fetchImpl=(...args)=>globalTh
 
 export function authErrorMessage(error) {
   const code=error?.code, message=String(error?.message||'');
-  if (code==='invalid_credentials' || /invalid login credentials/i.test(message)) return '邮箱或密码不匹配，请检查输入；忘记密码可通过注册邮箱重置。';
+  if (code==='invalid_credentials' || /invalid login credentials/i.test(message)) return '邮箱或密码错误，请检查后重试。';
   if (code==='email_not_confirmed' || /email not confirmed/i.test(message)) return '邮箱尚未验证，请先打开验证邮件完成验证，再登录。';
   if (error?.status===429 || /^over_.*rate_limit$/.test(code||'')) return '操作过于频繁，请稍后再试。';
   if (code==='weak_password') return '密码强度不足，请使用更长且不易猜测的密码。';
   if (code==='user_already_exists' || code==='email_exists') return '该邮箱已注册，请直接登录或使用“忘记密码”。';
   if (code==='auth_proxy_not_configured') return '登录服务暂未配置，请联系站主。';
-  if (code==='auth_network_unavailable' || error?.name==='AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|fetch failed|连接.*超时|连接.*中断/i.test(message)) return '暂时无法连接登录服务，这不表示密码错误。请稍后重试，或切换网络后再登录。也可以尝试使用科学上网后刷新重试。';
+  if (code==='auth_network_unavailable' || error?.name==='AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|fetch failed|连接.*超时|连接.*中断/i.test(message)) return '暂时无法连接登录服务。请稍后刷新重试，或切换网络后再登录。也可以尝试使用科学上网后刷新重试。';
   return '操作未完成，请稍后重试；若持续出现，请联系站主。';
 }
