@@ -13,7 +13,7 @@
 
 </div>
 
-![PosterFlow AI 图像、音乐、视频与 AI 酒馆入口](docs/screenshots/showcase/overview.png)
+![PosterFlow AI 图像、音乐、视频与 AI 酒馆入口](docs/screenshots/showcase/overview-20261113.png)
 
 *图 1 · 从创作总览或主导航，进入图像、音乐、视频与 AI 酒馆。*
 
