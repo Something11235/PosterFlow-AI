@@ -56,6 +56,6 @@ export function authErrorMessage(error) {
   if (code==='weak_password') return '密码强度不足，请使用更长且不易猜测的密码。';
   if (code==='user_already_exists' || code==='email_exists') return '该邮箱已注册，请直接登录或使用“忘记密码”。';
   if (code==='auth_proxy_not_configured') return '登录服务暂未配置，请联系站主。';
-  if (code==='auth_network_unavailable' || error?.name==='AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|fetch failed|连接.*超时|连接.*中断/i.test(message)) return '暂时无法连接登录服务，这不表示密码错误。请稍后重试，或切换网络后再登录。也可以尝试使用科学上网后重试。';
+  if (code==='auth_network_unavailable' || error?.name==='AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|fetch failed|连接.*超时|连接.*中断/i.test(message)) return '暂时无法连接登录服务，这不表示密码错误。请稍后重试，或切换网络后再登录。也可以尝试使用科学上网后刷新重试。';
   return '操作未完成，请稍后重试；若持续出现，请联系站主。';
 }
