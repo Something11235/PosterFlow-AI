@@ -17,13 +17,13 @@ from flask import Blueprint, Response, jsonify, request
 try:
     from backend.music_provider import safe_media_url
     from backend.tavern_pricing import get_tavern_pricing
-    from backend.tavern_platform import (TavernPlatformError, platform_available, platform_chat,
+    from backend.tavern_platform import (TavernPlatformError, clean_usage, platform_available, platform_chat,
                                          register_platform_routes)
     from backend.supabase_service import SupabaseError
 except ModuleNotFoundError:
     from music_provider import safe_media_url
     from tavern_pricing import get_tavern_pricing
-    from tavern_platform import (TavernPlatformError, platform_available, platform_chat,
+    from tavern_platform import (TavernPlatformError, clean_usage, platform_available, platform_chat,
                                  register_platform_routes)
     from supabase_service import SupabaseError
 
@@ -44,9 +44,10 @@ _DNS_SLOTS = threading.BoundedSemaphore(4)
 
 
 class TavernError(Exception):
-    def __init__(self, code, message, status=400, uncertain=False):
+    def __init__(self, code, message, status=400, uncertain=False, *, usage=None):
         super().__init__(message)
         self.code, self.message, self.status, self.uncertain = code, message, status, uncertain
+        self.usage = clean_usage(usage)
 
 
 def normalize_usage(raw):
@@ -269,12 +270,16 @@ def submit_chat(endpoint, key, body):
             chunks.append(chunk)
         remaining()
         payload = json.loads(b"".join(chunks))
+        # Usage is independent of a displayable reply. Providers can consume
+        # tokens yet return empty content (for example, an exhausted output
+        # budget). Preserve only normalized counts, never reasoning or raw JSON.
+        usage = normalize_usage(payload.get("usage")) if isinstance(payload, dict) else None
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip() or len(content) > MAX_CONTENT_CHARS:
-            raise TavernError("TAVERN_RESPONSE_INVALID", "对话服务未返回有效文字，请核对服务记录，不要重复发送。", 502, True)
-        return {"content": content, "usage": normalize_usage(payload.get("usage"))}
+            raise TavernError("TAVERN_RESPONSE_INVALID", "对话服务未返回有效文字，请核对服务记录，不要重复发送。", 502, True, usage=usage)
+        return {"content": content, "usage": usage}
     except TavernError:
         raise
     except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError):
@@ -459,7 +464,8 @@ def create_tavern_blueprint(server):
     @bp.errorhandler(TavernError)
     def error_response(error):
         return jsonify(success=False, error=error.message, code=error.code,
-                       submission_unknown=error.uncertain, charged_credits=0), error.status
+                       submission_unknown=error.uncertain, charged_credits=0,
+                       **({"usage": error.usage} if error.usage is not None else {})), error.status
 
     @bp.errorhandler(TavernPlatformError)
     def platform_error_response(error):
@@ -468,6 +474,8 @@ def create_tavern_blueprint(server):
                    "charged_credits": error.billing.get("charged_credits") if error.billing else 0}
         if error.billing:
             payload.update(billing=error.billing, request_id=error.billing["request_id"], billing_mode="platform")
+        if error.usage is not None:
+            payload["usage"] = error.usage
         return jsonify(payload), error.status
 
     @bp.errorhandler(SupabaseError)

@@ -19,7 +19,7 @@ import { TavernContextMeter, TavernReplyVariants } from './TavernConversationToo
 import { TavernMessageUsage, TavernSessionUsage } from './TavernUsage';
 import TavernBillingPanel from './TavernBillingPanel';
 import { displayCredits } from '../../lib/credits';
-import { normalizeTavernUsage } from '../../lib/tavernUsage';
+import { normalizeTavernUsage, tavernFailureNotSubmitted, usageAfterTavernFailure } from '../../lib/tavernUsage';
 import './tavern.css';
 
 const emptyState = () => ({ characters: [], sessions: [], favorites: [] });
@@ -231,11 +231,7 @@ export default function TavernWorkspace({ active, identity = 'guest', authHeader
     }) })) }))) throw new Error('服务端账单已读取，但本地用量记录未能更新。请先导出并检查本地容量。');
   }
   function usageAfterFailure(current, usageRecord, error, notSubmitted) {
-    return current.usageRecords.flatMap(record => {
-      if (record.id !== usageRecord.id || record.outcome === 'completed') return [record];
-      if (notSubmitted && !error.billing) return [];
-      return [{ ...record, ...(error.billing ? { billing: error.billing } : {}), outcome: notSubmitted ? 'rejected' : 'unknown' }];
-    });
+    return usageAfterTavernFailure(current.usageRecords, usageRecord.id, error, notSubmitted);
   }
   async function persistCurrent() {
     const snapshot = stateRef.current;
@@ -279,7 +275,7 @@ export default function TavernWorkspace({ active, identity = 'guest', authHeader
     } catch (error) {
       if (mounted.current) {
         const current = stateRef.current.sessions.find(item => item.id === target.id);
-        const notSubmitted = !submitted || error.submission_unknown === false;
+        const notSubmitted = tavernFailureNotSubmitted(error, submitted);
         updateSession(target.id, { autoMemory: false, usageRecords: usageAfterFailure(current, usageRecord, error, notSubmitted) });
         setChatError(request.signal.aborted && !notSubmitted ? '已停止等待摘要。服务商可能已处理，用量待确认；自动整理已暂停，不会自动重试。' : `${error.message} 自动整理已暂停。`);
       }
@@ -332,7 +328,7 @@ export default function TavernWorkspace({ active, identity = 'guest', authHeader
       if (mounted.current) {
         if (record) {
           const current = stateRef.current.sessions.find(item => item.id === target.id);
-          if (current) updateSession(target.id, { usageRecords: usageAfterFailure(current, record, error, !submitted || error.submission_unknown === false) });
+          if (current) updateSession(target.id, { usageRecords: usageAfterFailure(current, record, error, tavernFailureNotSubmitted(error, submitted)) });
         }
         setChatError(request.signal.aborted && submitted ? '已停止等待助写，原草稿保留；服务商可能已处理，请查看账单，不会自动重发。' : error.message);
       }
@@ -399,7 +395,7 @@ export default function TavernWorkspace({ active, identity = 'guest', authHeader
         }
       } catch (error) {
         if (mounted.current) {
-          const notSubmitted = !submitted || error.submission_unknown === false;
+          const notSubmitted = tavernFailureNotSubmitted(error, submitted);
           const current = stateRef.current.sessions.find(item => item.id === target.id);
           updateSession(target.id, { usageRecords: usageAfterFailure(current, usageRecord, error, notSubmitted), ...(notSubmitted && !regenerate ? { messages: previousMessages, title: target.title } : {}) });
           if (notSubmitted) {

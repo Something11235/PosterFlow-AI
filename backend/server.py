@@ -787,10 +787,22 @@ def confirm_signup_email():
             ), 400)
         else:
             try:
-                SupabaseGateway().confirm_signup_email(token_hash)
+                gateway = SupabaseGateway()
+                verified_user_id = gateway.confirm_signup_email(token_hash)
+                # Award at verification, using only the identity returned by Auth.
+                # The existing RPC also checks confirmation and grants once per
+                # email. Account refresh remains its idempotent retry path.
+                bonus_pending = True
+                try:
+                    bonus = gateway.ensure_signup_bonus(verified_user_id)
+                    bonus_pending = not isinstance(bonus, dict) or bonus.get("ok") is not True
+                except SupabaseError:
+                    app.logger.warning("Signup bonus synchronization pending after email verification")
                 response = make_response(jsonify(
                     verified=True, title="邮箱验证成功",
-                    message="验证已完成，可以关闭此页面。",
+                    message=("邮箱已验证，注册积分暂未同步。请返回网站登录，系统会自动重试同步。"
+                             if bonus_pending else "验证已完成，请返回网站登录查看积分。"),
+                    signup_bonus_pending=bonus_pending,
                     retryable=False,
                 ))
             except SupabaseError as error:
@@ -2741,6 +2753,12 @@ try:
 except ModuleNotFoundError:
     from tavern_routes import create_tavern_blueprint
 app.register_blueprint(create_tavern_blueprint(sys.modules[__name__]))
+
+try:
+    from backend.auth_proxy import create_auth_proxy_blueprint
+except ModuleNotFoundError:
+    from auth_proxy import create_auth_proxy_blueprint
+app.register_blueprint(create_auth_proxy_blueprint(sys.modules[__name__]))
 
 
 if os.path.exists(FRONTEND_BUILD):

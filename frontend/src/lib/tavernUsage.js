@@ -57,6 +57,26 @@ export function normalizeTavernUsage(value) {
   return usage;
 }
 
+// A known settlement says the model request finished, even without usable text.
+// It must not be mistaken for a request that never left the browser.
+export function tavernFailureNotSubmitted(error, submitted) {
+  const billing = normalizeTavernBilling(error?.billing);
+  if (billing) return billing.status === 'refunded';
+  return !submitted || error?.submission_unknown === false;
+}
+
+export function usageAfterTavernFailure(records, requestId, error, notSubmitted) {
+  const candidate = normalizeTavernBilling(error?.billing);
+  const billing = candidate?.request_id === requestId.toLowerCase() ? candidate : null;
+  return records.flatMap(record => {
+    if (record.id !== requestId || record.outcome === 'completed') return [record];
+    if (notSubmitted && !billing) return [];
+    return [{ ...record, ...(billing ? { billing } : {}),
+      ...(error?.usage ? { usage: normalizeTavernUsage(error.usage) } : {}),
+      outcome: billing?.status === 'settled' ? 'completed' : notSubmitted ? 'rejected' : 'unknown' }];
+  });
+}
+
 function identifier(value, nullable = false) {
   if (nullable && (value === undefined || value === null)) return null;
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value)) throw new Error('用量记录编号无效。');

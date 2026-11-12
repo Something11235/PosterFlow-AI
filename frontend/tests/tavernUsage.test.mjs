@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeTavernUsage, normalizeTavernUsageRecords, summarizeTavernUsage } from '../src/lib/tavernUsage.js';
+import { normalizeTavernUsage, normalizeTavernUsageRecords, summarizeTavernUsage, tavernFailureNotSubmitted, usageAfterTavernFailure } from '../src/lib/tavernUsage.js';
 import { normalizeTavernState } from '../src/lib/tavernStorage.js';
 import { BUILTIN_CHARACTERS, createTavernSession } from '../src/lib/tavern.js';
 
@@ -9,6 +9,37 @@ const usage = (extra = {}) => ({ status: 'confirmed', input_tokens: 100, output_
 const record = (extra = {}) => ({ id: 'request-1', messageId: 'reply-1', createdAt: 10,
   model: 'deepseek-v4.1-flash', billingMode: 'own_key', outcome: 'completed', kind: 'chat', usage: usage(), ...extra });
 const stateWith = session => ({ characters: [], favorites: [], sessions: [session] });
+
+test('settled invalid reply retains submitted message state and accounts actual tokens across storage', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const pending = record({ id, billingMode: 'platform', outcome: 'unknown', messageId: null, usage: null });
+  const error = { submission_unknown: false, usage: usage(), billing: {
+    request_id: id, status: 'settled', reserved_credits: '0.1000', charged_credits: '0.0012' } };
+  const notSubmitted = tavernFailureNotSubmitted(error, true);
+  assert.equal(notSubmitted, false);
+  const records = normalizeTavernUsageRecords(usageAfterTavernFailure([pending], id, error, notSubmitted));
+  assert.equal(records[0].messageId, null); // No assistant text was produced.
+  assert.equal(records[0].outcome, 'completed');
+  assert.equal(summarizeTavernUsage({ usageRecords: records }).confirmedTotalTokens, 120);
+  const lateFailure = usageAfterTavernFailure(records, id, {}, false);
+  assert.deepEqual(lateFailure, records);
+});
+
+test('unknown and refunded errors remain distinct from a settled invalid reply', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const pending = record({ id, billingMode: 'platform', outcome: 'unknown', messageId: null, usage: null });
+  assert.equal(tavernFailureNotSubmitted({ submission_unknown: true }, true), false);
+  assert.deepEqual(usageAfterTavernFailure([pending], id, { submission_unknown: false }, true), []);
+  for (const status of ['held', 'awaiting_review', 'refunded']) {
+    const error = { submission_unknown: false, billing: {
+      request_id: id, status, reserved_credits: '0.1', charged_credits: status === 'refunded' ? '0' : null } };
+    const notSubmitted = tavernFailureNotSubmitted(error, true);
+    assert.equal(notSubmitted, status === 'refunded');
+    const records = usageAfterTavernFailure([pending], id, error, notSubmitted);
+    assert.equal(records[0].outcome, status === 'refunded' ? 'rejected' : 'unknown');
+    assert.equal(summarizeTavernUsage({ usageRecords: records }).confirmedTotalTokens, null);
+  }
+});
 
 test('usage keeps only standardized backend counters and distinguishes actual zero from missing', () => {
   const result = normalizeTavernUsage(usage({ apiKey: 'secret', prompt_tokens: 9999, completion_tokens: 9999 }));

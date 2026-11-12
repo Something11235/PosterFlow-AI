@@ -5,6 +5,7 @@ from backend import server, supabase_service
 
 
 TOKEN_HASH = "a" * 56
+USER_ID = "11111111-1111-4111-8111-111111111111"
 
 
 class EmailConfirmationTests(unittest.TestCase):
@@ -27,14 +28,50 @@ class EmailConfirmationTests(unittest.TestCase):
 
     def test_verified_result_contains_no_user_data_or_session(self):
         gateway = Mock()
+        gateway.confirm_signup_email.return_value = USER_ID
+        gateway.ensure_signup_bonus.return_value = {"ok": True, "balance": 6}
         with patch.object(server, "SupabaseGateway", return_value=gateway):
-            response = self.client.post("/api/auth/confirm", json={"token_hash": TOKEN_HASH, "type": "email"})
+            response = self.client.post("/api/auth/confirm", json={"token_hash": TOKEN_HASH, "type": "email", "user_id": "not-the-verified-user"})
         gateway.confirm_signup_email.assert_called_once_with(TOKEN_HASH)
+        gateway.ensure_signup_bonus.assert_called_once_with(USER_ID)
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["verified"])
         self.assertEqual(response.get_json()["title"], "邮箱验证成功")
+        self.assertFalse(response.get_json()["signup_bonus_pending"])
         self.assertNotIn(TOKEN_HASH, response.get_data(as_text=True))
+        self.assertNotIn(USER_ID, response.get_data(as_text=True))
+        self.assertNotIn("balance", response.get_json())
         self.assertNotIn("Set-Cookie", response.headers)
+
+    def test_bonus_failure_preserves_verified_result_and_directs_login_retry_not_token_reuse(self):
+        gateway = Mock()
+        gateway.confirm_signup_email.return_value = USER_ID
+        gateway.ensure_signup_bonus.side_effect = supabase_service.SupabaseError("SUPABASE_UNAVAILABLE", "private detail")
+        with patch.object(server, "SupabaseGateway", return_value=gateway):
+            response = self.client.post("/api/auth/confirm", json={"token_hash": TOKEN_HASH, "type": "email"})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["verified"])
+        self.assertTrue(data["signup_bonus_pending"])
+        self.assertFalse(data["retryable"])
+        self.assertIn("返回网站登录", data["message"])
+        self.assertNotIn("private detail", response.get_data(as_text=True))
+        self.assertNotIn("Set-Cookie", response.headers)
+        gateway.confirm_signup_email.assert_called_once_with(TOKEN_HASH)
+        gateway.ensure_signup_bonus.assert_called_once_with(USER_ID)
+        page = self.client.get("/api/auth/confirm").get_data(as_text=True)
+        self.assertIn('data.message || "验证已完成', page)
+
+    def test_bonus_non_success_reply_is_not_reported_as_synchronized(self):
+        gateway = Mock()
+        gateway.confirm_signup_email.return_value = USER_ID
+        for result in (None, {}, {"ok": False, "code": "EMAIL_UNVERIFIED"}):
+            gateway.ensure_signup_bonus.return_value = result
+            with self.subTest(result=result), patch.object(server, "SupabaseGateway", return_value=gateway):
+                response = self.client.post("/api/auth/confirm", json={"token_hash": TOKEN_HASH, "type": "email"})
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.get_json()["verified"])
+                self.assertTrue(response.get_json()["signup_bonus_pending"])
 
     def test_invalid_missing_and_other_action_tokens_are_rejected_before_auth(self):
         with patch.object(server, "SupabaseGateway") as gateway:
@@ -60,6 +97,7 @@ class EmailConfirmationTests(unittest.TestCase):
         self.assertFalse(response.get_json()["retryable"])
         self.assertEqual(response.get_json()["title"], "验证链接已失效")
         self.assertNotIn("private upstream detail", response.get_data(as_text=True))
+        gateway.ensure_signup_bonus.assert_not_called()
 
     def test_unavailable_auth_offers_retry_without_claiming_success(self):
         gateway = Mock()
@@ -69,21 +107,24 @@ class EmailConfirmationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.get_json()["verified"])
         self.assertTrue(response.get_json()["retryable"])
+        gateway.ensure_signup_bonus.assert_not_called()
 
     def test_gateway_verifies_emailed_proof_and_discards_session(self):
         gateway = object.__new__(supabase_service.SupabaseGateway)
         gateway._request = Mock(return_value={
-            "user": {"email_confirmed_at": "2026-10-19T00:00:00Z"},
+            "user": {"id": USER_ID, "email_confirmed_at": "2026-10-19T00:00:00Z"},
             "access_token": "synthetic-session", "refresh_token": "synthetic-refresh",
         })
-        self.assertIsNone(gateway.confirm_signup_email(TOKEN_HASH))
+        self.assertEqual(gateway.confirm_signup_email(TOKEN_HASH), USER_ID)
         gateway._request.assert_called_once_with(
             "POST", "/auth/v1/verify", body={"token_hash": TOKEN_HASH, "type": "email"}
         )
 
     def test_gateway_requires_confirmed_user_even_after_success_http_response(self):
         gateway = object.__new__(supabase_service.SupabaseGateway)
-        for payload in (None, [], {}, {"user": {}}, {"user": {"email_confirmed_at": None}}):
+        for payload in (None, [], {}, {"user": {}}, {"user": {"email_confirmed_at": None}},
+                        {"user": {"email_confirmed_at": "2026-10-19T00:00:00Z"}},
+                        {"user": {"id": "invalid", "email_confirmed_at": "2026-10-19T00:00:00Z"}}):
             gateway._request = Mock(return_value=payload)
             with self.subTest(payload=payload), self.assertRaises(supabase_service.SupabaseError):
                 gateway.confirm_signup_email(TOKEN_HASH)

@@ -11,6 +11,37 @@ const response = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json' },
 });
 
+test('invalid paid reply keeps actual usage and matched settlement without replay or invented text', async t => {
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const billing = { request_id: requestId, status: 'settled', reserved_credits: '0.1000', charged_credits: '0.0012' };
+  const fetch = t.mock.method(globalThis, 'fetch', async () => response({ success: false,
+    code: 'TAVERN_RESPONSE_INVALID', error: '未返回有效文字，已结算', submission_unknown: false,
+    billing, usage: { ...usage, raw_response: 'must not persist' } }, 502));
+  const onDelta = t.mock.fn();
+  await assert.rejects(requestTavernReply({ settings: DEFAULT_TAVERN_SETTINGS, requestId, messages, onDelta }), error => {
+    assert.equal(error.code, 'TAVERN_RESPONSE_INVALID');
+    assert.deepEqual(error.usage, usage);
+    assert.deepEqual(error.billing, billing);
+    assert.equal(error.submission_unknown, false);
+    return true;
+  });
+  assert.equal(onDelta.mock.callCount(), 0);
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('invalid text success envelope still preserves usage but rejects another request billing', async t => {
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const fetch = t.mock.method(globalThis, 'fetch', async () => response({ success: true, content: null, usage,
+    billing: { request_id: '22222222-2222-4222-8222-222222222222', status: 'settled', reserved_credits: '1', charged_credits: '0.1' } }));
+  await assert.rejects(requestTavernReply({ settings: DEFAULT_TAVERN_SETTINGS, requestId, messages }), error => {
+    assert.equal(error.billing, undefined);
+    assert.equal(error.submission_unknown, true);
+    assert.deepEqual(error.usage, usage);
+    return true;
+  });
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
 test('admin lifetime totals have no date filter and expose six counters only',async t=>{
   const stats={requests:105,users:4,chat:80,summary:10,assist:15,credits_spent:'1.0637'};
   const fetch=t.mock.method(globalThis,'fetch',async()=>response({success:true,scope:'all',stats:{...stats,input_tokens:999},requests:[{content:'must not expose'}]}));

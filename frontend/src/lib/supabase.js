@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { passwordRecoveryRedirect } from "./passwordRecovery";
+import { createAuthProxyFetch } from "./authTransport";
 
 const recoveryRedirect = typeof window !== "undefined" ? passwordRecoveryRedirect(window.location) : null;
 if (recoveryRedirect) window.location.replace(recoveryRedirect);
@@ -11,6 +12,7 @@ export const supabaseConfigured = Boolean(url && anonKey);
 
 export const supabase = supabaseConfigured
   ? createClient(url, anonKey, {
+      global: { fetch: createAuthProxyFetch(url) },
       auth: {
         persistSession: true,
         autoRefreshToken: true,

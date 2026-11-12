@@ -202,6 +202,77 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertIsNone(response.json["charged_credits"])
         self.assertEqual(self.store.apply.call_count, 2)
 
+    def test_invalid_reply_with_trusted_usage_settles_without_fake_reply_or_model_retry(self):
+        self.submit.side_effect = tavern.TavernError("TAVERN_RESPONSE_INVALID", "no reply", 502, True,
+                                                   usage={**USAGE, "private": "never-expose"})
+        self.store.apply.return_value = {"ok": True, "request": {**self.settled, "response_text": None}}
+        response = self.post()
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.json["success"])
+        self.assertEqual(response.json["code"], "TAVERN_RESPONSE_INVALID")
+        self.assertFalse(response.json["submission_unknown"])
+        self.assertEqual(response.json["billing"]["status"], "settled")
+        self.assertEqual(response.json["charged_credits"], "0.0084")
+        self.assertEqual(response.json["usage"], USAGE)
+        self.assertNotIn("content", response.json)
+        self.assertIn("已按实际 Token", response.json["error"])
+        self.store.apply.assert_called_once_with(OWNER, REQUEST, "completed", usage=USAGE,
+                                                content=None, error_code="TAVERN_RESPONSE_INVALID")
+        self.submit.assert_called_once()
+        # Repeating the original request is bookkeeping only, even without a
+        # stored reply. It must not spend tokens or settle the same bill again.
+        self.store.begin.return_value = {"ok": True, "leader": False,
+                                        "request": {**self.settled, "response_text": None}}
+        duplicate = self.post()
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertEqual(duplicate.json["code"], "TAVERN_REQUEST_FINISHED")
+        self.assertFalse(duplicate.json["submission_unknown"])
+        self.assertEqual(duplicate.json["usage"], USAGE)
+        self.submit.assert_called_once()
+        self.store.apply.assert_called_once()
+
+    def test_invalid_reply_missing_or_inconsistent_usage_never_auto_charges_or_refunds(self):
+        for raw in [None, {"prompt_tokens": 100},
+                    {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 999}]:
+            with self.subTest(raw=raw):
+                usage = tavern.normalize_usage(raw)
+                self.submit.side_effect = tavern.TavernError("TAVERN_RESPONSE_INVALID", "no reply", 502, True, usage=usage)
+                self.store.apply.return_value = {"ok": True, "request": {**self.record, "status": "unknown"}}
+                self.store.apply.reset_mock()
+                self.submit.reset_mock()
+                response = self.post()
+                self.assertTrue(response.json["submission_unknown"])
+                self.assertIsNone(response.json["charged_credits"])
+                self.assertEqual(response.json["billing"]["status"], "held")
+                self.assertEqual(response.json["usage"], usage)
+                self.store.apply.assert_called_once_with(OWNER, REQUEST, "unknown", error_code="TAVERN_RESPONSE_INVALID")
+                self.submit.assert_called_once()
+
+    def test_invalid_reply_over_reservation_or_unavailable_settlement_never_claims_paid_or_refunded(self):
+        over = {**USAGE, "input_tokens": 1000000, "total_tokens": 1000100, "cache_miss_tokens": 1000000}
+        self.submit.side_effect = tavern.TavernError("TAVERN_RESPONSE_INVALID", "no reply", 502, True, usage=over)
+        self.store.apply.return_value = {"ok": True, "request": {**self.record, "status": "completed",
+                                        "billing_status": "awaiting_review", "usage": over, "error_code": "TAVERN_RESERVE_EXCEEDED"}}
+        response = self.post()
+        self.assertTrue(response.json["submission_unknown"])
+        self.assertIsNone(response.json["charged_credits"])
+        self.assertEqual(response.json["billing"]["status"], "awaiting_review")
+        self.assertEqual(response.json["usage"], over)
+        self.store.apply.assert_called_once_with(OWNER, REQUEST, "completed", usage=over,
+                                                content=None, error_code="TAVERN_RESPONSE_INVALID")
+        self.store.apply.reset_mock()
+        self.submit.reset_mock()
+        self.store.apply.side_effect = SupabaseError("SUPABASE_UNAVAILABLE", "private diagnostic")
+        response = self.post()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["code"], "TAVERN_DATABASE_UNKNOWN")
+        self.assertTrue(response.json["submission_unknown"])
+        self.assertIsNone(response.json["charged_credits"])
+        self.assertEqual(response.json["usage"], over)
+        self.assertNotIn("private diagnostic", response.get_data(as_text=True))
+        self.store.apply.assert_called_once()
+        self.submit.assert_called_once()
+
     def test_failed_refund_is_unknown_and_does_not_claim_zero(self):
         self.submit.side_effect = tavern.TavernError("TAVERN_REQUEST_REJECTED", "已拒绝", 502, False)
         self.store.apply.side_effect = SupabaseError("TIMEOUT", "secret")

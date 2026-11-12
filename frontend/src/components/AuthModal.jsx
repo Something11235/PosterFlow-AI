@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, Mail, X } from "lucide-react";
 import { supabase, supabaseConfigured } from "../lib/supabase";
+import { authErrorMessage } from "../lib/authTransport";
 
 const MODES = { signIn: "登录", signUp: "注册", forgot: "找回密码", recovery: "设置新密码" };
 
@@ -69,7 +70,7 @@ export default function AuthModal({ open, initialMode = "signIn", onClose, onNot
         onClose();
       }
     } catch (authError) {
-      setError(authError?.message || "操作失败，请稍后重试");
+      setError(authErrorMessage(authError));
     } finally {
       setBusy(false);
     }

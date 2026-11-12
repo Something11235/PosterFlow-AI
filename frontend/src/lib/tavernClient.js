@@ -190,6 +190,7 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
       error.code = data?.code || "TAVERN_RESULT_UNKNOWN";
       error.tavernResponse = true;
       error.submission_unknown = typeof data?.submission_unknown === 'boolean' ? data.submission_unknown : true;
+      error.usage = normalizeTavernUsage(data?.usage);
       if (mode === 'platform') {
         error.request_id = requestId;
         const billing = normalizeTavernBilling(data?.billing);
@@ -200,10 +201,15 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
     if (typeof data.content !== "string" || !data.content.trim()) {
       const error = new Error('对话服务未返回有效文字，请核对平台账单或服务商记录。');
       error.code = 'TAVERN_RESPONSE_INVALID'; error.submission_unknown = true;
+      error.usage = normalizeTavernUsage(data.usage);
       if (mode === 'platform') {
         error.request_id = requestId;
         const billing = normalizeTavernBilling(data.billing);
         if (billing?.request_id === requestId.toLowerCase()) error.billing = billing;
+      }
+      if (error.billing?.status === 'settled') {
+        error.message = '对话服务未返回有效文字，已按实际 Token 用量自动结算，无需手动核对账单。';
+        error.submission_unknown = false;
       }
       throw error;
     }

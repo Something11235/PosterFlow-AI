@@ -88,7 +88,7 @@
       busy = true;
       show("loading", "正在验证邮箱", "请稍等，正在确认验证结果。");
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
+      const timer = setTimeout(() => controller.abort(), 30000);
       try {
         const response = await fetch("/api/auth/confirm", {
           method: "POST", credentials: "omit", cache: "no-store",
@@ -98,7 +98,7 @@
         });
         const data = await response.json();
         if (response.ok && data.verified === true) {
-          show("success", "邮箱验证成功", "验证已完成，可以关闭此页面。");
+          show("success", "邮箱验证成功", data.message || "验证已完成，请返回网站登录查看积分。");
         } else {
           show("error", data.title || "暂时无法完成验证", data.message || "请稍后重试。", data.retryable === true);
         }

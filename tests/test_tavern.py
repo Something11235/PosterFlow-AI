@@ -168,6 +168,34 @@ class TavernTests(unittest.TestCase):
         self.assertFalse(caught.exception.uncertain)
         self.assertEqual(caught.exception.code, "TAVERN_REQUEST_REJECTED")
 
+    def test_invalid_reply_preserves_actual_usage_without_exposing_private_response(self):
+        raw_usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
+                     "completion_tokens_details": {"reasoning_tokens": 10}, "private": "never-expose"}
+        for content in [None, "", "  ", [], "x" * (tavern.MAX_CONTENT_CHARS + 1)]:
+            with self.subTest(content_type=type(content).__name__):
+                connection = self.transport(payload={"choices": [{"message": {
+                    "content": content, "reasoning_content": "private reasoning"}, "finish_reason": "length"}],
+                    "usage": raw_usage})
+                with self.assertRaises(tavern.TavernError) as caught:
+                    self.call_transport(connection)
+                self.assertEqual(caught.exception.code, "TAVERN_RESPONSE_INVALID")
+                self.assertEqual(caught.exception.usage, tavern.normalize_usage(raw_usage))
+                self.assertEqual(caught.exception.usage["reasoning_tokens"], 10)
+                self.assertNotIn("private", str(caught.exception.__dict__))
+                connection.request.assert_called_once()
+                connection.close.assert_called_once()
+
+    def test_invalid_reply_does_not_invent_missing_or_inconsistent_usage(self):
+        for raw_usage, expected in [(None, "missing"), ({"prompt_tokens": 100}, "partial"),
+                                    ({"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 999}, "partial")]:
+            with self.subTest(expected=expected):
+                connection = self.transport(payload={"choices": [], "usage": raw_usage})
+                with self.assertRaises(tavern.TavernError) as caught:
+                    self.call_transport(connection)
+                self.assertEqual(caught.exception.usage["status"], expected)
+                self.assertIsNone(caught.exception.usage["total_tokens"])
+                connection.request.assert_called_once()
+
     def test_deadline_stops_slow_body_without_retry(self):
         connection = self.transport()
         with patch.object(tavern.time, "monotonic", side_effect=[0, 1, 2, 3, 121]), self.assertRaises(tavern.TavernError) as caught:

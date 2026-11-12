@@ -23,10 +23,11 @@ USAGE_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cache_read_tok
 
 
 class TavernPlatformError(Exception):
-    def __init__(self, code, message, status=503, uncertain=False, billing=None):
+    def __init__(self, code, message, status=503, uncertain=False, billing=None, *, usage=None):
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
         self.uncertain, self.billing = uncertain, billing
+        self.usage = clean_usage(usage)
 
 
 def normalize_request_id(value):
@@ -253,7 +254,7 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
                     "charged_credits": saved["charged_credits"], "credit_balance": begun.get("balance"), "idempotent": True}
         uncertain = saved["status"] in {"held", "awaiting_review"}
         raise TavernPlatformError("TAVERN_REQUEST_PENDING" if uncertain else "TAVERN_REQUEST_FINISHED",
-                                  "该请求已存在，请查询账单；原请求不会再次提交模型。", 409, uncertain, saved["billing"])
+                                  "该请求已存在，请查询账单；原请求不会再次提交模型。", 409, uncertain, saved["billing"], usage=saved["usage"])
     if record.get("billing_status") != "held" or record.get("status") != "reserved":
         raise TavernPlatformError("TAVERN_DATABASE_UNKNOWN", "账务状态无效，请保留请求编号查询。", 503, True, billing_fields(record))
     try:
@@ -263,15 +264,25 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
         explicit = hasattr(error, "uncertain") and hasattr(error, "code")
         uncertain = not explicit or error.uncertain
         code = error.code if explicit else "TAVERN_RESULT_UNKNOWN"
-        event = "unknown" if uncertain else "rejected" if code == "TAVERN_REQUEST_REJECTED" else "not_submitted"
+        usage = clean_usage(getattr(error, "usage", None)) if code == "TAVERN_RESPONSE_INVALID" else None
+        # A missing reply is not missing accounting evidence. The same existing
+        # SQL quote/hold checks decide whether actual counts can settle; no
+        # guessed tokens, extra debit, model retry or invented reply is allowed.
+        has_actual_usage = quote_tavern_credits(settings["model"], usage) is not None
+        event = "completed" if has_actual_usage else "unknown" if uncertain else "rejected" if code == "TAVERN_REQUEST_REJECTED" else "not_submitted"
         try:
-            applied = store.apply(user.id, request_id, event, error_code=code)
+            applied = store.apply(user.id, request_id, event, **({"usage": usage, "content": None} if has_actual_usage else {}), error_code=code)
             billing = billing_fields(applied["request"])
         except Exception:
             raise TavernPlatformError("TAVERN_DATABASE_UNKNOWN", "请求或退款结果暂未确认，请保留请求编号查询，不要重复发送。", 503, True,
-                                      _unknown(request_id, reserved)) from None
-        raise TavernPlatformError(code, getattr(error, "message", "对话结果暂未确认，请查询请求记录。"),
-                                  getattr(error, "status", 502), uncertain, billing) from None
+                                      _unknown(request_id, reserved), usage=usage) from None
+        message = getattr(error, "message", "对话结果暂未确认，请查询请求记录。")
+        if has_actual_usage:
+            uncertain = billing["status"] not in {"settled", "refunded"}
+            message = ("对话服务未返回有效文字，已按实际 Token 用量自动结算，无需手动核对账单。" if billing["status"] == "settled"
+                       else "对话服务未返回有效文字；原请求积分已退回，可查看账单明细。" if billing["status"] == "refunded"
+                       else "对话服务未返回有效文字，实际用量已保留；账单暂未确认，请查询原请求，不要重复发送。")
+        raise TavernPlatformError(code, message, getattr(error, "status", 502), uncertain, billing, usage=usage) from None
     try:
         applied = store.apply(user.id, request_id, "completed", result["usage"], result["content"])
         billing = billing_fields(applied["request"])
