@@ -20,6 +20,37 @@ def response(payload, status=200):
 
 
 class ImageProtocolTests(unittest.TestCase):
+    def test_public_pending_job_distinguishes_sent_request_from_received_results(self):
+        job = {"status": "processing", "provider_result_urls": [], "save_token": "private-token"}
+        self.assertFalse(routes.public_job(job)["result_available"])
+        job["provider_result_urls"] = ["https://private.example/result?signature=secret"]
+        visible = routes.public_job(job)
+        self.assertTrue(visible["result_available"])
+        self.assertNotIn("provider_result_urls", visible)
+        self.assertNotIn("save_token", visible)
+        self.assertNotIn("private", json.dumps(visible))
+
+    def test_shared_task_table_keeps_original_provider_for_list_and_lookup(self):
+        store = object.__new__(routes.ImageStore)
+        store.gateway = Mock()
+        stored_jobs = [
+            {"owner_scope": "user-" + USER, "request_id": REQUEST, "submission_provider": "buytoken"},
+            {"owner_scope": "user-" + USER, "request_id": "old-apimart-task", "submission_provider": "apimart"},
+            {"owner_scope": "other-owner", "request_id": "foreign-task", "submission_provider": "apimart"},
+        ]
+
+        def query(_method, _path, *, params):
+            rows = stored_jobs
+            for field in ("owner_scope", "submission_provider", "request_id"):
+                if field in params:
+                    rows = [row for row in rows if "eq." + row[field] == params[field]]
+            return rows
+
+        store.gateway._request.side_effect = query
+        self.assertEqual([job["request_id"] for job in store.jobs("user-" + USER)], ["old-apimart-task"])
+        self.assertEqual(store.jobs("user-" + USER, REQUEST), [])
+        self.assertEqual(len(store.jobs("user-" + USER, "old-apimart-task")), 1)
+
     def reference_data(self):
         image = io.BytesIO()
         Image.new("RGB", (8, 8), "blue").save(image, format="PNG")

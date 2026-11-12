@@ -27,6 +27,11 @@ PUBLIC_FIELDS = ("request_id", "model", "billing_mode", "status", "requested_cou
 
 def public_job(job):
     result = {name: job.get(name) for name in PUBLIC_FIELDS}
+    # BuyToken uses processing both while sending and after receiving URLs.
+    # Expose only this fact so clients can resume saving confirmed results,
+    # without disclosing temporary upstream URLs or claiming an unknown POST
+    # has already returned images.
+    result["result_available"] = bool(job.get("provider_result_urls"))
     if job.get('status') == 'failed':
         result['failure_reason'] = provider.image_failure_reason(job.get('error_code'))
         if job.get('error_code') == 'IMAGE_PROVIDER_TIMEOUT':
@@ -60,7 +65,9 @@ class ImageStore:
         return self.rpc("apply_image_job_v3", {"p_owner": owner, "p_request": request_id, "p_event": event, **kwargs})
 
     def jobs(self, owner, request_id=None):
-        params = {"owner_scope": "eq." + owner, "select": "*", "order": "created_at.desc", "limit": "50"}
+        # The table also holds BuyToken jobs. Returning those here would relabel
+        # them as APIMart on the client, whose query cannot save BuyToken URLs.
+        params = {"owner_scope": "eq." + owner, "submission_provider": "eq.apimart", "select": "*", "order": "created_at.desc", "limit": "50"}
         if request_id:
             params["request_id"] = "eq." + request_id
         return self.gateway._request("GET", "/rest/v1/apimart_image_jobs", params=params) or []

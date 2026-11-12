@@ -1,9 +1,15 @@
 export const IMAGE_RECOVERY_INTERVAL_MS = 15000;
 export const IMAGE_RECOVERY_WINDOW_MS = 20 * 60 * 1000;
 
+export function isPendingImageTaskError(error) {
+  return ['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING','REQUEST_ALREADY_PROCESSED'].includes(error?.code)
+    || Boolean(error?.submission_unknown);
+}
+
 export function canAutoQueryImageTask(task, now = Date.now()) {
-  return Boolean(task && task.route === "apimart" && task.billingMode === "platform"
-    && task.status === "pending" && !task.active && task.error?.code === "IMAGE_TASK_PENDING"
+  return Boolean(task && ["apimart", "buytoken"].includes(task.route) && task.billingMode === "platform"
+    && (task.route !== 'buytoken' || task.error?.recovery_confirmed === true)
+    && task.status === "pending" && !task.active && ["IMAGE_TASK_PENDING", "IMAGE_SAVE_PENDING"].includes(task.error?.code)
     && Number.isSafeInteger(task.createdAt) && task.createdAt <= now
     && now - task.createdAt < IMAGE_RECOVERY_WINDOW_MS);
 }

@@ -11,7 +11,7 @@ function taskMetadata(value, restore=false) {
   return {id:value.id,prompt:safeText(value.prompt,6000),model:safeText(value.model,100),billingMode:value.billingMode==='own_key'?'own_key':'platform',status,active:!restore && value.active===true,createdAt:value.createdAt,images,
     route:['buytoken','apimart','legacy'].includes(value.route)?value.route:'legacy',
     ...(value.backgroundName?{backgroundName:safeText(value.backgroundName,80)}:{}),
-    ...(status==='pending'?{error:{code,message:'原任务状态待确认，请查询原任务，不要重新生成。',submission_unknown:true,billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:status==='failed'?{error:{code,message:'本次任务未完成，可查看原任务记录。'}}:{})};
+    ...(status==='pending'?{error:{code,message:'原任务状态待确认，请查询原任务，不要重新生成。',submission_unknown:true,recovery_confirmed:value.error?.recovery_confirmed===true,billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:status==='failed'?{error:{code,message:'本次任务未完成，可查看原任务记录。'}}:{})};
 }
 export function createImageTaskStore(limit = IMAGE_TASK_LIMIT, identity = "guest", options={}) {
   let storage;try{storage=options.storage===undefined?globalThis.localStorage:options.storage;}catch{}
@@ -28,7 +28,7 @@ export function createImageTaskStore(limit = IMAGE_TASK_LIMIT, identity = "guest
     registerRecovery(id, query) { recovery.set(id, query); },
     recover(id) { return recovery.get(id)?.(); },
     importJobs(jobs) {
-      for(const job of jobs){const current=tasks.find(item=>item.id===job.id);if(current?.active || current?.status==='completed' && job.status==='pending')continue;
+      for(const job of jobs){const current=tasks.find(item=>item.id===job.id);if(current?.active || current?.status==='completed' && current.images.length && (job.status!=='completed' || !job.images?.length))continue;
         const next=taskMetadata({...job,...(current?.prompt?{prompt:current.prompt}:{}),...(current?.backgroundName?{backgroundName:current.backgroundName}:{})},true);
         if(next)tasks=[...tasks.filter(item=>item.id!==next.id),next];}
       tasks=tasks.sort((a,b)=>b.createdAt-a.createdAt).slice(0,MAX_TASKS);publish();

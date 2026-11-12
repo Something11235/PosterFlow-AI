@@ -21,7 +21,7 @@ test('new GPT26 submits once to BuyToken and polls only that original durable ta
   globalThis.window = {dispatchEvent() {}};
   globalThis.fetch = async (url, init) => {
     calls.push([url, init]);
-    return json({job: {status: calls.length === 1 ? 'processing' : 'completed'}, images: [{filename: 'fixture.gif'}]});
+    return json({job: {status: calls.length === 1 ? 'processing' : 'completed', result_available:true}, images: [{filename: 'fixture.gif'}]});
   };
   const result = await imageGenerationFetch('/api/generate', {method: 'POST', headers, body: JSON.stringify({platform_model: model, request_id: 'fixture', prompt: 'make GIF'})}, {pollInterval: 0});
   assert.equal(result.status, 200);
@@ -56,4 +56,48 @@ test('errors and ambiguous POST never trigger an APIMart generation fallback', a
   globalThis.fetch = async () => {calls++; return json({code: 'AUTH_REQUIRED', error: 'synthetic'}, 401);};
   await assert.rejects(readImageTask('fixture', headers, undefined, model));
   assert.equal(calls, 1);
+});
+
+test('BuyToken received results retry only original GET saves after a temporary storage failure', async t => {
+  const prior=globalThis.fetch,window=globalThis.window,calls=[];
+  t.after(()=>{globalThis.fetch=prior;globalThis.window=window;});
+  globalThis.window={dispatchEvent(){}};
+  globalThis.fetch=async(url,init)=>{
+    calls.push({url,method:init?.method||'GET'});
+    if(calls.length===1)return json({job:{status:'processing',result_available:true}},202);
+    if(calls.length===2)return json({error:'save not complete',code:'IMAGE_SAVE_PENDING',submission_unknown:true},503);
+    return json({job:{status:'completed'},images:[{filename:'already-generated.png'}]});
+  };
+  const response=await imageGenerationFetch('/api/generate',{method:'POST',headers,body:JSON.stringify({platform_model:model,request_id:'original',prompt:'fixture'})},{pollInterval:0});
+  assert.equal((await response.json()).images[0].filename,'already-generated.png');
+  assert.deepEqual(calls.map(call=>call.method),['POST','GET','GET']);
+  assert.ok(calls.slice(1).every(call=>call.url==='/api/buytoken-images/tasks/original'));
+});
+
+test('an existing saving claim is polled until completion without a new submission', async t => {
+  const prior=globalThis.fetch,window=globalThis.window,calls=[];
+  t.after(()=>{globalThis.fetch=prior;globalThis.window=window;});
+  globalThis.window={dispatchEvent(){}};
+  globalThis.fetch=async(url,init)=>{
+    calls.push({url,method:init?.method||'GET'});
+    if(calls.length===1)return json({job:{status:'processing',result_available:true}},202);
+    if(calls.length===2)return json({job:{status:'saving'}},200);
+    return json({job:{status:'completed'},images:[{filename:'existing.png'}]});
+  };
+  const response=await imageGenerationFetch('/api/generate',{method:'POST',headers,body:JSON.stringify({platform_model:model,request_id:'original',prompt:'fixture'})},{pollInterval:0});
+  assert.equal((await response.json()).images[0].filename,'existing.png');
+  assert.deepEqual(calls.map(call=>call.method),['POST','GET','GET']);
+  assert.ok(calls.slice(1).every(call=>call.url==='/api/buytoken-images/tasks/original'));
+});
+
+test('BuyToken processing before durable results arrive never starts a recovery GET loop', async t => {
+  const prior=globalThis.fetch,window=globalThis.window;let calls=0,available;
+  t.after(()=>{globalThis.fetch=prior;globalThis.window=window;});
+  globalThis.window={dispatchEvent(){}};
+  globalThis.fetch=async()=>{calls++;return json({job:{status:'processing',result_available:available}},202);};
+  for(available of [false,undefined]) {
+    calls=0;
+    const response=await imageGenerationFetch('/api/generate',{method:'POST',headers,body:JSON.stringify({platform_model:model,request_id:'original',prompt:'fixture'})},{pollInterval:0});
+    assert.equal((await response.json()).code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(calls,1);
+  }
 });

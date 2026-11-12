@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createImageTaskStore, getCompletedImageTask, syncImageTaskSelection } from '../src/lib/imageTasks.js';
-import { canAutoQueryImageTask, startImageTaskRecovery, IMAGE_RECOVERY_INTERVAL_MS, IMAGE_RECOVERY_WINDOW_MS } from '../src/lib/imageTaskRecovery.js';
-import { imageJobMetadata } from '../src/lib/apimartImages.js';
+import { canAutoQueryImageTask, isPendingImageTaskError, startImageTaskRecovery, IMAGE_RECOVERY_INTERVAL_MS, IMAGE_RECOVERY_WINDOW_MS } from '../src/lib/imageTaskRecovery.js';
+import { imageJobMetadata, imageTaskPendingState } from '../src/lib/apimartImages.js';
 
 const pending = (now = Date.now()) => ({id:'original',route:'apimart',billingMode:'platform',createdAt:now,status:'pending',active:false,error:{code:'IMAGE_TASK_PENDING'}});
 const completed = () => ({...pending(),status:'completed',images:[{filename:'saved.png'}]});
@@ -47,23 +47,88 @@ test('a late response from another account or a discarded store cannot import or
   assert.deepEqual(otherStore.getSnapshot(),[]);
 });
 
-test('only confirmed APIMart platform waiting tasks qualify within the bounded recovery window', () => {
+test('only accepted platform tasks qualify within the bounded recovery window', () => {
   const now=Date.now(), task=pending(now);
   assert.equal(canAutoQueryImageTask(task,now),true);
   assert.equal(canAutoQueryImageTask(task,now+IMAGE_RECOVERY_WINDOW_MS-1),true);
   assert.equal(canAutoQueryImageTask(task,now+IMAGE_RECOVERY_WINDOW_MS),false);
-  for (const change of [{route:'buytoken'},{billingMode:'own_key'},{active:true},{status:'completed'},
+  for (const change of [{route:'legacy'},{billingMode:'own_key'},{active:true},{status:'completed'},
     {error:{code:'IMAGE_SUBMISSION_UNKNOWN'}},{createdAt:now+1},{createdAt:NaN}]) {
     assert.equal(canAutoQueryImageTask({...task,...change},now),false);
   }
-  for (const status of ['submitting','submission_unknown']) {
-    const metadata = imageJobMetadata({request_id:'original',status,created_at:new Date(now).toISOString(),billing_mode:'platform'},'apimart');
-    assert.equal(metadata.error.code,'IMAGE_SUBMISSION_UNKNOWN');
-    assert.equal(canAutoQueryImageTask(metadata,now),false);
+  for (const route of ['apimart','buytoken']) {
+    for (const status of ['submitting','submission_unknown','unknown']) {
+      const metadata = imageJobMetadata({request_id:'original',status,result_available:true,error_code:'IMAGE_SAVE_PENDING',created_at:new Date(now).toISOString(),billing_mode:'platform'},route);
+      assert.equal(metadata.error.code,'IMAGE_SUBMISSION_UNKNOWN');
+      assert.equal(canAutoQueryImageTask(metadata,now),false);
+    }
+    for(const status of ['processing','saving']) for(const code of ['IMAGE_TASK_QUERY_FAILED','IMAGE_SAVE_PENDING']) {
+      const metadata=imageJobMetadata({request_id:'original',status,result_available:true,error_code:code,created_at:new Date(now).toISOString(),billing_mode:'platform'},route);
+      assert.equal(canAutoQueryImageTask(metadata,now),true);
+    }
   }
   for (const status of ['submitted','processing']) {
     const metadata = imageJobMetadata({request_id:'original',status,created_at:new Date(now).toISOString(),billing_mode:'platform'},'apimart');
     assert.equal(canAutoQueryImageTask(metadata,now),true);
+  }
+});
+
+test('known saving remains a query-only gallery action even when submission is confirmed', () => {
+  const saving=imageTaskPendingState({status:'saving'},'buytoken');
+  assert.equal(saving.code,'IMAGE_SAVE_PENDING');
+  assert.equal(saving.submission_unknown,false);
+  assert.equal(isPendingImageTaskError(saving),true);
+  assert.equal(isPendingImageTaskError({code:'IMAGE_TASK_CLOSED',submission_unknown:false}),false);
+});
+
+test('manual GET confirming accepted processing replaces an earlier unknown/query error and resumes recovery', () => {
+  for (const route of ['apimart','buytoken']) {
+    const store=storeFor('owner');
+    store.start('original',{prompt:'fixture',route,billingMode:'platform'});
+    store.finish('original',{error:{code:'IMAGE_SUBMISSION_UNKNOWN'},pending:true});
+    assert.equal(canAutoQueryImageTask(store.getSnapshot()[0]),false);
+    store.finish('original',{error:imageTaskPendingState({status:'processing',result_available:true},route),pending:true});
+    assert.equal(canAutoQueryImageTask(store.getSnapshot()[0]),true);
+    store.finish('original',{error:imageTaskPendingState({status:'submission_unknown',error_code:'IMAGE_SAVE_PENDING'},route),pending:true});
+    assert.equal(canAutoQueryImageTask(store.getSnapshot()[0]),false);
+  }
+  assert.equal(imageTaskPendingState({status:'submitted'},'buytoken'),null);
+});
+
+test('unconfirmed BuyToken processing and unrecognized states never inherit a stale automatic-recovery code', () => {
+  const base={request_id:'original',created_at:new Date().toISOString(),billing_mode:'platform',error_code:'IMAGE_SAVE_PENDING'};
+  for(const result_available of [false,undefined]) {
+    const metadata=imageJobMetadata({...base,status:'processing',result_available},'buytoken');
+    assert.equal(metadata.error.code,'IMAGE_SUBMISSION_UNKNOWN');
+    assert.equal(canAutoQueryImageTask(metadata),false);
+  }
+  for(const route of ['apimart','buytoken']) {
+    const metadata=imageJobMetadata({...base,status:'unrecognized',result_available:true},route);
+    assert.equal(metadata.error.code,'IMAGE_TASK_REVIEW_REQUIRED');
+    assert.equal(canAutoQueryImageTask(metadata),false);
+  }
+});
+
+test('older or unfinished local BuyToken archives remain manual until a server confirmation is persisted', () => {
+  const archive=new Map(),storage={getItem:key=>archive.get(key),setItem:(key,value)=>archive.set(key,value)};
+  const first=createImageTaskStore(3,'owner',{storage});
+  first.start('original',{prompt:'fixture',route:'buytoken',billingMode:'platform'});
+  let restored=createImageTaskStore(3,'owner',{storage});
+  assert.equal(canAutoQueryImageTask(restored.getSnapshot()[0]),false);
+  restored.finish('original',{pending:true,error:imageTaskPendingState({status:'processing',result_available:true},'buytoken')});
+  restored=createImageTaskStore(3,'owner',{storage});
+  assert.equal(canAutoQueryImageTask(restored.getSnapshot()[0]),true);
+  restored.finish('original',{pending:true,error:imageTaskPendingState({status:'submission_unknown',result_available:true},'buytoken')});
+  assert.equal(canAutoQueryImageTask(createImageTaskStore(3,'owner',{storage}).getSnapshot()[0]),false);
+});
+
+test('a stale failed snapshot or an empty completion cannot erase an already recovered image', () => {
+  const store=storeFor('owner'), options={currentStore:store,currentOwner:'owner',selectedId:'original'};
+  syncImageTaskSelection(store,[completed()],options);
+  const saved=getCompletedImageTask(store,'original');
+  for (const status of ['failed','pending','completed']) {
+    assert.equal(syncImageTaskSelection(store,[{...completed(),status,images:[]}],options),null);
+    assert.equal(getCompletedImageTask(store,'original'),saved);
   }
 });
 

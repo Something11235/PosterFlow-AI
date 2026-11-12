@@ -15,7 +15,7 @@ import ImageTaskQueue from "./components/ImageTaskQueue";
 import ImageTasksPanel from "./components/ImageTasksPanel";
 import { createImageTaskStore, getCompletedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
 import { canAutoQueryImageTask, startImageTaskRecovery } from "./lib/imageTaskRecovery";
-import { imageGenerationFetch, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
+import { imageGenerationFetch, imageTaskPendingState, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
 import AccountPanel from "./components/AccountPanel";
@@ -619,7 +619,7 @@ export default function App() {
       const data = await response.json();
       if (!response.ok || data.error) {
         const pending = Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
-        const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown) };
+        const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
         store.finish(requestId, { error: failure, pending });
         showFailure(failure);
       } else show(data);
@@ -722,8 +722,11 @@ export default function App() {
         }
         announce(failure.message);
       }else {
-        if (['submission_unknown', 'submitting'].includes(data?.job?.status)) {
-          const pending = {code:'IMAGE_SUBMISSION_UNKNOWN',message:'原任务提交结果待核实，请查询原任务，不要重新生成。',submission_unknown:true,billing_mode:task.billingMode};
+        const nextState = imageTaskPendingState(data?.job, task.route);
+        if (nextState) {
+          // A successful GET can resolve an earlier query/connection error.
+          // Resume only the same accepted task; unknown submissions stay manual.
+          const pending = {...nextState,billing_mode:task.billingMode};
           store.finish(task.id,{error:pending,pending:true});
           if(selectedTaskRef.current===task.id && !getCompletedImageTask(store,task.id))setError(pending);
         }

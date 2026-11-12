@@ -81,6 +81,65 @@ test("manual task recovery uses GET without resubmitting generation", async t =>
   assert.equal((await readImageTask(requestId, {})).images[0].filename, "recovered.png");
 });
 
+test('a transient query failure after acceptance retries GET only and returns the existing image', async t => {
+  const calls=[];
+  install(t,async(url,init)=>{
+    calls.push({url,method:init?.method||'GET'});
+    if(calls.length===1)return json({job:{status:'submitted'}},202);
+    if(calls.length===2)return new Response('temporary gateway failure',{status:502});
+    if(calls.length===3)throw new TypeError('synthetic network disconnect');
+    return json({job:{status:'completed'},images:[{filename:'existing.png'}]});
+  });
+  const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'seedream-5-0-pro',request_id:requestId,prompt:'fixture'})},{pollInterval:0});
+  assert.equal((await response.json()).images[0].filename,'existing.png');
+  assert.deepEqual(calls.map(call=>call.method),['POST','GET','GET','GET']);
+  assert.ok(calls.slice(1).every(call=>call.url.endsWith(requestId)));
+});
+
+test('exhausted transient queries preserve accepted state for bounded later recovery instead of declaring failure', async t => {
+  const calls=[];
+  install(t,async(_url,init)=>{
+    calls.push(init?.method||'GET');
+    return calls.length===1?json({job:{status:'submitted'}},202):json({error:'temporary database failure',code:'IMAGE_DATABASE_UNAVAILABLE'},503);
+  });
+  const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'seedream-5-0-pro',request_id:requestId,prompt:'fixture'})},{pollInterval:0});
+  const data=await response.json();
+  assert.equal(response.status,202);assert.equal(data.code,'IMAGE_TASK_PENDING');assert.equal(data.job.status,'submitted');
+  assert.equal(data.submission_unknown,false);
+  assert.deepEqual(calls,['POST','GET','GET','GET']);
+});
+
+test('auth or unknown-task errors stop immediate GET retries and never resubmit', async t => {
+  let calls=[];let failure={error:'sign in again',code:'AUTH_REQUIRED'},status=401;
+  install(t,async(_url,init)=>{calls.push(init?.method||'GET');return calls.length===1?json({job:{status:'processing'}},202):json(failure,status);});
+  const init={method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'seedream-5-0-pro',request_id:requestId,prompt:'fixture'})};
+  assert.equal((await (await imageGenerationFetch('/api/generate',init,{pollInterval:0})).json()).code,'AUTH_REQUIRED');
+  assert.deepEqual(calls,['POST','GET']);
+  calls=[];failure={error:'unknown',code:'IMAGE_SUBMISSION_UNKNOWN'};status=503;
+  assert.equal((await (await imageGenerationFetch('/api/generate',init,{pollInterval:0})).json()).code,'IMAGE_SUBMISSION_UNKNOWN');
+  assert.deepEqual(calls,['POST','GET']);
+});
+
+test('unknown or still-submitting tasks never enter GET retry loops', async t => {
+  let calls=0,state='submission_unknown';
+  install(t,async()=>{calls++;return json({job:{status:state}},202);});
+  for(const model of ['seedream-5-0-pro','gpt-image-2.6-flare']) {
+    for(state of ['submission_unknown','submitting']) {
+      calls=0;
+      const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:model,request_id:requestId,prompt:'fixture'})},{pollInterval:0});
+      assert.equal((await response.json()).code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(calls,1);
+    }
+  }
+});
+
+test('query retries stop when the original polling time budget expires', async t => {
+  const oldNow=Date.now;let now=1000,calls=0;
+  Date.now=()=>now;t.after(()=>{Date.now=oldNow;});
+  install(t,async()=>{calls++;if(calls===1)return json({job:{status:'submitted'}},202);now+=101;throw new TypeError('timeout');});
+  const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'seedream-5-0-pro',request_id:requestId,prompt:'fixture'})},{pollInterval:0,maxWait:100});
+  assert.equal((await response.json()).code,'IMAGE_TASK_PENDING');assert.equal(calls,2);
+});
+
 test("Grok region editing prepares the asset before exactly one paid POST", async t => {
   const calls=[];
   install(t,async(url,init)=>{

@@ -1156,10 +1156,24 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
         duration_ms = utc_milliseconds_since(started_at)
         credit_balance = None
         if billing_mode == "platform":
-            if provider.model in image_tiers.GPT25 and data.get('pricing_version') == image_tiers.VERSION:
-                settled = raise_for_rpc_result(gateway.rpc("settle_image_tier_generation", {"p_job_id": job_id, "p_generated_count": len(images), "p_duration_ms": duration_ms, "p_image_keys": filenames}))
-            else:
-                settled = raise_for_rpc_result(gateway.settle_generation(job_id, len(images), duration_ms, filenames))
+            for attempt in range(2):
+                try:
+                    if provider.model in image_tiers.GPT25 and data.get('pricing_version') == image_tiers.VERSION:
+                        settled = gateway.rpc("settle_image_tier_generation", {"p_job_id": job_id, "p_generated_count": len(images), "p_duration_ms": duration_ms, "p_image_keys": filenames})
+                    else:
+                        settled = gateway.settle_generation(job_id, len(images), duration_ms, filenames)
+                    # An empty/malformed RPC response or an already refunded job
+                    # is not confirmation that these saved images were settled.
+                    raise_for_rpc_result(settled)
+                    if not isinstance(settled, dict) or settled.get("ok") is not True or settled.get("status") not in {None, "succeeded"}:
+                        raise ProviderError("IMAGE_SETTLEMENT_UNCONFIRMED", "图片记录尚未确认，请查询原任务。", 503)
+                    break
+                except SupabaseError as error:
+                    if attempt or error.code not in {"SUPABASE_UNAVAILABLE", "SUPABASE_BAD_RESPONSE"}:
+                        raise
+                    # Only replay the idempotent accounting operation. The model
+                    # has already run and must never be called a second time.
+                    app.logger.warning("image_settlement request_id=%s stage=retry error_class=%s", request_id, type(error).__name__)
             credit_balance = settled.get("balance")
         elif user:
             # Own-key requests are logged only after success and never include the API key.
@@ -1171,10 +1185,26 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
     except Exception as error:
         if billing_mode == "platform" and gateway and job_id:
             if created_filenames:
+                # The RPC can commit before its HTTP response is lost. Deleting
+                # files or refunding here could destroy an already paid result.
+                app.logger.warning("image_settlement request_id=%s stage=recover error_class=%s", request_id, type(error).__name__)
                 try:
-                    remove_stored_images(created_filenames)
+                    saved = gateway.generation_by_request_id(user.id, request_id)
+                    keys = saved.get("image_keys") if isinstance(saved, dict) else None
+                    if saved and saved.get("status") == "succeeded" and isinstance(keys, list) and keys and all(isinstance(name, str) and name for name in keys):
+                        return {
+                            "images": [{"filename": name, "index": index + 1} for index, name in enumerate(keys)],
+                            "credit_balance": None,
+                            "idempotent": True,
+                            "provider": provider,
+                        }
                 except Exception:
-                    app.logger.exception("Failed to remove orphaned generated images")
+                    app.logger.warning("image_settlement request_id=%s stage=recovery_unavailable", request_id)
+                raise ProviderError(
+                    "IMAGE_TASK_PENDING", "图片已生成，任务记录暂未同步完成",
+                    503, "已有图片会保留，请查询原任务。账单结果尚未确认，不会自动重新生图。",
+                    ["查询原任务", "请勿重复生成"],
+                ) from None
             try:
                 raise_for_rpc_result(
                     gateway.refund_generation(job_id, getattr(error, "code", "generation_failed"))
@@ -1182,6 +1212,12 @@ def execute_generation(data, *, requested_count, prompt, generate_callback):
             except (ProviderError, SupabaseError):
                 app.logger.exception("Failed to refund platform generation")
         elif billing_mode == "own_key" and user and provider:
+            if created_filenames:
+                # History bookkeeping is not generation. In particular, do not
+                # overwrite a committed success with a zero-image failure when
+                # the history RPC response was lost.
+                app.logger.warning("image_history request_id=%s stage=record_success error_class=%s", request_id, type(error).__name__)
+                return {"images": images, "credit_balance": None, "idempotent": False, "provider": provider}
             try:
                 (gateway or SupabaseGateway()).record_own_key_generation(
                     user.id, request_id, provider.host, provider.model, prompt, requested_count, 0,

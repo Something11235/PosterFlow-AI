@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import BackupImageDownload from "./BackupImageDownload";
 import GalleryImagePreview from "./GalleryImagePreview";
+import { isPendingImageTaskError } from "../lib/imageTaskRecovery";
 
 const PLATFORM_FAILURE_DETAIL = "一般为以下原因：\n1.提示词有模型不支持的参数或违规用词触发审核拒绝\n2.余额不足\n3.高峰期使用人数过多";
 
@@ -355,9 +356,10 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
   const timedOut = errorInfo?.code === 'IMAGE_PROVIDER_TIMEOUT';
   const pricingChanged = ['IMAGE_PRICING_CHANGED', 'IMAGE_PROVIDER_CHANGED', 'IMAGE_FEATURE_UNSUPPORTED', 'BUYTOKEN_ENDPOINT_INVALID', 'BUYTOKEN_REQUEST_REJECTED'].includes(errorInfo?.code);
   const processing = errorInfo?.code === 'IMAGE_TASK_PENDING';
+  const saving = errorInfo?.code === 'IMAGE_SAVE_PENDING';
   const duplicate = errorInfo?.code === 'REQUEST_ALREADY_PROCESSED';
   const closed = errorInfo?.code === 'IMAGE_TASK_CLOSED';
-  const pending = processing || duplicate || Boolean(errorInfo?.submission_unknown);
+  const pending = isPendingImageTaskError(errorInfo);
   const recovery = pending ? ["查询原任务，不会重复扣积分", "请勿重复生成"] : closed ? errorInfo.recovery || ["查看原任务记录"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"]);
@@ -368,13 +370,13 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
       <div className="max-w-xl">
         <div className="mb-4 inline-flex items-center gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-sm font-medium text-warning">
           <AlertTriangle size={16} />
-          {processing ? "任务仍在处理中" : pending ? "任务仍待确认" : platform ? "本次生成未完成" : "服务状态需要处理"}
+          {saving ? "正在保存原任务图片" : processing ? "任务仍在处理中" : pending ? "任务仍待确认" : platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {duplicate ? "该请求已有记录，请查询原任务" : processing ? "图片仍在生成，请查询原任务进度" : pending ? "暂未取得最终结果，请查询原任务" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
+          {saving ? "图片已返回，正在保存到本站" : duplicate ? "该请求已有记录，请查询原任务" : processing ? "图片仍在生成，请查询原任务进度" : pending ? "暂未取得最终结果，请查询原任务" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
         <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {closed ? errorInfo.detail : duplicate ? "系统收到了相同任务编号的请求。请查看原任务的结果与账单，避免重复生成。" : pending ? processing ? "本次等待时间已到，后台任务仍可能继续。结果完成后会更新到生图任务记录；查询原任务不会重新生图。" : "暂时无法确认最终结果，不代表生成失败。请查询原任务或稍后查看生图任务记录，避免重复提交。" : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
+          {saving ? "已有图片正在保存或等待恢复，请查询原任务继续获取结果；不会重新生图或重复扣积分。" : closed ? errorInfo.detail : duplicate ? "系统收到了相同任务编号的请求。请查看原任务的结果与账单，避免重复生成。" : pending ? processing ? "本次等待时间已到，后台任务仍可能继续。结果完成后会更新到生图任务记录；查询原任务不会重新生图。" : "暂时无法确认最终结果，不代表生成失败。请查询原任务或稍后查看生图任务记录，避免重复提交。" : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
             "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。")}
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -402,7 +404,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
             {pending ? "查询进度" : platform ? "错误详情" : "运行诊断"}
           </div>
           <span className={`rounded-md border px-2 py-1 text-xs font-medium ${pending ? 'border-accent/30 bg-accent/10 text-accent' : 'border-error/30 bg-error/10 text-error'}`}>
-            {processing ? '处理中' : pending ? '待确认' : '未完成'}
+            {saving ? '保存中' : processing ? '处理中' : pending ? '待确认' : '未完成'}
           </span>
         </div>
         <dl className="mt-4 space-y-3 text-sm">

@@ -190,6 +190,120 @@ class GenerationCreditSettlementTests(unittest.TestCase):
             {"Content-Type": "application/json", "api-key": "test-key"},
         )
 
+    def _run_saved_image_settlement(self, tier, settle, saved=None):
+        gateway = Mock()
+        reservation = {"ok": True, "existing": False, "job_id": "original", "status": "running"}
+        gateway.reserve_credits.return_value = reservation
+        gateway.settle_generation.side_effect = settle
+        gateway.rpc.side_effect = lambda name, values: reservation if name == "reserve_legacy_image_tier_credits" else settle(values)
+        gateway.generation_by_request_id.side_effect = saved if isinstance(saved, Exception) else None
+        gateway.generation_by_request_id.return_value = saved
+        provider = server.ProviderConfig(api_key="fixture", endpoint="https://provider.example/v1/images/generations",
+            model="gpt-image-2.5-flare", auth_type="bearer", source="platform")
+        generate = Mock(return_value=[{"filename": "saved.png"}])
+        data = {"billing_mode": "platform", "platform_model": provider.model,
+                "request_id": "11111111-1111-4111-8111-111111111111"}
+        if tier:
+            data["pricing_version"] = server.image_tiers.VERSION
+        with (patch.object(server, "platform_provider_configured", return_value=True),
+              patch.object(server, "require_authenticated_user", return_value=Mock(id="owner")),
+              patch.object(server, "SupabaseGateway", return_value=gateway),
+              patch.object(server, "resolve_provider_config", return_value=provider),
+              patch.object(server, "enforce_rate_limit"),
+              patch.object(server, "remove_stored_images") as remove):
+            try:
+                result = server.execute_generation(data, requested_count=1, prompt="fixture", generate_callback=generate)
+            except server.ProviderError as error:
+                result = error
+        generate.assert_called_once()
+        remove.assert_not_called()
+        gateway.refund_generation.assert_not_called()
+        return result, gateway
+
+    def test_lost_settlement_response_replays_accounting_without_regenerating_or_deleting(self):
+        for tier in [False, True]:
+            with self.subTest(tier=tier):
+                attempts = []
+                charges = []
+                def settle(*args):
+                    attempts.append(args)
+                    if not charges:
+                        charges.append(1)  # Commit, followed by a lost HTTP response.
+                        raise server.SupabaseError("SUPABASE_UNAVAILABLE", "fixture", 503)
+                    return {"ok": True, "existing": True, "status": "succeeded", "balance": 9}
+                result, gateway = self._run_saved_image_settlement(tier, settle)
+                self.assertEqual(result["images"], [{"filename": "saved.png"}])
+                self.assertEqual(result["credit_balance"], 9)
+                self.assertEqual(len(attempts), 2)
+                self.assertEqual(attempts[0], attempts[1])
+                self.assertEqual(charges, [1])
+                gateway.generation_by_request_id.assert_not_called()
+
+    def test_repeated_settlement_response_loss_recovers_owned_committed_result(self):
+        for tier in [False, True]:
+            with self.subTest(tier=tier):
+                settle = Mock(side_effect=server.SupabaseError("SUPABASE_UNAVAILABLE", "fixture", 503))
+                result, gateway = self._run_saved_image_settlement(tier, settle,
+                    {"status": "succeeded", "image_keys": ["saved.png"]})
+                self.assertEqual(result["images"], [{"filename": "saved.png", "index": 1}])
+                self.assertTrue(result["idempotent"])
+                self.assertIsNone(result["credit_balance"])
+                self.assertEqual(settle.call_count, 2)
+                gateway.generation_by_request_id.assert_called_once_with("owner", "11111111-1111-4111-8111-111111111111")
+
+    def test_unconfirmed_settlement_preserves_originals_and_credits_for_query(self):
+        outcomes = [
+            (server.SupabaseError("SUPABASE_UNAVAILABLE", "fixture", 503), 2),
+            (server.SupabaseError("SUPABASE_BAD_RESPONSE", "fixture", 503), 2),
+            (server.SupabaseError("P0001", "fixture", 503), 1),
+            ({"ok": False, "code": "JOB_NOT_FOUND"}, 1),
+            ({"ok": True, "existing": True, "status": "refunded"}, 1),
+            ({}, 1),
+            (None, 1),
+        ]
+        for tier in [False, True]:
+            for outcome, expected_calls in outcomes:
+                for saved in [{"status": "running", "image_keys": []},
+                              {"status": "succeeded", "image_keys": []},
+                              server.SupabaseError("SUPABASE_UNAVAILABLE", "fixture", 503)]:
+                    with self.subTest(tier=tier, outcome=type(outcome).__name__, saved=type(saved).__name__):
+                        settle = Mock(side_effect=outcome) if isinstance(outcome, Exception) else Mock(return_value=outcome)
+                        result, gateway = self._run_saved_image_settlement(tier, settle, saved)
+                        self.assertIsInstance(result, server.ProviderError)
+                        self.assertEqual(result.code, "IMAGE_TASK_PENDING")
+                        self.assertEqual(settle.call_count, expected_calls)
+                        gateway.generation_by_request_id.assert_called_once()
+
+    def test_own_key_history_response_loss_keeps_images_and_never_records_false_failure(self):
+        for commit_before_error in [False, True]:
+            with self.subTest(commit_before_error=commit_before_error):
+                history = {}
+                def record(*args):
+                    if commit_before_error:
+                        history.update(generated_count=args[6], image_keys=args[8])
+                    raise server.SupabaseError("SUPABASE_UNAVAILABLE", "fixture", 503)
+                self.gateway.record_own_key_generation.side_effect = record
+                self.gateway.record_own_key_generation.reset_mock()
+                generate = Mock(return_value=[{"filename": "own.png"}])
+                with (server.app.test_request_context(),
+                      patch.object(server, "optional_authenticated_user", return_value=Mock(id="owner")),
+                      patch.object(server, "SupabaseGateway", return_value=self.gateway),
+                      patch.object(server, "resolve_provider_config", return_value=self.provider),
+                      patch.object(server, "remove_stored_images") as remove):
+                    result = server.execute_generation(
+                        {"billing_mode": "own_key", "request_id": "11111111-1111-4111-8111-111111111111"},
+                        requested_count=1, prompt="fixture", generate_callback=generate)
+                self.assertEqual(result["images"], [{"filename": "own.png"}])
+                self.assertIsNone(result["credit_balance"])
+                self.gateway.record_own_key_generation.assert_called_once()
+                self.gateway.reserve_credits.assert_not_called()
+                self.gateway.settle_generation.assert_not_called()
+                self.gateway.refund_generation.assert_not_called()
+                remove.assert_not_called()
+                generate.assert_called_once()
+                if commit_before_error:
+                    self.assertEqual(history, {"generated_count": 1, "image_keys": ["own.png"]})
+
     def test_empty_success_response_is_refunded_and_not_returned_as_success(self):
         with (
             patch.object(server, "platform_provider_configured", return_value=True),
