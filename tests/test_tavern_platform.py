@@ -286,7 +286,7 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertIsNone(response.json["charged_credits"])
 
     def test_owner_queries_scope_by_auth_not_client_and_expire_response(self):
-        expired = {**self.settled, "created_at": (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat(), "api_key": "never-public"}
+        expired = {**self.settled, "created_at": (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat(), "api_key": "never-public"}
         self.store.get.return_value = {"ok": True, "requests": [expired]}
         response = self.client.get("/api/tavern/requests/" + REQUEST + "?user_id=" + OTHER)
         self.assertEqual(self.store.get.call_args.args, (OWNER, REQUEST))
@@ -295,6 +295,25 @@ class TavernPlatformTests(unittest.TestCase):
         self.assertEqual(response.json["request"]["request_status"], "completed")
         self.assertNotIn("user_id", response.json["request"])
         self.assertNotIn("never-public", response.get_data(as_text=True))
+
+    def test_response_recovery_obeys_three_day_expiry_and_admin_privacy(self):
+        now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+        with patch.object(platform, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            for age in (13, 48, 71):
+                for explicit_expiry in (False, True):
+                    with self.subTest(age=age, explicit_expiry=explicit_expiry):
+                        created = now - timedelta(hours=age)
+                        record = {**self.settled, "created_at": created.isoformat()}
+                        if explicit_expiry:
+                            record["response_expires_at"] = (created + timedelta(hours=72)).isoformat()
+                        self.assertEqual(platform.public_request(record)["content"], "合成回复")
+                        self.assertIsNone(platform.public_request(record, admin=True)["content"])
+            for expires in (now, now - timedelta(seconds=1), now + timedelta(hours=73)):
+                record = {**self.settled, "created_at": (now - timedelta(hours=1)).isoformat(),
+                          "response_expires_at": expires.isoformat()}
+                self.assertIsNone(platform.public_request(record)["content"])
+                self.assertEqual(platform.public_request(record)["charged_credits"], "0.0084")
 
     def test_admin_identity_from_auth_and_usage_verified_not_body_actor(self):
         self.store.rpc.return_value = {"ok": True, "request": self.settled}

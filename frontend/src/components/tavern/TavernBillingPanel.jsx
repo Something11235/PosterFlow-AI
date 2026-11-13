@@ -81,7 +81,7 @@ export default function TavernBillingPanel({ authHeaders, onClose, onAccountRefr
   return <TavernDialog title="平台账单" eyebrow="TAVERN BILLING" icon={ReceiptText} onClose={onClose} className="tv-billing-dialog">
     <div className="tv-dialog-body tv-billing-panel">
       <p className="tv-billing-note">这里只展示平台积分请求。提交先预留，结算后退回差额；待核对不代表扣费为 0。自带 API 不扣网站积分。</p>
-      <p className="tv-billing-note">回复与摘要可在请求创建后 12 小时内尝试恢复；请及时复制或导出。更新状态只读取记录，不会重发请求。</p>
+      <p className="tv-billing-note">回复与摘要自服务端保存起保留 3 天，可在期限内尝试恢复；请及时复制或导出。更新状态只读取记录，不会重发请求。</p>
       <div className="tv-billing-toolbar"><span>最近平台请求</span><button type="button" onClick={load} disabled={Boolean(busy)}><RefreshCw size={15} className={busy === 'list' ? 'tv-spin' : ''} />刷新账单</button></div>
       {error && <p className="tv-form-error" role="alert">{error}</p>}{notice && <p className="tv-billing-notice" role="status">{notice}</p>}
       {busy === 'list' && <p className="tv-billing-note" role="status"><LoaderCircle size={16} className="tv-spin" />正在读取账单…</p>}

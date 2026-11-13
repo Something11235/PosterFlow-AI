@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 
 
 DEFAULT_ENDPOINT = "https://api.buytoken.work/v1/chat/completions"
+RESPONSE_RETENTION = timedelta(hours=72)
 BILLING_STATUSES = {"held", "settled", "refunded", "awaiting_review"}
 USAGE_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_miss_tokens", "reasoning_tokens")
 
@@ -105,9 +106,9 @@ def public_request(record, admin=False):
     try:
         created = datetime.fromisoformat(str(record.get("created_at", "")).replace("Z", "+00:00"))
         expires_raw = record.get("response_expires_at")
-        expires = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00")) if expires_raw else created + timedelta(hours=12)
+        expires = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00")) if expires_raw else created + RESPONSE_RETENTION
         now = datetime.now(timezone.utc)
-        if not admin and created.tzinfo and expires.tzinfo and created <= now < expires <= now + timedelta(hours=12):
+        if not admin and created.tzinfo and expires.tzinfo and created <= now < expires <= now + RESPONSE_RETENTION:
             content = record.get("response_text")
             if isinstance(content, str) and content.strip() and len(content) <= 65536:
                 result["content"] = content
