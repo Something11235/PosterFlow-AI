@@ -61,6 +61,26 @@
 .studio-intro h1 { margin: 0; font-size: clamp(28px, 3vw, 44px); font-weight: 500; letter-spacing: -1.5px; line-height: 1.5; }
 .studio-intro h1 > span { color: #4f8cff; }
 .studio-intro-copy { margin: 13px 0 0; color: #8796aa; font-size: 12px; line-height: 1.8; }
+.studio-promo-video { display: flex; flex-direction: column; gap: 15px; flex: 0 0 272px; padding: 17px 19px 14px; border: 1px solid #4f8cff50; border-radius: 9px; background: linear-gradient(120deg, #182943, var(--studio-panel)); color: var(--studio-text); text-decoration: none; transition: border-color .2s, background .2s; }
+.studio-promo-video:hover { border-color: var(--studio-accent); background: linear-gradient(120deg, #20365a, var(--studio-panel)); }
+.studio-promo-video:focus-visible { outline: 2px solid #a7c7ff; outline-offset: 4px; }
+.studio-promo-kicker { display: flex; align-items: center; gap: 9px; color: #abc9ff; font: 10px Consolas, monospace; letter-spacing: 1.2px; }
+.studio-promo-kicker > span { border-left: 1px solid #4f8cff50; padding-left: 9px; font-family: inherit; letter-spacing: .5px; }
+.studio-promo-main { display: flex; align-items: center; gap: 13px; }
+.studio-promo-main strong { display: block; font-size: 18px; font-weight: 600; letter-spacing: .3px; }
+.studio-promo-main small { display: block; margin-top: 4px; color: #b2c2d9; font-size: 12px; }
+.studio-promo-play { display: grid; place-items: center; flex: 0 0 43px; height: 43px; padding-left: 2px; border: 1px solid #4f8cff60; border-radius: 50%; color: #b9d1ff; background: #4f8cff24; }
+.studio-promo-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #b2c2d9; font-size: 11px; }
+.studio-promo-footer > svg { flex-shrink: 0; color: #abc9ff; }
+@media (max-width: 1200px) { .studio-promo-video { flex-basis: 244px; padding-right: 15px; padding-left: 15px; }.studio-promo-main { gap: 10px; }.studio-promo-main strong { font-size: 16px; } }
+@media (max-width: 760px) {
+  .studio-home .studio-intro { align-items: stretch; flex-direction: column; gap: 21px; }
+  .studio-promo-video { flex: none; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; min-height: 76px; padding: 13px 16px; }
+  .studio-promo-kicker, .studio-promo-footer > span { display: none; }
+  .studio-promo-main { gap: 12px; }
+  .studio-promo-main small::after { content: " · B站"; }
+}
+@media (prefers-reduced-motion: reduce) { .studio-promo-video { transition: none; } }
 .studio-edition { flex-shrink: 0; border-left: 1px solid #243142; padding: 2px 0 2px 24px; }
 .studio-edition > span { color: #8796aa; font: 8px Consolas, monospace; letter-spacing: 2px; }
 .studio-edition strong { display: block; margin: 10px 0 8px; color: #e2e8f0; font: 25px/1.1 Georgia, "Times New Roman", serif; letter-spacing: -.4px; }

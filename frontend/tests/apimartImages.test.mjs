@@ -109,7 +109,7 @@ test('exhausted transient queries preserve accepted state for bounded later reco
   assert.deepEqual(calls,['POST','GET','GET','GET']);
 });
 
-test('auth or unknown-task errors stop immediate GET retries and never resubmit', async t => {
+test('auth errors stop GET retries; uncertain query errors remain pending after bounded GET-only retries', async t => {
   let calls=[];let failure={error:'sign in again',code:'AUTH_REQUIRED'},status=401;
   install(t,async(_url,init)=>{calls.push(init?.method||'GET');return calls.length===1?json({job:{status:'processing'}},202):json(failure,status);});
   const init={method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:'seedream-5-0-pro',request_id:requestId,prompt:'fixture'})};
@@ -117,17 +117,17 @@ test('auth or unknown-task errors stop immediate GET retries and never resubmit'
   assert.deepEqual(calls,['POST','GET']);
   calls=[];failure={error:'unknown',code:'IMAGE_SUBMISSION_UNKNOWN'};status=503;
   assert.equal((await (await imageGenerationFetch('/api/generate',init,{pollInterval:0})).json()).code,'IMAGE_SUBMISSION_UNKNOWN');
-  assert.deepEqual(calls,['POST','GET']);
+  assert.deepEqual(calls,['POST','GET','GET','GET']);
 });
 
-test('unknown or still-submitting tasks never enter GET retry loops', async t => {
+test('unknown and still-submitting tasks respect the polling deadline without another POST', async t => {
   let calls=0,state='submission_unknown';
   install(t,async()=>{calls++;return json({job:{status:state}},202);});
   for(const model of ['seedream-5-0-pro','gpt-image-2.6-flare']) {
     for(state of ['submission_unknown','submitting']) {
       calls=0;
-      const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:model,request_id:requestId,prompt:'fixture'})},{pollInterval:0});
-      assert.equal((await response.json()).code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(calls,1);
+      const response=await imageGenerationFetch('/api/generate',{method:'POST',headers:{'X-Billing-Mode':'platform'},body:JSON.stringify({platform_model:model,request_id:requestId,prompt:'fixture'})},{pollInterval:0,maxWait:0});
+      assert.equal((await response.json()).code,state==='submitting'?'IMAGE_TASK_PENDING':'IMAGE_SUBMISSION_UNKNOWN');assert.equal(calls,1);
     }
   }
 });
@@ -171,3 +171,111 @@ test("failed or unknown free preparation never sends a paid edit", async t => {
   assert.ok(calls.every(({url,init})=>url==='/api/generations/'+requestId && !init.method && init.cache==='no-store'));
   assert.equal(calls[0].init.headers.Authorization,'Bearer synthetic');
  });
+
+const platformBuyToken = () => ({method:'POST',headers:{'X-Billing-Mode':'platform',Authorization:'Bearer synthetic'},body:JSON.stringify({platform_model:'gpt-image-2.6-flare',request_id:requestId,prompt:'fixture'})});
+
+test('a duplicate submit returning a still-generating original task waits for its image, never reports failure or repeats POST',async t=>{
+  const calls=[];
+  install(t,async(url,init)=>{
+    calls.push({url,method:init.method||'GET'});
+    if(calls.length<=2)return json({job:{status:'processing',result_available:false}});
+    return json({job:{status:'completed'},images:[{filename:'original-result.png'}],credit_balance:7});
+  });
+  const result=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0})).json();
+  assert.equal(result.error,undefined);
+  assert.equal(result.images[0].filename,'original-result.png');
+  assert.equal(result.credit_balance,7);
+  assert.deepEqual(calls.map(x=>x.method),['POST','GET','GET']);
+  assert.ok(calls.slice(1).every(x=>x.url==='/api/buytoken-images/tasks/'+requestId));
+});
+
+test('lost POST connection recovers the same task through registration delay and unknown state using only owned GETs',async t=>{
+  const calls=[];
+  install(t,async(url,init)=>{
+    calls.push({url,method:init.method||'GET',authorization:new Headers(init.headers).get('Authorization')});
+    if(calls.length===1)throw new TypeError('synthetic lost connection');
+    if(calls.length===2)return json({error:'not visible yet',code:'IMAGE_TASK_NOT_FOUND'},404);
+    if(calls.length===3)return json({job:{status:'submission_unknown'}});
+    return json({job:{status:'completed'},images:[{filename:'already-generated.png'}]});
+  });
+  const result=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0})).json();
+  assert.equal(result.images[0].filename,'already-generated.png');
+  assert.deepEqual(calls.map(x=>x.method),['POST','GET','GET','GET']);
+  assert.ok(calls.slice(1).every(x=>x.url==='/api/buytoken-images/tasks/'+requestId));
+  assert.ok(calls.every(x=>x.authorization==='Bearer synthetic'));
+});
+
+test('malformed successful POST and HTML gateway failure recover without trusting their response body',async t=>{
+  let firstStatus=200,calls=[];
+  install(t,async(_url,init)=>{calls.push(init.method||'GET');return calls.length===1?new Response('<html>lost response</html>',{status:firstStatus}):json({job:{status:'completed'},images:[{filename:'saved.png'}]});});
+  for(firstStatus of [200,502]){
+    calls=[];
+    const result=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0})).json();
+    assert.equal(result.images[0].filename,'saved.png');assert.deepEqual(calls,['POST','GET']);
+  }
+});
+
+test('empty successful JSON response remains uncertain and queries the original ID instead of presenting a generic failure',async t=>{
+  let calls=[];
+  install(t,async(_url,init)=>{calls.push(init.method||'GET');return calls.length<3?json({}):json({job:{status:'completed'},images:[{filename:'saved.png'}]});});
+  const result=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0})).json();
+  assert.equal(result.images[0].filename,'saved.png');assert.deepEqual(calls,['POST','GET','GET']);
+  calls=[];
+  const pending=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0,maxWait:0})).json();
+  assert.equal(pending.code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(pending.submission_unknown,true);assert.equal(pending.recovery_confirmed,false);
+});
+
+test('unknown submission recovers confirmed refund and preserves balance without another paid request',async t=>{
+  const calls=[];
+  install(t,async(_url,init)=>{
+    calls.push(init.method||'GET');
+    if(calls.length===1)return json({error:'uncertain',code:'IMAGE_SUBMISSION_UNKNOWN',submission_unknown:true},503);
+    return json({job:{status:'failed',billing_mode:'platform',error_code:'IMAGE_UNDELIVERED_REFUNDED',refunded:true,failure_reason:'本次未取得图片结果，预留积分已退回。'},refunded:true,billing:{status:'refunded'},credit_balance:12});
+  });
+  const result=await(await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0})).json();
+  assert.equal(result.refunded,true);assert.equal(result.credit_balance,12);assert.equal(result.code,'IMAGE_UNDELIVERED_REFUNDED');
+  assert.deepEqual(calls,['POST','GET']);
+});
+
+test('three failed GETs after a lost POST retain uncertainty and stop the immediate loop without legacy fallback or replay',async t=>{
+  const calls=[];
+  install(t,async(url,init)=>{calls.push({url,method:init.method||'GET'});if(calls.length===1)throw new TypeError('lost');return json({error:'not found yet',code:'IMAGE_TASK_NOT_FOUND'},404);});
+  const response=await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0});
+  const result=await response.json();
+  assert.equal(response.status,202);assert.equal(result.code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(result.submission_unknown,true);assert.equal(result.recovery_confirmed,false);
+  assert.deepEqual(calls.map(x=>x.method),['POST','GET','GET','GET']);
+  assert.ok(calls.every(x=>x.url.includes('buytoken-images')));
+});
+
+test('HTML auth rejection on POST or GET stops automatic recovery and keeps the auth status',async t=>{
+  let stage='POST',status=401,calls=[];
+  install(t,async(_url,init)=>{calls.push(init.method||'GET');if(stage==='GET' && calls.length===1)return json({job:{status:'processing',result_available:false}});return new Response('<html>denied</html>',{status});});
+  for(stage of ['POST','GET'])for(status of [401,403]){
+    calls=[];
+    const response=await imageGenerationFetch('/api/generate',platformBuyToken(),{pollInterval:0});
+    assert.equal(response.status,status);
+    assert.equal((await response.json()).code,status===401?'AUTH_REQUIRED':'ACCESS_DENIED');
+    assert.deepEqual(calls,stage==='POST'?['POST']:['POST','GET']);
+  }
+});
+
+test('aborted submission and unknown BYOK connection do not start automatic GETs',async t=>{
+  let calls=[];
+  install(t,async(_url,init)=>{calls.push(init.method||'GET');throw new TypeError('disconnected');});
+  const controller=new AbortController();controller.abort();
+  const init=platformBuyToken();init.signal=controller.signal;
+  assert.equal((await(await imageGenerationFetch('/api/generate',init,{pollInterval:0})).json()).code,'IMAGE_QUERY_CANCELLED');
+  assert.deepEqual(calls,['POST']);
+  calls=[];
+  const own={...platformBuyToken(),headers:{'X-Billing-Mode':'own_key','X-Provider-Model':'gpt-image-2.6-flare','X-Provider-Endpoint':'https://api.buytoken.work/v1/images/generations'}};
+  assert.equal((await(await imageGenerationFetch('/api/generate',own,{pollInterval:0})).json()).code,'IMAGE_SUBMISSION_UNKNOWN');
+  assert.deepEqual(calls,['POST']);
+});
+
+test('explicit cancellation during an original-task GET remains manually recoverable without restarting automatic queries',async t=>{
+  const controller=new AbortController(),calls=[];
+  install(t,async(_url,init)=>{calls.push(init.method||'GET');if(calls.length===1)return json({job:{status:'processing',result_available:false}});controller.abort();throw new DOMException('cancelled','AbortError');});
+  const result=await(await imageGenerationFetch('/api/generate',{...platformBuyToken(),signal:controller.signal},{pollInterval:0})).json();
+  assert.equal(result.code,'IMAGE_QUERY_CANCELLED');assert.equal(result.submission_unknown,true);assert.equal(result.job,undefined);
+  assert.deepEqual(calls,['POST','GET']);
+});

@@ -24,6 +24,8 @@ export default function Gallery({
   images,
   isGenerating,
   error,
+  autoRecovery = false,
+  requestId,
   currentPrompt,
   mode,
   billingMode = "own_key",
@@ -74,7 +76,7 @@ export default function Gallery({
           <p className="mt-1 truncate text-xs text-text-muted">
             {currentPrompt ? currentPrompt : "等待创建第一组图片视觉。"}
           </p>
-          {hasImages && <p className="mt-2 text-xs leading-5 text-text-secondary">若网络不佳或下载失败，请点击图片下方的“备用下载”。</p>}
+          {hasImages && <p className="mt-2 text-xs leading-5 text-text-secondary">图片临时保留 12 小时，请及时下载。若网络不佳或下载失败，可使用图片下方的“备用下载”。</p>}
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2 whitespace-nowrap">
@@ -142,7 +144,7 @@ export default function Gallery({
           </div>
         </div>}
         {isGenerating && <LoadingState />}
-        {!isGenerating && error && <ErrorState error={error} billingMode={billingMode} onRetry={onRetry} onQueryTask={onQueryTask} />}
+        {!isGenerating && error && <ErrorState error={error} billingMode={billingMode} onRetry={onRetry} onQueryTask={onQueryTask} autoRecovery={autoRecovery} requestId={requestId} />}
         {!isGenerating && !error && !hasImages && <EmptyState mode={mode} presetName={presetName} presetCategory={presetCategory} />}
         {!isGenerating && !error && hasImages && (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -309,7 +311,7 @@ function LoadingState() {
           <div className="min-w-0">
             <p className="text-sm font-semibold text-text-primary">正在生成图片资产</p>
             <p className="mt-1 text-sm leading-6 text-text-muted">
-              图片服务正在处理提示词、画幅和批量任务。结果完成后会显示在当前画廊中。
+              结果完成后会显示在当前画廊。刷新或切换页面后，可从“生图任务”继续查看原任务，请勿重复提交。
             </p>
           </div>
         </div>
@@ -330,7 +332,7 @@ function LoadingState() {
   );
 }
 
-function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
+function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, requestId }) {
   const [querying,setQuerying]=useState(false);
   const errorInfo =
     typeof error === "string"
@@ -362,25 +364,29 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
   const duplicate = errorInfo?.code === 'REQUEST_ALREADY_PROCESSED';
   const closed = errorInfo?.code === 'IMAGE_TASK_CLOSED';
   const pending = isPendingImageTaskError(errorInfo);
+  const recoveryHint = autoRecovery
+    ? "提交后的 20 分钟内，页面保持前台时系统会自动查询原任务，成功后更新图片；不会重新生图或重复扣积分。"
+    : "请点击下方按钮查询原任务，也可以从“历史记录 → 生图任务”继续查看。请勿重复提交。";
   const recovery = refunded ? refunded.recovery : pending ? ["查询原任务，不会重复扣积分", "请勿重复生成"] : closed ? errorInfo.recovery || ["查看原任务记录"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
     ? errorInfo.recovery
     : ["检查 API Key", "确认后端进程", "重新发起生成"]);
   const upstream = platform ? errorInfo?.upstream_error : null;
 
   return (
-    <div className="grid min-h-[520px] items-center gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+    <div className={`grid items-center gap-5 xl:grid-cols-[0.95fr_1.05fr] ${pending ? 'min-h-[320px]' : 'min-h-[520px]'}`}>
       <div className="max-w-xl">
-        <div className="mb-4 inline-flex items-center gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-sm font-medium text-warning">
-          <AlertTriangle size={16} />
-          {refunded ? "预留积分已退回" : saving ? "正在保存原任务图片" : processing ? "任务仍在处理中" : pending ? "任务仍待确认" : platform ? "本次生成未完成" : "服务状态需要处理"}
+        <div role={pending ? 'status' : undefined} className={`mb-4 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${pending ? 'border-accent/30 bg-accent/10 text-accent' : 'border-warning/25 bg-warning/10 text-warning'}`}>
+          {pending && autoRecovery ? <Loader2 size={16} className="animate-spin" /> : <AlertTriangle size={16} />}
+          {refunded ? "预留积分已退回" : saving ? "图片保存中" : processing ? "生成处理中" : pending ? "正在确认原任务状态" : platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {refunded ? refunded.message : saving ? "图片已返回，正在保存到本站" : duplicate ? "该请求已有记录，请查询原任务" : processing ? "图片仍在生成，请查询原任务进度" : pending ? "暂未取得最终结果，请查询原任务" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
+          {refunded ? refunded.message : saving ? "图片已生成，正在保存" : duplicate ? "已找到原任务，正在确认结果" : processing ? "任务正在处理，请稍候" : pending ? "结果暂未确认，原任务已保留" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
         </h2>
         <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {refunded ? refunded.detail : saving ? "已有图片正在保存或等待恢复，请查询原任务继续获取结果；不会重新生图或重复扣积分。" : closed ? errorInfo.detail : duplicate ? "系统收到了相同任务编号的请求。请查看原任务的结果与账单，避免重复生成。" : pending ? processing ? "本次等待时间已到，后台任务仍可能继续。结果完成后会更新到生图任务记录；查询原任务不会重新生图。" : "暂时无法确认最终结果，不代表生成失败。请查询原任务或稍后查看生图任务记录，避免重复提交。" : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
+          {refunded ? refunded.detail : pending ? `${saving || processing ? '' : '暂时未收到最终结果，不代表生成失败。'}${recoveryHint}` : closed ? errorInfo.detail : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
             "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。")}
         </p>
+        {pending && <p className="mt-2 text-xs leading-6 text-text-muted">如果连接持续中断，可切换网络，或尝试使用科学上网后刷新重试；原任务记录会保留。</p>}
         <div className="mt-5 flex flex-wrap gap-2">
           {recovery.map((chip) => (
             <span key={chip} className="rounded-md border border-border-subtle bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary">
@@ -410,6 +416,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
           </span>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
+          {requestId && <div><dt className="mb-1 text-text-muted">任务编号</dt><dd className="select-text break-all font-mono text-xs leading-6 text-text-secondary">{requestId}</dd></div>}
           <div className="flex items-start justify-between gap-4">
             <dt className="shrink-0 text-text-muted">{pending ? "任务状态" : platform ? "错误类别" : "当前状态"}</dt>
             <dd className="min-w-0 break-all text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
@@ -436,7 +443,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask }) {
           </div>}
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">恢复动作</dt>
-            <dd className="text-right font-medium text-text-primary">{refunded ? '原任务已结束，可主动发起新任务' : pending ? '等待结果并查询原任务' : '按建议处理后重试'}</dd>
+            <dd className="text-right font-medium text-text-primary">{refunded ? '原任务已结束，可主动发起新任务' : pending ? autoRecovery ? '自动查询原任务，也可手动查询' : '查询原任务，不会重复扣积分' : '按建议处理后重试'}</dd>
           </div>
           <div>
             <dt className="mb-2 text-text-muted">建议说明</dt>

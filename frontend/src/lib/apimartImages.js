@@ -33,19 +33,20 @@ async function boundedFetch(url, init, milliseconds) {
   }
 }
 
-export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model"), route, { timeoutMs = 230000 } = {}) {
+export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model"), route, { timeoutMs = 230000, allowLegacyFallback = true } = {}) {
   const buytoken = route ? route === 'buytoken' : usesBuyToken(model, headers);
   const deadline = Date.now() + timeoutMs;
   let response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, timeoutMs);
   // Pre-migration GPT2.6 tasks keep their original APIMart query path and Key.
   // This is a GET-only recovery fallback, never another generation submission.
-  if (buytoken && response.status === 404) {
+  if (buytoken && allowLegacyFallback && response.status === 404) {
     const missing = await response.clone().json();
     if (missing.code === "IMAGE_TASK_NOT_FOUND" && Date.now() < deadline) response = await boundedFetch(`${APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, deadline - Date.now());
   }
   let data;
   try { data = await response.json(); }
-  catch { throw Object.assign(new Error("图片任务暂时无法查询。"), { status: response.status }); }
+  catch { throw Object.assign(new Error("图片任务暂时无法查询。"), { status: response.status,
+    code:response.status === 401 ? 'AUTH_REQUIRED' : response.status === 403 ? 'ACCESS_DENIED' : undefined }); }
   if (!response.ok || data.error) throw Object.assign(new Error(data.detail || data.error || "图片任务暂时无法查询。"), { code: data.code, status: response.status });
   return data;
 }
@@ -72,19 +73,24 @@ export async function listImageTasks(headers, signal) {
   return {jobs:results.flatMap(result => result.status === 'fulfilled' ? result.value : []), unavailable:results.some(result => result.status === 'rejected')};
 }
 
-// BuyToken uses processing both before sending and after receiving results.
-// Only the server's non-secret availability flag (or a saving claim) proves that
-// a GET can recover already generated images.
+const unknownSubmission = () => ({
+  code:'IMAGE_SUBMISSION_UNKNOWN', message:'暂时未确认原任务结果，可查询原任务；请勿重复生成。',
+  submission_unknown:true,recovery_confirmed:false,
+});
+
+// A durable processing task is not a failed submission. The availability flag
+// only says whether output has arrived; polling the owned task is safe before it.
 export function imageTaskPendingState(job, route) {
-  if (['submitting', 'submission_unknown', 'unknown'].includes(job?.status)
-    || (route === 'buytoken' && job?.status === 'processing' && job.result_available !== true)) return {
-    code:'IMAGE_SUBMISSION_UNKNOWN', message:'原任务提交结果待核实，请查询原任务，不要重新生成。', submission_unknown:true,recovery_confirmed:false,
-  };
-  if (['processing','saving'].includes(job?.status) || (route === 'apimart' && job?.status === 'submitted')) return {
-    code:job.status === 'saving' || job.error_code === 'IMAGE_SAVE_PENDING' ? 'IMAGE_SAVE_PENDING' : 'IMAGE_TASK_PENDING',
-    message:job.status === 'saving' || job.error_code === 'IMAGE_SAVE_PENDING' ? '图片已返回，正在保存原任务图片。' : '原任务仍在处理中，请稍后查询。',
-    submission_unknown:false,recovery_confirmed:true,
-  };
+  if (['submission_unknown', 'unknown'].includes(job?.status)) return unknownSubmission();
+  if (['submitting','processing','saving'].includes(job?.status) || (route === 'apimart' && job?.status === 'submitted')) {
+    const available = job.status === 'saving' || job.status !== 'submitting' && job.result_available === true;
+    const saving = job.status === 'saving' || available && job.error_code === 'IMAGE_SAVE_PENDING';
+    return {
+      code:saving ? 'IMAGE_SAVE_PENDING' : 'IMAGE_TASK_PENDING',
+      message:saving ? '图片已返回，正在保存原任务图片。' : job.status === 'submitting' ? '原任务已记录，正在提交生成。' : '原任务正在生成，请稍候。',
+      submission_unknown:false,recovery_confirmed:available || route === 'apimart' && job.status !== 'submitting',
+    };
+  }
   return null;
 }
 
@@ -135,40 +141,63 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
       return responseJson({error:"原图准备尚未确认，尚未提交收费编辑，请稍后再试。",code:"IMAGE_REGION_PENDING",generation_submitted:false},503);
     }
   }
-  let response;
+  const route = buytoken ? 'buytoken' : 'apimart';
+  const recoverUnknown = new Headers(init.headers).get('X-Billing-Mode') === 'platform';
+  const recoverableCodes = new Set(['IMAGE_SUBMISSION_UNKNOWN','IMAGE_TASK_UNAVAILABLE','IMAGE_DATABASE_UNAVAILABLE','IMAGE_REFUND_PENDING','IMAGE_SAVE_PENDING','IMAGE_TASK_QUERY_FAILED']);
+  let response, data, submissionUncertain = false;
   try {
     response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/generations`, init, buytoken ? 230000 : 90000);
+    try { data = await response.clone().json(); }
+    catch {
+      if ([401,403].includes(response.status)) return responseJson({error:response.status === 401 ? '登录已失效，请重新登录后查询原任务。' : '暂时没有权限访问原任务，请确认当前账号。',code:response.status === 401 ? 'AUTH_REQUIRED' : 'ACCESS_DENIED',submission_unknown:false},response.status);
+      if (recoverUnknown && (response.ok || response.status >= 500)) submissionUncertain = true;
+      else return responseJson({error:'暂时无法读取任务响应，请查询原任务。',...unknownSubmission()},503);
+    }
   } catch {
-    return responseJson({ error: "提交连接未完成，请在图片任务窗口查询原任务，不要重复生成。", code: "IMAGE_SUBMISSION_UNKNOWN" }, 503);
+    submissionUncertain = true;
   } finally {
     window.dispatchEvent(new Event("posterflow:image-tasks"));
   }
-  if (!response.ok) return response;
-  let data = await response.json();
+  if (response && !response.ok && !submissionUncertain) {
+    if (!recoverUnknown || data?.refunded || ['failed','completed'].includes(data?.job?.status)
+      || !recoverableCodes.has(data?.code)) return response;
+    submissionUncertain = !data?.job;
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) data = {};
+  if (!imageTaskPendingState(data.job,route) && !['completed','failed'].includes(data.job?.status)) submissionUncertain = true;
+  const pendingState = () => imageTaskPendingState(data.job, route) || (submissionUncertain ? unknownSubmission() : null);
+  const waiting = () => {
+    if (init.signal?.aborted) return responseJson({error:'已停止本页等待，原任务可能仍在处理中；可手动查询结果。',code:'IMAGE_QUERY_CANCELLED',submission_unknown:true,recovery_confirmed:false},202);
+    const state = pendingState() || unknownSubmission();
+    return responseJson({...data,error:state.message,...state},202);
+  };
+  if (submissionUncertain && (!recoverUnknown || init.signal?.aborted)) return waiting();
   const deadline = Date.now() + maxWait;
-  const route = buytoken ? 'buytoken' : 'apimart';
   let queryFailures = 0;
-  const waiting = () => responseJson({ error: "任务仍在处理，可在图片任务窗口查询；请勿重复生成。", ...imageTaskPendingState(data.job, route), job:data.job }, 202);
-  while (imageTaskPendingState(data.job, route)?.submission_unknown === false) {
-    if (Date.now() >= deadline) return waiting();
+  while (pendingState()) {
+    if (pendingState().submission_unknown && !recoverUnknown || init.signal?.aborted || Date.now() >= deadline) return waiting();
     await sleep(Math.min(pollInterval, deadline - Date.now()));
-    if (Date.now() >= deadline) return waiting();
+    if (init.signal?.aborted || Date.now() >= deadline) return waiting();
     try {
-      data = await readImageTask(body.request_id, init.headers, init.signal, model, route, {timeoutMs:Math.min(230000, deadline-Date.now())});
+      data = await readImageTask(body.request_id, init.headers, init.signal, model, route, {timeoutMs:Math.min(230000, deadline-Date.now()),allowLegacyFallback:false});
+      if (!data || typeof data !== 'object' || Array.isArray(data)) data = {};
+      submissionUncertain = !imageTaskPendingState(data.job,route) && !['completed','failed'].includes(data.job?.status);
       queryFailures = 0;
     } catch (error) {
-      // Retry only transient GET failures after a confirmed acceptance. Never
-      // replay a paid POST, or treat an unknown submission as accepted.
-      const known = imageTaskPendingState(data.job, route);
-      const transient = !error.status || error.status === 408 || error.status === 429 || error.status >= 500;
-      if (known && !known.submission_unknown && transient && error.code !== 'IMAGE_SUBMISSION_UNKNOWN' && !init.signal?.aborted) {
+      // An uncertain POST may still be running on the server. Only read its
+      // original ID; a short not-found race is not permission to submit again.
+      if (init.signal?.aborted) return waiting();
+      const transient = !error.status || error.status === 408 || error.status === 429 || error.status >= 500
+        || recoverUnknown && error.status === 404 && error.code === 'IMAGE_TASK_NOT_FOUND';
+      if (error.code === 'IMAGE_SUBMISSION_UNKNOWN') { data = {}; submissionUncertain = true; }
+      if (pendingState() && transient && !init.signal?.aborted) {
         if (++queryFailures < 3 && Date.now() < deadline) continue;
         return waiting();
       }
-      return responseJson({ error: error.message + " 可在图片任务窗口继续查询，请勿重复生成。", code: error.code || "IMAGE_TASK_QUERY_FAILED", submission_unknown:true }, 503);
+      return responseJson({ error: error.message + " 可在图片任务窗口继续查询，请勿重复生成。", code: error.code || "IMAGE_TASK_QUERY_FAILED", submission_unknown:true, recovery_confirmed:false }, error.status || 503);
     }
   }
   window.dispatchEvent(new Event("posterflow:image-tasks"));
-  if (data.job?.status !== "completed") return responseJson({ ...data, error: data.job?.status === "failed" ? data.job.failure_reason || "图片服务未完成本次任务。" : "提交结果待确认，请保留原任务并核对服务商记录，不要重复生成。", code: data.job?.status === "failed" ? data.job.error_code || "APIMART_TASK_FAILED" : "IMAGE_SUBMISSION_UNKNOWN", detail:data.job?.failure_reason, recovery:data.job?.recovery }, 409);
+  if (data.job?.status !== "completed") return responseJson({ ...data, ...(data.job?.status !== 'failed' ? unknownSubmission() : {}), error: data.job?.status === "failed" ? data.job.failure_reason || "图片服务未完成本次任务。" : "提交结果待确认，请查询原任务，不要重复生成。", code: data.job?.status === "failed" ? data.job.error_code || "APIMART_TASK_FAILED" : "IMAGE_SUBMISSION_UNKNOWN", detail:data.job?.failure_reason, recovery:data.job?.recovery }, 409);
   return responseJson({ ...data, prompt: body.prompt });
 }

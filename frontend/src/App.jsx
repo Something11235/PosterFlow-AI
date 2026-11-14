@@ -230,6 +230,9 @@ export default function App() {
   const [imageTasksLoading, setImageTasksLoading] = useState(false);
   const [imageTasksWarning, setImageTasksWarning] = useState('');
   const imageQueries = useRef(new Set());
+  const imageTaskSync = useRef(null);
+  const imageRecoveryAuthBlocked = useRef(false);
+  const [imageRecoveryPaused,setImageRecoveryPaused] = useState(false);
   const closeImageTasks = useCallback(()=>setImageTasksOpen(false),[]);
   const [communityOpen, setCommunityOpen] = useState(false);
 
@@ -623,7 +626,7 @@ export default function App() {
       if (!response.ok || data.error) {
         const refunded = imageRefundError(data, billingMode);
         const pending = !refunded && Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
-        const failure = refunded || { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
+        const failure = refunded || { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
         if (live() && refunded) setAccount(current => accountAfterImageRefund(current, data, billingMode));
         store.finish(requestId, { error: failure, pending });
         showFailure(failure);
@@ -669,12 +672,16 @@ export default function App() {
     return()=>cancelAnimationFrame(frame);
   },[imageTaskFocus]);
 
-  const syncImageTasks = useCallback(async signal => {
+  const syncImageTasks = useCallback(signal => {
     const store=imageTaskStore;
     const live=()=>!signal?.aborted && imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
     if(!session?.user?.id){setImageTasksWarning('登录后可同步本人平台任务；当前仅显示本机记录。');return;}
-    setImageTasksLoading(true);setImageTasksWarning('');
-    try {
+    const running = imageTaskSync.current;
+    if (running?.store === store && running.headers === authHeaders && !running.signal?.aborted) return running.promise;
+    const request = {store, signal, headers:authHeaders};
+    request.promise = (async () => {
+      setImageTasksLoading(true);setImageTasksWarning('');
+      try {
       const data=await listImageTasks({...authHeaders,'X-Billing-Mode':'platform'},signal);
       if(!live())return;
       const selected = syncImageTaskSelection(store, data.jobs, {
@@ -683,17 +690,42 @@ export default function App() {
         selectedId: selectedTaskRef.current,
       });
       if (selected) { setImages(selected.images); setCurrentPrompt(selected.prompt); setError(selected.error || null); }
-      if (selected?.error?.refunded) await refreshAccount();
+      if (selected) await refreshAccount();
       if(data.unavailable)setImageTasksWarning('部分任务暂未同步，请稍后刷新；已有记录仍可查询。');
-    } finally {if(live())setImageTasksLoading(false);}
+      } catch { if(live())setImageTasksWarning('任务同步暂时中断，已有记录已保留；恢复网络后会再次同步。'); }
+      finally {
+        if(live())setImageTasksLoading(false);
+        if(imageTaskSync.current===request)imageTaskSync.current=null;
+      }
+    })();
+    imageTaskSync.current=request;
+    return request.promise;
   },[imageTaskStore,session?.user?.id,authHeaders,refreshAccount]);
 
   useEffect(()=>{
     const controller=new AbortController();
+    let timer=null, lastSync=Date.now();
     setImageTasksLoading(false);setImageTasksWarning('');
     void syncImageTasks(controller.signal);
-    return()=>controller.abort();
+    const scheduleSync=()=>{
+      if(document.visibilityState!=='visible' || timer!==null)return;
+      timer=setTimeout(()=>{
+        timer=null;lastSync=Date.now();
+        if(!controller.signal.aborted && document.visibilityState==='visible')void syncImageTasks(controller.signal);
+      },Math.max(200,5000-(Date.now()-lastSync)));
+    };
+    window.addEventListener('posterflow:image-tasks',scheduleSync);
+    window.addEventListener('online',scheduleSync);
+    document.addEventListener('visibilitychange',scheduleSync);
+    return()=>{
+      controller.abort();clearTimeout(timer);
+      window.removeEventListener('posterflow:image-tasks',scheduleSync);
+      window.removeEventListener('online',scheduleSync);
+      document.removeEventListener('visibilitychange',scheduleSync);
+    };
   },[syncImageTasks]);
+
+  useEffect(()=>{imageRecoveryAuthBlocked.current=false;setImageRecoveryPaused(false);},[authHeaders,imageTaskStore]);
 
   const queryImageTask = useCallback(async (task, { silent = false } = {}) => {
     const store=imageTaskStore, key=store.identity+':'+task.id;
@@ -704,6 +736,7 @@ export default function App() {
       if(billingMode!=='own_key' || !providerConfigured || providerConfig.model!==task.model){setNotice('请先在图片服务配置中填写原任务使用的模型和 API Key，再查询原任务。');setImageTasksOpen(false);setShowProviderSettings(true);return;}
       headers=providerHeaders;
     }
+    const currentAuthorization=()=>task.billingMode!=='platform' || headers.Authorization===`Bearer ${sessionRef.current?.access_token}`;
     imageQueries.current.add(key);
     const announce=message=>{if (!silent) {setNotice(message);setImageTasksWarning(message);}};
     let terminal = false;
@@ -711,11 +744,17 @@ export default function App() {
       const data=task.route==='legacy' ? await readLegacyImageTask(task.id,headers)
         : await readImageTask(task.id,headers,undefined,task.model,task.route);
       if(!live())return;
+      if(task.billingMode==='platform' && currentAuthorization()){imageRecoveryAuthBlocked.current=false;setImageRecoveryPaused(false);}
       // A list refresh may already have confirmed the refund while this GET
       // was in flight. Do not revive its stale pending/successful view.
       const alreadyRefunded=getRefundedImageTask(store,task.id);
       if(alreadyRefunded){
         if(selectedTaskRef.current===task.id){setImages([]);setError(alreadyRefunded.error);}
+        return;
+      }
+      const alreadyCompleted=getCompletedImageTask(store,task.id);
+      if(alreadyCompleted){
+        if(selectedTaskRef.current===task.id){setImages(alreadyCompleted.images);setError(null);}
         return;
       }
       if((data?.job?.status==='completed' || data?.status==='succeeded') && data?.images?.length){
@@ -740,7 +779,8 @@ export default function App() {
         const nextState = imageTaskPendingState(data?.job, task.route);
         if (nextState) {
           // A successful GET can resolve an earlier query/connection error.
-          // Resume only the same accepted task; unknown submissions stay manual.
+          // Continue querying the same durable task, including an uncertain
+          // submission. Recovery never sends another generation request.
           const pending = {...nextState,billing_mode:task.billingMode};
           store.finish(task.id,{error:pending,pending:true});
           if(selectedTaskRef.current===task.id && !getCompletedImageTask(store,task.id))setError(pending);
@@ -748,21 +788,42 @@ export default function App() {
         announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform' && task.route==='buytoken'?'原请求尚无图片结果，系统正在确认状态；超时未交付会自动退回预留积分，请勿重复生成。':task.billingMode==='platform'?'原请求尚无图片返回，请查询原任务状态，勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
       }
       if (!silent || terminal) await refreshAccount();
-    }catch{if(live())announce('原任务暂时无法查询，请稍后再试，不要重复生成。');}
+    }catch(reason){
+      if(live()){
+        if(task.billingMode==='platform' && currentAuthorization() && [401,403].includes(reason?.status)){
+          imageRecoveryAuthBlocked.current=true;
+          setImageRecoveryPaused(true);
+          const message='登录状态暂时无法验证，已暂停自动查询。请重新登录或刷新页面后查询原任务，任务记录仍保留。';
+          setNotice(message);setImageTasksWarning(message);
+        }else announce('原任务暂时无法查询，任务记录已保留；恢复网络后继续查询，请勿重复生成。');
+      }
+    }
     finally{imageQueries.current.delete(key);}
   },[imageTaskStore,authHeaders,billingMode,providerConfigured,providerConfig.model,providerHeaders,queueTavernBackgrounds,refreshAccount]);
 
+  // Track IDs rather than whole snapshots: status refreshes must not reset the
+  // 15-second timer, but a newly restored task must wake an expired scheduler.
+  const recoverableImageTaskIds = session?.user?.id && !imageRecoveryPaused
+    ? imageTasks.filter(task=>canAutoQueryImageTask(task)).map(task=>task.id).sort().join(',') : '';
   useEffect(() => {
-    if (!canAutoQueryImageTask(selectedImageTask)) return;
-    const store = imageTaskStore, requestId = selectedImageTask.id;
+    if (!recoverableImageTaskIds) return;
+    const store = imageTaskStore, lastQueried = new Map();
+    const nextTask = () => {
+      if(imageRecoveryAuthBlocked.current || store!==imageTaskStoreRef.current || store.identity!==(sessionRef.current?.user?.id||'guest'))return null;
+      const pending=store.getSnapshot().filter(task=>canAutoQueryImageTask(task));
+      const selected=pending.find(task=>task.id===selectedTaskRef.current);
+      const latest=pending.filter(task=>task!==selected).sort((a,b)=>b.createdAt-a.createdAt);
+      return [...(selected?[selected]:[]),...latest].slice(0,IMAGE_TASK_LIMIT)
+        .sort((a,b)=>(lastQueried.get(a.id)||0)-(lastQueried.get(b.id)||0))[0] || null;
+    };
     return startImageTaskRecovery({
-      readTask: () => store === imageTaskStoreRef.current
-        && store.identity === (sessionRef.current?.user?.id || 'guest')
-        && selectedTaskRef.current === requestId
-        ? store.getSnapshot().find(task => task.id === requestId) : null,
-      query: task => queryImageTask(task, { silent: true }),
+      readTask: nextTask,
+      query: async task => {
+        lastQueried.set(task.id,Date.now());
+        await queryImageTask(task,{silent:true});
+      },
     });
-  }, [selectedImageTask, imageTaskStore, queryImageTask]);
+  }, [recoverableImageTaskIds, imageTaskStore, queryImageTask]);
 
   const handleSaveProvider = useCallback((nextConfig) => {
     saveProviderConfig(nextConfig);
@@ -1088,6 +1149,8 @@ export default function App() {
                 images={images}
                 isGenerating={isGenerating}
                 error={error}
+                autoRecovery={Boolean(session?.user?.id) && !imageRecoveryAuthBlocked.current && canAutoQueryImageTask(selectedImageTask)}
+                requestId={selectedImageTask?.id}
                 currentPrompt={currentPrompt}
                 mode={mode}
                 selectedCount={selectedCount}

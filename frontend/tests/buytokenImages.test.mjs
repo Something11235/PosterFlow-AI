@@ -49,9 +49,9 @@ test('errors and ambiguous POST never trigger an APIMart generation fallback', a
   globalThis.window = {dispatchEvent() {}};
   let calls = 0;
   globalThis.fetch = async () => {calls++; throw new Error('synthetic disconnect');};
-  const result = await imageGenerationFetch('/api/generate', {method: 'POST', headers, body: JSON.stringify({platform_model: model, request_id: 'fixture', prompt: 'fixture'})});
+  const result = await imageGenerationFetch('/api/generate', {method: 'POST', headers, body: JSON.stringify({platform_model: model, request_id: 'fixture', prompt: 'fixture'})}, {pollInterval:0});
   assert.equal((await result.json()).code, 'IMAGE_SUBMISSION_UNKNOWN');
-  assert.equal(calls, 1);
+  assert.equal(calls, 4);
   calls = 0;
   globalThis.fetch = async () => {calls++; return json({code: 'AUTH_REQUIRED', error: 'synthetic'}, 401);};
   await assert.rejects(readImageTask('fixture', headers, undefined, model));
@@ -90,14 +90,14 @@ test('an existing saving claim is polled until completion without a new submissi
   assert.ok(calls.slice(1).every(call=>call.url==='/api/buytoken-images/tasks/original'));
 });
 
-test('BuyToken processing before durable results arrive never starts a recovery GET loop', async t => {
+test('BuyToken processing before durable results arrive remains generating when the immediate GET budget ends', async t => {
   const prior=globalThis.fetch,window=globalThis.window;let calls=0,available;
   t.after(()=>{globalThis.fetch=prior;globalThis.window=window;});
   globalThis.window={dispatchEvent(){}};
   globalThis.fetch=async()=>{calls++;return json({job:{status:'processing',result_available:available}},202);};
   for(available of [false,undefined]) {
     calls=0;
-    const response=await imageGenerationFetch('/api/generate',{method:'POST',headers,body:JSON.stringify({platform_model:model,request_id:'original',prompt:'fixture'})},{pollInterval:0});
-    assert.equal((await response.json()).code,'IMAGE_SUBMISSION_UNKNOWN');assert.equal(calls,1);
+    const response=await imageGenerationFetch('/api/generate',{method:'POST',headers,body:JSON.stringify({platform_model:model,request_id:'original',prompt:'fixture'})},{pollInterval:0,maxWait:0});
+    const data=await response.json();assert.equal(data.code,'IMAGE_TASK_PENDING');assert.equal(data.submission_unknown,false);assert.equal(calls,1);
   }
 });

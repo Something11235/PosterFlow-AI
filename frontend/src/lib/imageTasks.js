@@ -8,12 +8,15 @@ function taskMetadata(value, restore=false) {
   if(!value || typeof value.id!=='string' || !/^[A-Za-z0-9_-]{1,100}$/.test(value.id) || !Number.isSafeInteger(value.createdAt) || value.createdAt<=0 || value.createdAt>Date.now()+60000 || value.createdAt<Date.now()-MAX_AGE) return null;
   const images=(Array.isArray(value.images)?value.images:[]).slice(0,4).filter(image=>typeof image?.filename==='string' && /^[A-Za-z0-9_-]{1,180}\.(png|gif|jpe?g|webp)$/i.test(image.filename)).map(image=>({filename:image.filename}));
   const status=restore && value.status==='running'?'pending':['running','completed','failed','pending'].includes(value.status)?value.status:'pending';
-  const code=/^[A-Z0-9_]{1,100}$/.test(value.error?.code||'')?value.error.code:'IMAGE_TASK_PENDING';
+  const code=restore && value.status==='running' ? 'IMAGE_SUBMISSION_UNKNOWN' : /^[A-Z0-9_]{1,100}$/.test(value.error?.code||'')?value.error.code:'IMAGE_SUBMISSION_UNKNOWN';
+  const processing = ['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING'].includes(code);
+  const pendingMessage = code==='IMAGE_SAVE_PENDING' ? '图片已返回，正在保存原任务图片。' : processing
+    ? '原任务正在生成，请稍候。' : '暂时未确认原任务结果，请查询原任务，不要重新生成。';
   const refunded = imageRefundError({...value.error,code}, value.billingMode);
   return {id:value.id,prompt:safeText(value.prompt,6000),model:safeText(value.model,100),billingMode:value.billingMode==='own_key'?'own_key':'platform',status,active:!restore && value.active===true,createdAt:value.createdAt,images,
     route:['buytoken','apimart','legacy'].includes(value.route)?value.route:'legacy',
     ...(value.backgroundName?{backgroundName:safeText(value.backgroundName,80)}:{}),
-    ...(status==='pending'?{error:{code,message:'原任务状态待确认，请查询原任务，不要重新生成。',submission_unknown:true,recovery_confirmed:value.error?.recovery_confirmed===true,billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:status==='failed'?{error:refunded || {code,message:'本次任务未完成，可查看原任务记录。',billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:{})};
+    ...(status==='pending'?{error:{code,message:pendingMessage,submission_unknown:!processing,recovery_confirmed:value.error?.recovery_confirmed===true,billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:status==='failed'?{error:refunded || {code,message:'本次任务未完成，可查看原任务记录。',billing_mode:value.billingMode==='own_key'?'own_key':'platform'}}:{})};
 }
 export function createImageTaskStore(limit = IMAGE_TASK_LIMIT, identity = "guest", options={}) {
   let storage;try{storage=options.storage===undefined?globalThis.localStorage:options.storage;}catch{}

@@ -81,3 +81,27 @@ test('expired, malformed and oversized archives cannot leak arbitrary fields or 
   assert.ok(!storage.getItem(key).includes('secret'));
   assert.doesNotThrow(()=>createImageTaskStore(3,'owner',{storage:{getItem(){throw Error();},setItem(){throw Error();}}}).start('safe',{prompt:'safe'}));
 });
+
+test('processing, saving and uncertain status survive a reload without conflating generation with a transport failure',()=>{
+  for(const code of ['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING','IMAGE_SUBMISSION_UNKNOWN','AUTH_REQUIRED']){
+    const storage=memoryStorage(),store=createImageTaskStore(3,'owner',{storage});
+    store.start('original',{route:'buytoken',billingMode:'platform',prompt:'fixture'});
+    store.finish('original',{pending:true,error:{code,recovery_confirmed:code==='IMAGE_SAVE_PENDING',submission_unknown:code==='IMAGE_SUBMISSION_UNKNOWN'}});
+    const restored=createImageTaskStore(3,'owner',{storage}).getSnapshot()[0];
+    assert.equal(restored.error.code,code);
+    assert.equal(restored.error.submission_unknown,!['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING'].includes(code));
+    assert.equal(restored.error.recovery_confirmed,code==='IMAGE_SAVE_PENDING');
+    assert.equal(restored.status,'pending');assert.equal(restored.active,false);
+    if(code==='IMAGE_TASK_PENDING')assert.match(restored.error.message,/正在生成/);
+    if(code==='IMAGE_SAVE_PENDING')assert.match(restored.error.message,/正在保存/);
+  }
+});
+
+test('a page refreshed during a POST records uncertainty, not a claim that output or provider acceptance exists',()=>{
+  const storage=memoryStorage(),store=createImageTaskStore(3,'owner',{storage});
+  store.start('original',{route:'buytoken',billingMode:'platform'});
+  const restored=createImageTaskStore(3,'owner',{storage}).getSnapshot()[0];
+  assert.equal(restored.error.code,'IMAGE_SUBMISSION_UNKNOWN');
+  assert.equal(restored.error.submission_unknown,true);assert.equal(restored.error.recovery_confirmed,false);
+  assert.deepEqual(restored.images,[]);
+});

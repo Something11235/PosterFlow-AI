@@ -1,5 +1,7 @@
 export const IMAGE_RECOVERY_INTERVAL_MS = 15000;
 export const IMAGE_RECOVERY_WINDOW_MS = 20 * 60 * 1000;
+const AUTO_QUERY_CODES = new Set(['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING','IMAGE_SUBMISSION_UNKNOWN',
+  'IMAGE_TASK_QUERY_FAILED','IMAGE_DATABASE_UNAVAILABLE','IMAGE_TASK_UNAVAILABLE','IMAGE_REFUND_PENDING','BACKEND_OFFLINE']);
 
 export function isPendingImageTaskError(error) {
   if (error?.refunded === true) return false;
@@ -9,8 +11,7 @@ export function isPendingImageTaskError(error) {
 
 export function canAutoQueryImageTask(task, now = Date.now()) {
   return Boolean(task && ["apimart", "buytoken"].includes(task.route) && task.billingMode === "platform"
-    && (task.route !== 'buytoken' || task.error?.recovery_confirmed === true)
-    && task.status === "pending" && !task.active && ["IMAGE_TASK_PENDING", "IMAGE_SAVE_PENDING"].includes(task.error?.code)
+    && task.status === "pending" && !task.active && !task.error?.refunded && AUTO_QUERY_CODES.has(task.error?.code)
     && Number.isSafeInteger(task.createdAt) && task.createdAt <= now
     && now - task.createdAt < IMAGE_RECOVERY_WINDOW_MS);
 }
@@ -18,10 +19,11 @@ export function canAutoQueryImageTask(task, now = Date.now()) {
 // This only schedules the caller's existing GET query. Each instance has one
 // pending request; the caller also shares its lock with manual task queries.
 export function startImageTaskRecovery({ readTask, query, visibility = document,
+  connectivity = globalThis.window, isOnline = () => globalThis.navigator?.onLine !== false,
   now = Date.now, schedule = setTimeout, cancel = clearTimeout }) {
   let timer = null, busy = false, stopped = false;
   const clear = () => { if (timer !== null) cancel(timer); timer = null; };
-  const eligible = () => !stopped && visibility.visibilityState === "visible" && canAutoQueryImageTask(readTask(), now());
+  const eligible = () => !stopped && isOnline() && visibility.visibilityState === "visible" && canAutoQueryImageTask(readTask(), now());
   const arm = () => {
     clear();
     if (!busy && eligible()) timer = schedule(tick, IMAGE_RECOVERY_INTERVAL_MS);
@@ -34,6 +36,9 @@ export function startImageTaskRecovery({ readTask, query, visibility = document,
     finally { busy = false; arm(); }
   }
   visibility.addEventListener("visibilitychange", arm);
+  connectivity?.addEventListener('online', arm);
+  connectivity?.addEventListener('offline', arm);
   arm();
-  return () => { stopped = true; clear(); visibility.removeEventListener("visibilitychange", arm); };
+  return () => { stopped = true; clear(); visibility.removeEventListener("visibilitychange", arm);
+    connectivity?.removeEventListener('online', arm); connectivity?.removeEventListener('offline', arm); };
 }
