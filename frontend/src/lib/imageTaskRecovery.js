@@ -2,6 +2,7 @@ export const IMAGE_RECOVERY_INTERVAL_MS = 15000;
 export const IMAGE_RECOVERY_WINDOW_MS = 20 * 60 * 1000;
 
 export function isPendingImageTaskError(error) {
+  if (error?.refunded === true) return false;
   return ['IMAGE_TASK_PENDING','IMAGE_SAVE_PENDING','REQUEST_ALREADY_PROCESSED'].includes(error?.code)
     || Boolean(error?.submission_unknown);
 }

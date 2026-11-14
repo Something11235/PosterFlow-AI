@@ -13,8 +13,9 @@ import Gallery from "./components/Gallery";
 import { canvasEditCapability } from "./lib/canvasImageEditing";
 import ImageTaskQueue from "./components/ImageTaskQueue";
 import ImageTasksPanel from "./components/ImageTasksPanel";
-import { createImageTaskStore, getCompletedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
+import { createImageTaskStore, getCompletedImageTask, getRefundedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
 import { canAutoQueryImageTask, startImageTaskRecovery } from "./lib/imageTaskRecovery";
+import { accountAfterImageRefund, imageRefundError } from './lib/imageRefund';
 import { imageGenerationFetch, imageTaskPendingState, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
@@ -587,10 +588,12 @@ export default function App() {
       if (!selected()) return;
       const completed = getCompletedImageTask(store, requestId);
       if (completed) { setImages(completed.images); setCurrentPrompt(completed.prompt); setError(null); }
-      else setError(failure);
+      else setError(getRefundedImageTask(store, requestId)?.error || failure);
     };
     const show = data => {
       store.finish(requestId, { images: data.images || [], prompt: data.prompt || taskPrompt });
+      const refunded = getRefundedImageTask(store, requestId);
+      if (refunded) { if (selected()) {setImages([]);setError(refunded.error);} return; }
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
       if (live() && backgroundTarget && data.images?.length) queueTavernBackgrounds(data.images.map(image => image.filename), backgroundTarget.name, requestId, backgroundTarget.identity);
     };
@@ -618,8 +621,10 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
-        const pending = Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
-        const failure = { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
+        const refunded = imageRefundError(data, billingMode);
+        const pending = !refunded && Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
+        const failure = refunded || { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:pending || Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
+        if (live() && refunded) setAccount(current => accountAfterImageRefund(current, data, billingMode));
         store.finish(requestId, { error: failure, pending });
         showFailure(failure);
       } else show(data);
@@ -677,10 +682,11 @@ export default function App() {
         currentOwner: sessionRef.current?.user?.id || 'guest',
         selectedId: selectedTaskRef.current,
       });
-      if (selected) { setImages(selected.images); setCurrentPrompt(selected.prompt); setError(null); }
+      if (selected) { setImages(selected.images); setCurrentPrompt(selected.prompt); setError(selected.error || null); }
+      if (selected?.error?.refunded) await refreshAccount();
       if(data.unavailable)setImageTasksWarning('部分任务暂未同步，请稍后刷新；已有记录仍可查询。');
     } finally {if(live())setImageTasksLoading(false);}
-  },[imageTaskStore,session?.user?.id,authHeaders]);
+  },[imageTaskStore,session?.user?.id,authHeaders,refreshAccount]);
 
   useEffect(()=>{
     const controller=new AbortController();
@@ -705,6 +711,13 @@ export default function App() {
       const data=task.route==='legacy' ? await readLegacyImageTask(task.id,headers)
         : await readImageTask(task.id,headers,undefined,task.model,task.route);
       if(!live())return;
+      // A list refresh may already have confirmed the refund while this GET
+      // was in flight. Do not revive its stale pending/successful view.
+      const alreadyRefunded=getRefundedImageTask(store,task.id);
+      if(alreadyRefunded){
+        if(selectedTaskRef.current===task.id){setImages([]);setError(alreadyRefunded.error);}
+        return;
+      }
       if((data?.job?.status==='completed' || data?.status==='succeeded') && data?.images?.length){
         terminal = true;
         store.finish(task.id,{images:data.images,prompt:task.prompt});
@@ -713,7 +726,9 @@ export default function App() {
         announce('已找回原任务图片，可点击“查看结果”并下载；没有重新生图。');
       }else if(data?.job?.status==='failed' || ['failed','refunded'].includes(data?.status)){
         terminal = true;
-        const failure=data?.status ? {message:data.status==='refunded'?'原任务已退款':'原任务已结束',code:'IMAGE_TASK_CLOSED',detail:data.status==='refunded'?'原任务的预留积分已退回。此次查询没有再次生成或扣分。':'原任务已结束，未取得成功图片。此次查询没有再次生成或扣分。',recovery:['查看任务记录与积分明细'],billing_mode:task.billingMode} : {message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode};
+        const refunded=imageRefundError(data,task.billingMode);
+        const failure=refunded || (data?.status ? {message:'原任务已结束',code:'IMAGE_TASK_CLOSED',detail:'原任务已结束，未取得成功图片。此次查询没有再次生成或扣分。',recovery:['查看任务记录与积分明细'],billing_mode:task.billingMode} : {message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode});
+        if (refunded) setAccount(current => accountAfterImageRefund(current,data,task.billingMode));
         store.finish(task.id,{error:failure});
         const completed = getCompletedImageTask(store, task.id);
         if(selectedTaskRef.current===task.id){
@@ -730,7 +745,7 @@ export default function App() {
           store.finish(task.id,{error:pending,pending:true});
           if(selectedTaskRef.current===task.id && !getCompletedImageTask(store,task.id))setError(pending);
         }
-        announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform'?'原请求尚无图片返回，需要管理员核对服务商记录；预留积分保持不变，请勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
+        announce(data?.job?.status==='submission_unknown'?task.billingMode==='platform' && task.route==='buytoken'?'原请求尚无图片结果，系统正在确认状态；超时未交付会自动退回预留积分，请勿重复生成。':task.billingMode==='platform'?'原请求尚无图片返回，请查询原任务状态，勿重复生成。':'原请求尚无图片返回，请核对服务商记录；自带 Key 不扣平台积分，请勿重复生成。':'原任务暂未完成，可稍后查询；不会重新生图。');
       }
       if (!silent || terminal) await refreshAccount();
     }catch{if(live())announce('原任务暂时无法查询，请稍后再试，不要重复生成。');}

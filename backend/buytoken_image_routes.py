@@ -37,6 +37,25 @@ class BuyTokenStore(ImageStore):
         return self.gateway._request("GET", "/rest/v1/apimart_image_jobs", params=params) or []
 
 
+UNDELIVERED_REFUND_CODE = "IMAGE_UNDELIVERED_REFUNDED"
+UNDELIVERED_REFUND_MESSAGE = "本次未取得图片结果，预留积分已退回。"
+
+
+def public_buytoken_job(job):
+    visible = public_job(job)
+    # These markers are only written with the same transaction that closes the
+    # platform reservation. A failed BYOK task never implies a site refund.
+    refunded = (job.get("billing_mode") == "platform" and job.get("status") == "failed"
+                and job.get("error_code") in {UNDELIVERED_REFUND_CODE, "BUYTOKEN_REQUEST_REJECTED"})
+    if refunded:
+        visible.update(refunded=True, billing_status="refunded")
+        visible["failure_reason"] = (UNDELIVERED_REFUND_MESSAGE if job.get("error_code") == UNDELIVERED_REFUND_CODE
+                                     else "图片服务未接受本次请求，预留积分已退回。")
+    elif job.get("error_code") == "BUYTOKEN_REQUEST_REJECTED":
+        visible["failure_reason"] = "图片服务未接受本次请求，请核对个人服务配置。"
+    return visible
+
+
 def create_buytoken_image_blueprint(server):
     bp = Blueprint("buytoken_images", __name__, url_prefix="/api/buytoken-images")
 
@@ -85,10 +104,37 @@ def create_buytoken_image_blueprint(server):
             raise ImageTaskError("INVALID_IMAGE_TASK", "图片任务编号无效。") from None
 
     def result(job, balance=None, **extra):
-        visible = public_job(job)
-        if job.get("error_code") == "BUYTOKEN_REQUEST_REJECTED":
-            visible["failure_reason"] = "图片服务未接受本次请求，预留积分已退回。"
-        return {"success": True, "job": visible, "images": [{"filename": name, "index": i + 1} for i, name in enumerate(job.get("image_keys") or [])], "credit_balance": balance, **extra}
+        visible = public_buytoken_job(job)
+        payload = {"success": True, "job": visible, "images": [{"filename": name, "index": i + 1} for i, name in enumerate(job.get("image_keys") or [])], "credit_balance": balance, **extra}
+        if visible.get("refunded"):
+            payload.update(refunded=True, billing={"request_id": job["request_id"], "status": "refunded"})
+        return payload
+
+    def refund_undelivered(store, owner, rid):
+        # An uncertain provider charge is borne by the platform, not the user.
+        # The existing RPC refuses to refund accepted output URLs or a save in
+        # progress, and terminal requests cannot be charged/refunded twice.
+        try:
+            settled = store.apply(owner, rid, "failed", p_error=UNDELIVERED_REFUND_CODE)
+        except ImageTaskError as error:
+            if error.code == "IMAGE_RESULT_PENDING":
+                raise ImageTaskError("IMAGE_SAVE_PENDING", "图片结果已返回，保存暂未完成；请查询原任务，不要重新生成。", 503, True) from None
+            raise ImageTaskError("IMAGE_REFUND_PENDING", "本次未取得图片结果，退款状态暂未确认，系统将继续处理；请查询原任务。", 503, True) from None
+        except SupabaseError:
+            raise ImageTaskError("IMAGE_REFUND_PENDING", "本次未取得图片结果，退款状态暂未确认，系统将继续处理；请查询原任务。", 503, True) from None
+        job = settled.get("job") if isinstance(settled, dict) and settled.get("ok") is True else None
+        if isinstance(job, dict) and job.get("request_id") == rid and job.get("billing_mode") == "platform":
+            payload = result(job, settled.get("balance"))
+            if job.get("status") == "completed":
+                return jsonify(payload), 200
+            if payload.get("refunded"):
+                payload.update(success=False, error=UNDELIVERED_REFUND_MESSAGE, detail=UNDELIVERED_REFUND_MESSAGE,
+                               code=UNDELIVERED_REFUND_CODE, submission_unknown=False, generation_submitted=True,
+                               phase="settlement", recovery=["积分已退回，可重新发起新的任务"])
+                return jsonify(payload), 503
+        # A timeout or malformed receipt is not proof of a refund. Never report
+        # success or re-submit a paid model request to resolve this ambiguity.
+        raise ImageTaskError("IMAGE_REFUND_PENDING", "本次未取得图片结果，退款状态暂未确认，系统将继续处理；请查询原任务。", 503, True)
 
     def reconcile(store, owner, job):
         if job["status"] in ("completed", "failed") or not job.get("provider_result_urls"):
@@ -177,6 +223,8 @@ def create_buytoken_image_blueprint(server):
             try:
                 urls = provider.submit(server, selected, body, rid)
             except ImageTaskError as error:
+                if mode == "platform" and error.uncertain:
+                    return refund_undelivered(store, owner, rid)
                 store.apply(owner, rid, "unknown" if error.uncertain else "failed", p_error=error.code)
                 raise
             received = store.apply(owner, rid, "received", p_urls=urls)
@@ -201,6 +249,6 @@ def create_buytoken_image_blueprint(server):
         _mode, owner, _user = context()
         server.enforce_rate_limit("buytoken-image-list", owner, 30, 60)
         # Listing never downloads results, settles credits or submits a model.
-        return jsonify(success=True, jobs=[public_job(job) for job in BuyTokenStore().jobs(owner)])
+        return jsonify(success=True, jobs=[public_buytoken_job(job) for job in BuyTokenStore().jobs(owner)])
 
     return bp

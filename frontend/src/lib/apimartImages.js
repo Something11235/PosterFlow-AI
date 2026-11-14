@@ -1,4 +1,5 @@
 import { apimartImageModel, IMAGE_TIER_MODELS } from "./provider.js";
+import { imageRefundError } from './imageRefund.js';
 
 export const APIMART_IMAGES_BASE = "/api/apimart-images";
 export const BUYTOKEN_IMAGES_BASE = "/api/buytoken-images";
@@ -92,7 +93,7 @@ export function imageJobMetadata(job, route) {
   const pendingState = imageTaskPendingState(job, route) || {code:'IMAGE_TASK_REVIEW_REQUIRED',submission_unknown:true};
   return {id:job.request_id, model:job.model, billingMode:job.billing_mode, createdAt:Date.parse(job.created_at), route,
     status, images:(Array.isArray(job.image_keys) ? job.image_keys : []).map(filename => ({filename})),
-    ...(status==='pending' ? {error:pendingState} : status==='failed' ? {error:{code:job.error_code || 'IMAGE_TASK_FAILED',submission_unknown:false}} : {})};
+    ...(status==='pending' ? {error:pendingState} : status==='failed' ? {error:imageRefundError(job) || {code:job.error_code || 'IMAGE_TASK_FAILED',submission_unknown:false,billing_mode:job.billing_mode}} : {})};
 }
 
 // Legacy requests remain byte-for-byte on their existing routes. New model
@@ -168,6 +169,6 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
     }
   }
   window.dispatchEvent(new Event("posterflow:image-tasks"));
-  if (data.job?.status !== "completed") return responseJson({ ...data, error: data.job?.status === "failed" ? data.job.failure_reason || "图片服务未完成本次任务，已按实际结果退回预留积分。" : "提交结果待确认，请保留原任务并核对服务商记录，不要重复生成。", code: data.job?.status === "failed" ? data.job.error_code || "APIMART_TASK_FAILED" : "IMAGE_SUBMISSION_UNKNOWN", detail:data.job?.failure_reason, recovery:data.job?.recovery }, 409);
+  if (data.job?.status !== "completed") return responseJson({ ...data, error: data.job?.status === "failed" ? data.job.failure_reason || "图片服务未完成本次任务。" : "提交结果待确认，请保留原任务并核对服务商记录，不要重复生成。", code: data.job?.status === "failed" ? data.job.error_code || "APIMART_TASK_FAILED" : "IMAGE_SUBMISSION_UNKNOWN", detail:data.job?.failure_reason, recovery:data.job?.recovery }, 409);
   return responseJson({ ...data, prompt: body.prompt });
 }

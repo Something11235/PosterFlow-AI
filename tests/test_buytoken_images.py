@@ -60,9 +60,9 @@ class BuyTokenImagesTests(unittest.TestCase):
             elif event == 'retry':
                 self.job['status'] = 'processing'
             elif event == 'unknown':
-                self.job['status'] = 'submission_unknown'
+                self.job.update(status='submission_unknown', error_code=kwargs.get('p_error'))
             elif event == 'failed':
-                self.job['status'] = 'failed'
+                self.job.update(status='failed', error_code=kwargs.get('p_error'))
             return {'ok': True, 'job': dict(self.job), 'send': event == 'sending', 'claimed': event == 'claim', 'balance': 99}
 
         self.store.apply.side_effect = apply
@@ -117,20 +117,117 @@ class BuyTokenImagesTests(unittest.TestCase):
             self.assertEqual(len(self.store.begin.call_args.args[5]['references']), 2)
             self.assertEqual(self.store.begin.call_args.args[3], mode)
 
-    def test_timeout_server_failure_rate_limit_redirect_or_malformed_success_hold_without_retry(self):
-        for failure in [requests.Timeout(), response(status=500), response(status=429), response(status=302), response(b'{}'), response(b'not json')]:
+    def test_timeout_server_failure_rate_limit_redirect_or_malformed_success_refund_without_retry(self):
+        for failure in [requests.Timeout(), response(status=500), response(status=502), response(status=503), response(status=429), response(status=302), response(b'{}'), response(b'not json')]:
             self.post.reset_mock()
             self.job.update(status='submitting', provider_result_urls=[])
             self.post.side_effect = failure if isinstance(failure, Exception) else None
             self.post.return_value = failure
             result = self.generate()
             self.assertEqual(result.status_code, 503, result.json)
-            self.assertTrue(result.json['submission_unknown'])
-            self.assertEqual(self.events[-1], 'unknown')
+            self.assertFalse(result.json['submission_unknown'])
+            self.assertTrue(result.json['generation_submitted'])
+            self.assertTrue(result.json['refunded'])
+            self.assertEqual(result.json['code'], 'IMAGE_UNDELIVERED_REFUNDED')
+            self.assertEqual(result.json['credit_balance'], 99)
+            self.assertEqual(result.json['billing'], {'request_id': RID, 'status': 'refunded'})
+            self.assertEqual(result.json['job']['request_id'], RID)
+            self.assertEqual(result.json['job']['billing_status'], 'refunded')
+            self.assertEqual(self.events[-1], 'failed')
+            self.assertEqual(self.store.apply.call_args.kwargs['p_error'], 'IMAGE_UNDELIVERED_REFUNDED')
             self.post.assert_called_once()
-            self.client.get('/api/buytoken-images/tasks/' + RID, headers={'X-Billing-Mode': 'platform'})
+            recovered = self.client.get('/api/buytoken-images/tasks/' + RID, headers={'X-Billing-Mode': 'platform'})
+            self.assertTrue(recovered.json['refunded'])
+            self.assertIn('预留积分已退回', recovered.json['job']['failure_reason'])
             self.post.assert_called_once()
-            self.assertEqual(self.job['status'], 'submission_unknown')
+            self.assertEqual(self.job['status'], 'failed')
+        self.get.assert_not_called()
+
+    def test_refund_database_failure_or_unconfirmed_receipt_never_claims_refunded(self):
+        apply = self.store.apply.side_effect
+        for failure in [routes.SupabaseError('SUPABASE_UNAVAILABLE', 'synthetic unavailable'),
+                        provider.ImageTaskError('IMAGE_DATABASE_UNAVAILABLE', 'temporary'),
+                        None, {'ok': False}, {'ok': True, 'job': {**self.job, 'status': 'processing'}},
+                        {'ok': True, 'job': {**self.job, 'status': 'failed'}}]:
+            with self.subTest(failure=type(failure).__name__):
+                self.post.reset_mock()
+                self.job.update(status='submitting', provider_result_urls=[])
+                self.post.return_value = response(status=503)
+
+                def fail_refund(owner, rid, event, **kwargs):
+                    if event == 'failed':
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return failure
+                    return apply(owner, rid, event, **kwargs)
+
+                self.store.apply.side_effect = fail_refund
+                result = self.generate()
+                self.assertEqual(result.status_code, 503)
+                self.assertEqual(result.json['code'], 'IMAGE_REFUND_PENDING')
+                self.assertTrue(result.json['submission_unknown'])
+                self.assertNotIn('refunded', result.json)
+                self.post.assert_called_once()
+
+    def test_existing_outputs_block_refund_and_successful_race_remains_success(self):
+        apply = self.store.apply.side_effect
+        self.post.return_value = response(status=503)
+
+        def pending_output(owner, rid, event, **kwargs):
+            if event == 'failed':
+                raise provider.ImageTaskError('IMAGE_RESULT_PENDING', 'do not refund')
+            return apply(owner, rid, event, **kwargs)
+
+        self.store.apply.side_effect = pending_output
+        result = self.generate()
+        self.assertEqual(result.json['code'], 'IMAGE_SAVE_PENDING')
+        self.assertTrue(result.json['submission_unknown'])
+        self.assertNotIn('refunded', result.json)
+
+        def completed_race(owner, rid, event, **kwargs):
+            if event == 'failed':
+                return {'ok': True, 'job': {**self.job, 'status': 'completed', 'image_keys': ['original.png']}, 'balance': 98}
+            return apply(owner, rid, event, **kwargs)
+
+        self.store.apply.side_effect = completed_race
+        self.post.reset_mock()
+        result = self.generate()
+        self.assertEqual(result.status_code, 200)
+        self.assertTrue(result.json['success'])
+        self.assertEqual(result.json['images'][0]['filename'], 'original.png')
+        self.assertNotIn('refunded', result.json)
+        self.post.assert_called_once()
+
+    def test_byok_unknown_never_claims_platform_refund(self):
+        self.job['billing_mode'] = 'own_key'
+        self.post.return_value = response(status=503)
+        result = self.generate(headers={'X-Billing-Mode': 'own_key', 'X-Provider-Model': MODEL,
+                                        'X-Provider-Api-Key': 'synthetic', 'X-Provider-Endpoint': CONFIG.endpoint})
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(result.json['code'], 'IMAGE_SUBMISSION_UNKNOWN')
+        self.assertTrue(result.json['submission_unknown'])
+        self.assertNotIn('refunded', result.json)
+        self.assertEqual(self.events[-1], 'unknown')
+        self.assertNotIn('failed', self.events)
+        self.post.assert_called_once()
+
+    def test_list_shows_confirmed_refund_without_exposing_private_data_or_changing_money(self):
+        self.job.update(status='failed', error_code='IMAGE_UNDELIVERED_REFUNDED', api_key='never expose',
+                        provider_result_urls=[], prompt='never expose')
+        result = self.client.get('/api/buytoken-images/tasks', headers={'X-Billing-Mode': 'platform'})
+        self.assertTrue(result.json['jobs'][0]['refunded'])
+        self.assertEqual(result.json['jobs'][0]['billing_status'], 'refunded')
+        self.assertIn('预留积分已退回', result.json['jobs'][0]['failure_reason'])
+        self.assertNotIn('never expose', json.dumps(result.json))
+        self.store.apply.assert_not_called()
+        self.post.assert_not_called()
+
+        self.job['billing_mode'] = 'own_key'
+        result = self.client.get('/api/buytoken-images/tasks', headers={'X-Billing-Mode': 'platform'})
+        self.assertNotIn('refunded', result.json['jobs'][0])
+        self.job['error_code'] = 'BUYTOKEN_REQUEST_REJECTED'
+        result = self.client.get('/api/buytoken-images/tasks', headers={'X-Billing-Mode': 'platform'})
+        self.assertNotIn('积分已退回', result.json['jobs'][0]['failure_reason'])
 
     def test_clear_rejection_refunds_and_does_not_download(self):
         for status in (400, 401, 403, 404, 405, 413, 415, 422):
@@ -148,6 +245,8 @@ class BuyTokenImagesTests(unittest.TestCase):
         self.assertEqual(result.status_code, 503)
         self.assertEqual(result.json['code'], 'IMAGE_SAVE_PENDING')
         self.assertEqual(self.job['provider_result_urls'], [URL])
+        self.assertNotIn('failed', self.events)
+        self.assertNotIn('refunded', result.json)
         self.get.side_effect = None
         result = self.client.get('/api/buytoken-images/tasks/' + RID, headers={'X-Billing-Mode': 'platform'})
         self.assertEqual(result.json['job']['status'], 'completed')
@@ -297,11 +396,11 @@ class BuyTokenImagesTests(unittest.TestCase):
         self.post.return_value = response(b'private body key=secret', status=503)
         with self.assertLogs('backend.buytoken_image_provider', level='WARNING') as logs:
             result = self.generate()
-        self.assertEqual(result.json['code'], 'IMAGE_SUBMISSION_UNKNOWN')
+        self.assertEqual(result.json['code'], 'IMAGE_UNDELIVERED_REFUNDED')
         joined = '\n'.join(logs.output)
         self.assertIn('http_status=503', joined)
         self.assertIn('stage=response', joined)
         for private in ('private body', 'secret', URL, CONFIG.endpoint):
             self.assertNotIn(private, joined)
-        self.assertEqual(self.job['status'], 'submission_unknown')
-        self.assertNotIn('failed', self.events)
+        self.assertEqual(self.job['status'], 'failed')
+        self.assertTrue(result.json['refunded'])
