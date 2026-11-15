@@ -2,6 +2,7 @@
   "name": "posterflow-ai-frontend",
   "private": true,
   "version": "0.2.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
