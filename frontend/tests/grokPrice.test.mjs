@@ -19,7 +19,8 @@ test("Nano tiers are one, one-and-half and two, independent of reference count",
 });
 test("all image cards describe capabilities without migration or configuration jargon", () => {
   const images = MODEL_CATALOG.filter(model => model.area === "image");
-  assert.equal(images.length, 11);
+  assert.equal(images.length, 10);
+  assert.ok(!images.some(model => model.id === 'seedream-5-0-lite'));
   for (const model of images) {
     assert.ok(model.summary && model.capability);
     assert.doesNotMatch(model.summary + model.capability, /沿用|现有图像功能|已接入|需配置/);

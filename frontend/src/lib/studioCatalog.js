@@ -19,7 +19,6 @@ export const IMAGE_MODELS = [
   { id: "grok-imagine-2.0-ext", name: "Grok Imagine 2.0 Ext", maker: "Grok", summary: "文字创作与画布单图选区修改", capability: "文生图 · 画布选区编辑", available: true, provider: "apimart" },
   { id: "seedream-5-5", name: "（即梦）Seedream 5.5", maker: "即梦", summary: "单图创作 · 多图参考与标注编辑", capability: "文生图 · 参考图 · 标注编辑", available: true, provider: "apimart" },
   { id: "seedream-5-0-pro", name: "（即梦）Seedream 5.0 Pro", maker: "即梦", summary: "单图创作 · 多图参考与标注编辑", capability: "文生图 · 参考图 · 标注编辑", available: true, provider: "apimart" },
-  { id: "seedream-5-0-lite", name: "（即梦）Seedream 5.0 Lite", maker: "即梦", summary: "2K / 3K / 4K · 参考图创作与组图", capability: "文生图 · 参考图 · 组图", available: true, provider: "apimart" },
   { id: "seedream-5-0-flash", name: "（即梦）Seedream 5.0 Flash", maker: "即梦", summary: "单图创作 · 多图参考与标注编辑", capability: "文生图 · 参考图 · 标注编辑", available: true, provider: "apimart" },
 ];
 export const MUSIC_MODELS = [

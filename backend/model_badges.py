@@ -1,10 +1,10 @@
 """Public display metadata with administrator-only, revision-checked writes."""
 from flask import Blueprint, jsonify, request
 try:
-    from backend.apimart_image_provider import MODELS
+    from backend.apimart_image_provider import ACTIVE_MODELS as MODELS
     from backend.supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 except ModuleNotFoundError:
-    from apimart_image_provider import MODELS
+    from apimart_image_provider import ACTIVE_MODELS as MODELS
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 
 IMAGE_MODEL_IDS = ("gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", *(model for model in MODELS if not model.startswith("gpt-image-2.6-")))

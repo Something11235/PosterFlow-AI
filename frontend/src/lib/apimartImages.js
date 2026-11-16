@@ -1,4 +1,4 @@
-import { apimartImageModel, IMAGE_TIER_MODELS } from "./provider.js";
+import { apimartImageModel, IMAGE_TIER_MODELS, isRetiredImageModel } from "./provider.js";
 import { imageRefundError } from './imageRefund.js';
 
 export const APIMART_IMAGES_BASE = "/api/apimart-images";
@@ -112,7 +112,7 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
     body = {...body, pricing_version: 3};
     init = {...init, body: JSON.stringify(body)};
   }
-  if (requestImageModel(body, init.headers) === "gpt-image-2") return responseJson({error:"GPT Image 2 已下线，请重新选择模型。",code:"MODEL_RETIRED"},400);
+  if (isRetiredImageModel(model)) return responseJson({error: model === "seedream-5-0-lite" ? "Seedream 5.0 Lite 已下架，请刷新页面后选择其他模型。" : "GPT Image 2 已下线，请重新选择模型。",code:"MODEL_RETIRED",generation_submitted:false},400);
   if (!apimartImageModel(requestImageModel(body, init.headers))) return fetch(endpoint, init);
   if (requestImageModel(body, init.headers).startsWith('gpt-image-2.6-')) {
     body = { ...body, pricing_version: 3 };

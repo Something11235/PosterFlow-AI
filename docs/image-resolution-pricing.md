@@ -2,6 +2,8 @@
 
 2026-11-11 版本的图片价格和分辨率统一说明，覆盖旧文档中的历史价格。两份新增迁移已应用；正式部署与真实出图验收状态以本地交接记录为准。
 
+2026-11-17：Seedream 5.0 Lite 已下架，不再接受新建任务；其历史记录与原价格快照保留。
+
 仅在供应商价格升档时，每张结果加0.5网站积分；同价分辨率保持同价。默认选择最低支持档位。上游Credits与网站积分是不同单位，不直接互换。
 
 | 模型 | 分辨率 | 无图输入积分／张 | 带图输入积分／张 |
@@ -13,7 +15,6 @@
 | Grok Imagine 2.0 Ext | 自动 | 1 | 普通参考图不支持；单图选区编辑仍1 |
 | （即梦）Seedream 5.5 | 1K／1.5K／2K | 1／1／1.5 | 1／1／1.5 |
 | （即梦）Seedream 5.0 Pro | 1K／1.5K／2K | 2／2／2.5 | 2／2／2.5 |
-| （即梦）Seedream 5.0 Lite | 2K／3K／4K | 1／1／1 | 1／1／1 |
 | （即梦）Seedream 5.0 Flash | 1K／1.5K／2K | 0.5／0.5／0.5 | 0.5／0.5／0.5 |
 
 “带图”包括普通参考、上一张结果迭代、局部重绘原图、画布原图／标注说明图；多张参考不重复乘价。先按所选张数预留，按实际保存张数结算；明确失败退款，未知不重发。自带Key不扣网站积分。
@@ -38,7 +39,7 @@ GPT2.5保持既有同步路由与GET恢复，GPT2.6仍走BuyToken，二者qualit
 - [Seedream 5.5 生成文档](https://docs.apimart.ai/cn/api-reference/images/seedream-5-5/generation)：单图、比例／像素尺寸、参考图与交互编辑。
 - [Seedream 5.0 Pro](https://apimart.ai/zh/model/seedream-5-0-pro)：1K／1.5K同价，2K升档。
 - [Seedream 5.0 Flash](https://apimart.ai/zh/model/seedream-5-0-flash)：模型价格页三个档同价；API文档价表疑似复制Pro，按模型页保留0.5。
-- [Seedream Lite](https://apimart.ai/zh/model/seedream-5-lite)：2K／3K／4K同价。
+- [Seedream Lite](https://apimart.ai/zh/model/seedream-5-lite)：已下架；历史 2K／3K／4K 同为每张 1 积分。
 - [Grok 2.0](https://apimart.ai/zh/model/grok-imagine-2-0)：1K／2K价格不同；[接口文档](https://docs.apimart.ai/cn/api-reference/images/grok-imagine-image-2.0/generation)定义resolution。
 - [Nano 官方文档](https://docs.apimart.ai/cn/api-reference/images/gemini-nano-banana-2.1/generation)：分辨率影响token消耗。Image2.5／2.6是否影响价格由用户明确确认，无需重复查价；像素协议参见[BuyToken图片文档](https://buytoken.work/docs#image)。
 

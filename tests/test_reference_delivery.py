@@ -96,12 +96,18 @@ class DeliveryRouteTests(unittest.TestCase):
         upload = stack.enter_context(patch.object(provider, "upload_reference"))
         return store, upload, {"request_id": RID, "platform_model": model, "prompt": "synthetic", "reference_images_b64": [image(), image("JPEG")]}
 
-    def test_inline_all_models_submit_once_and_never_upload(self):
+    def test_inline_active_models_submit_once_and_retired_models_never_submit(self):
         for model in delivery.INLINE_MODELS:
             with self.subTest(model=model), ExitStack() as stack:
                 store, upload, body = self.route_setup(stack, model)
                 submit = stack.enter_context(patch.object(provider, "submit", return_value="task_fixture_123"))
                 result = server.app.test_client().post("/api/apimart-images/generations", json=body, headers={"X-Billing-Mode": "platform"})
+                if model in provider.RETIRED_MODELS:
+                    self.assertEqual(result.status_code, 400, result.json)
+                    self.assertEqual(result.json['code'], 'MODEL_RETIRED')
+                    self.assertFalse(result.json['generation_submitted'])
+                    submit.assert_not_called(); upload.assert_not_called(); store.begin.assert_not_called()
+                    continue
                 self.assertEqual(result.status_code, 202, result.json)
                 submit.assert_called_once()
                 self.assertEqual(submit.call_args.args[1]["image_urls"], [server.reference_image_data_url(ref) for ref in body["reference_images_b64"]])

@@ -974,6 +974,8 @@ def resolve_provider_config(billing_mode="own_key", resolve_dns=True, platform_m
         )
     if model == "gpt-image-2":
         raise ProviderError("MODEL_RETIRED", "GPT Image 2 已下线，请重新选择模型。", 400)
+    if model == "seedream-5-0-lite":
+        raise ProviderError("MODEL_RETIRED", "Seedream 5.0 Lite 已下架，请重新选择模型。", 400)
     auth_type = auth_type.strip()
     auth_type_key = auth_type.lower()
     if not auth_type:

@@ -1,6 +1,11 @@
 export const PROVIDER_STORAGE_KEY = "posterflow.provider.session.v1";
 export const MAX_REFERENCE_IMAGES = 8;
 export const GPT26_IMAGE_MODELS = ["flare", "sunburst"].map(version => ({ value: `gpt-image-2.6-${version}`, label: `GPT Image 2.6 ${version === "flare" ? "Flare" : "Sunburst"}`, upstreamVersion: version, provider: "buytoken", outputFormats: ["png"], gifReferences: false, creditCost: 1, referenceCreditCost: 1.5, maxCount: 4, maxReferences: 8, resolutions: ["1K", "2K", "4K"], canvasEdit: true, maskEdit: true, customSize: false }));
+// Historical pricing only: retired entries never populate creation menus.
+const RETIRED_IMAGE_MODELS = [
+  { value: "seedream-5-0-lite", label: "（即梦）Seedream 5.0 Lite", creditCost: 1, maxCount: 4, maxReferences: 8, resolutions: ["2K", "3K", "4K"], canvasEdit: false },
+];
+export const isRetiredImageModel = model => model === "gpt-image-2" || RETIRED_IMAGE_MODELS.some(item => item.value === model);
 
 export const APIMART_IMAGE_MODELS = [
   ...GPT26_IMAGE_MODELS,
@@ -9,7 +14,6 @@ export const APIMART_IMAGE_MODELS = [
   { value: "grok-imagine-2.0-ext", label: "Grok Imagine 2.0 Ext", creditCost: 1, maxCount: 4, maxReferences: 0, automaticResolution: true, resolutions: ["quality"] },
   { value: "seedream-5-5", label: "（即梦）Seedream 5.5", creditCost: 1, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
   { value: "seedream-5-0-pro", label: "（即梦）Seedream 5.0 Pro", creditCost: 2, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
-  { value: "seedream-5-0-lite", label: "（即梦）Seedream 5.0 Lite", creditCost: 1, maxCount: 4, maxReferences: 8, resolutions: ["2K", "3K", "4K"], canvasEdit: false },
   { value: "seedream-5-0-flash", label: "（即梦）Seedream 5.0 Flash", creditCost: 0.5, maxCount: 1, maxReferences: 8, resolutions: ["1K", "1.5K", "2K"], canvasEdit: true, interactiveEdit: true },
 ];
 export const apimartImageModel = model => APIMART_IMAGE_MODELS.find(item => item.value === model);
@@ -21,10 +25,10 @@ export const IMAGE_MODEL_OPTIONS = [
   ...APIMART_IMAGE_MODELS.filter(model => !model.value.startsWith("gpt-image-2.6-")),
 ];
 
-export const imageResolutionSpec = model => IMAGE_MODEL_OPTIONS.find(item => item.value === model);
+export const imageResolutionSpec = model => IMAGE_MODEL_OPTIONS.find(item => item.value === model) || RETIRED_IMAGE_MODELS.find(item => item.value === model);
 export const IMAGE_TIER_MODELS = new Set(["gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gemini-nano-banana-2.1", "grok-imagine-image-2.0", "seedream-5-0-pro", "seedream-5-5"]);
 export function imageCreditCost(model, referenceCount = 0, resolution = "") {
-  const spec = IMAGE_MODEL_OPTIONS.find(option => option.value === model);
+  const spec = imageResolutionSpec(model);
   const resolutionCost = spec?.resolutionCreditCosts?.[String(resolution).trim().toUpperCase()];
   if (IMAGE_TIER_MODELS.has(model)) {
     const tier = String(resolution || spec.resolutions[0]).toUpperCase();
@@ -37,7 +41,7 @@ export function imageCreditCost(model, referenceCount = 0, resolution = "") {
 }
 
 export function imagePricingLabel(model) {
-  const spec = IMAGE_MODEL_OPTIONS.find(option => option.value === model);
+  const spec = imageResolutionSpec(model);
   if (IMAGE_TIER_MODELS.has(model)) return spec.resolutions.map(tier => `${tier} ${imageCreditCost(model, 0, tier)} 积分 / 张${spec.referenceCreditCost ? `，带图 ${imageCreditCost(model, 1, tier)} 积分 / 张` : ""}`).join("；");
   if (spec?.resolutionCreditCosts) return `1K、2K ${imageCreditCost(model)} 积分 / 张，4K ${imageCreditCost(model, 0, "4K")} 积分 / 张`;
   return `${imageCreditCost(model)} 积分 / 张${spec?.referenceCreditCost ? `，使用参考图 ${imageCreditCost(model, 1)} 积分 / 张` : ""}`;
@@ -100,7 +104,7 @@ export function loadProviderConfig() {
     if (!stored) return EMPTY_PROVIDER_CONFIG;
     const parsed = JSON.parse(stored);
     const migrated = { ...EMPTY_PROVIDER_CONFIG, ...parsed };
-    if (migrated.model === "gpt-image-2") migrated.model = "";
+    if (isRetiredImageModel(migrated.model)) migrated.model = "";
     if (migrated.preset === "openrouter") {
       const oldEndpoint = migrated.endpoint;
       const oldModel = migrated.model;
@@ -140,6 +144,14 @@ export function buildProviderHeaders(config) {
     "X-Provider-Model": config.model.trim(),
     "X-Provider-Auth-Type": config.authType || "bearer",
   };
+}
+
+// Used only for GET recovery of an existing task. A retired model does not
+// need to reappear in the creation picker to query with the original Key.
+export function buildImageTaskProviderHeaders(config, model) {
+  const queryConfig = isRetiredImageModel(model) ? { ...config, model } : config;
+  if (queryConfig?.model !== model || !isProviderConfigComplete(queryConfig)) return null;
+  return buildProviderHeaders(queryConfig);
 }
 
 export function getProviderDisplayName(config, serverHost = "") {

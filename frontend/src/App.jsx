@@ -36,6 +36,7 @@ import StudioNavigation from "./components/studio/StudioNavigation";
 import "./components/studio/studio.css";
 import {
   buildProviderHeaders,
+  buildImageTaskProviderHeaders,
   apimartImageModel,
   imageResolutionSpec,
   DEFAULT_PLATFORM_MODEL,
@@ -733,8 +734,9 @@ export default function App() {
     const live=()=>imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
     let headers={...authHeaders,'X-Billing-Mode':'platform'};
     if(task.billingMode==='own_key'){
-      if(billingMode!=='own_key' || !providerConfigured || providerConfig.model!==task.model){setNotice('请先在图片服务配置中填写原任务使用的模型和 API Key，再查询原任务。');setImageTasksOpen(false);setShowProviderSettings(true);return;}
-      headers=providerHeaders;
+      const taskHeaders=buildImageTaskProviderHeaders(providerConfig,task.model);
+      if(billingMode!=='own_key' || !taskHeaders){setNotice('请先在图片服务配置中填写原任务使用的服务地址和 API Key，再查询原任务。');setImageTasksOpen(false);setShowProviderSettings(true);return;}
+      headers={...providerHeaders,...taskHeaders};
     }
     const currentAuthorization=()=>task.billingMode!=='platform' || headers.Authorization===`Bearer ${sessionRef.current?.access_token}`;
     imageQueries.current.add(key);
@@ -799,7 +801,7 @@ export default function App() {
       }
     }
     finally{imageQueries.current.delete(key);}
-  },[imageTaskStore,authHeaders,billingMode,providerConfigured,providerConfig.model,providerHeaders,queueTavernBackgrounds,refreshAccount]);
+  },[imageTaskStore,authHeaders,billingMode,providerConfig,providerHeaders,queueTavernBackgrounds,refreshAccount]);
 
   // Track IDs rather than whole snapshots: status refreshes must not reset the
   // 15-second timer, but a newly restored task must wake an expired scheduler.

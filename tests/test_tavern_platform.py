@@ -99,6 +99,19 @@ class TavernPlatformTests(unittest.TestCase):
         self.submit.assert_called_once()
         self.assertNotIn("kind", self.submit.call_args.args[2])
 
+    def test_own_key_does_not_write_platform_inputs_or_bills(self):
+        body = {key: value for key, value in self.body.items() if key not in {"request_id", "kind"}}
+        body["billing_mode"] = "own_key"
+        headers = {**self.headers, "X-Tavern-Api-Key": "synthetic-own-key"}
+        response = self.post(body, headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["charged_credits"], 0)
+        self.store.begin.assert_not_called()
+        self.store.apply.assert_not_called()
+        self.store.rpc.assert_not_called()
+        self.submit.assert_called_once()
+        self.assertNotIn("synthetic-own-key", response.get_data(as_text=True))
+
     def test_admin_overview_validates_range_and_uses_authenticated_actor(self):
         self.store.rpc.return_value = {"ok": True, "days": 30, "stats": {"assist": 1}, "requests": []}
         response = self.client.get("/api/tavern/admin/overview?days=30")
@@ -315,6 +328,18 @@ class TavernPlatformTests(unittest.TestCase):
                 self.assertIsNone(platform.public_request(record)["content"])
                 self.assertEqual(platform.public_request(record)["charged_credits"], "0.0084")
 
+    def test_retained_inputs_are_excluded_from_owner_and_admin_billing_responses(self):
+        record = {**self.settled, "input_text": "private current input",
+                  "input_expires_at": (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat()}
+        self.store.get.return_value = {"ok": True, "requests": [record]}
+        self.store.rpc.return_value = {"ok": True, "requests": [record]}
+        for route in ("/api/tavern/requests/" + REQUEST, "/api/tavern/admin/requests"):
+            response = self.client.get(route)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("private current input", response.get_data(as_text=True))
+            self.assertNotIn("input_text", response.get_data(as_text=True))
+            self.assertNotIn("input_expires_at", response.get_data(as_text=True))
+
     def test_admin_identity_from_auth_and_usage_verified_not_body_actor(self):
         self.store.rpc.return_value = {"ok": True, "request": self.settled}
         body = {"user_id": OWNER, "action": "settle", "usage": {**USAGE, "api_key": "strip"}, "reason": "核对服务商账单"}
@@ -384,20 +409,64 @@ class TavernReservationTests(unittest.TestCase):
         body["max_tokens"] = 4096
         self.assertGreater(Decimal(reserve_tavern_credits(body)), Decimal(amount))
 
-    def test_gateway_fingerprint_and_payload_never_store_prompt_or_key(self):
+    def test_gateway_retains_only_current_input_for_all_billed_kinds(self):
         with patch.object(platform, "SupabaseGateway") as gateway:
             gateway.return_value.rpc.return_value = {"ok": True}
             store = platform.TavernStore()
-            body = tavern.build_chat_request({"messages": [{"role": "user", "content": "private prompt"}]})
+            body = tavern.build_chat_request({"messages": [
+                {"role": "system", "content": "private system setting"},
+                {"role": "user", "content": "previous user input"},
+                {"role": "assistant", "content": "previous assistant reply"},
+                {"role": "user", "content": "本轮输入\n含 emoji：🌙"},
+            ]})
+            original = deepcopy(body)
+            fingerprints = set()
+            for kind in ("chat", "summary", "assist"):
+                with self.subTest(kind=kind):
+                    store.begin(OWNER, REQUEST, kind, body, tavern.DEFAULT_ENDPOINT, "0.1000")
+                    name, payload = gateway.return_value.rpc.call_args.args
+                    self.assertEqual(name, "begin_tavern_request_with_input")
+                    self.assertEqual(payload["p_input_text"], "本轮输入\n含 emoji：🌙")
+                    self.assertEqual(payload["p_user_id"], OWNER)
+                    self.assertEqual(payload["p_kind"], kind)
+                    self.assertEqual(len(payload["p_fingerprint"]), 64)
+                    self.assertEqual(set(payload), {"p_user_id", "p_request_id", "p_fingerprint", "p_model",
+                                                    "p_kind", "p_reserved_credits", "p_input_text"})
+                    for private in ("private system setting", "previous user input", "previous assistant reply",
+                                    tavern.DEFAULT_ENDPOINT, "api_key"):
+                        self.assertNotIn(private, str(payload))
+                    fingerprints.add(payload["p_fingerprint"])
+            self.assertEqual(len(fingerprints), 3)
+            self.assertEqual(body, original)
+
+    def test_retained_input_replay_keeps_fingerprint_and_preserves_full_length(self):
+        with patch.object(platform, "SupabaseGateway") as gateway:
+            gateway.return_value.rpc.return_value = {"ok": True, "leader": False}
+            store = platform.TavernStore()
+            body = tavern.build_chat_request({"messages": [{"role": "user", "content": "中" * 65536}]})
+            first = store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
+            first_payload = deepcopy(gateway.return_value.rpc.call_args.args[1])
+            second = store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
+            self.assertFalse(first["leader"])
+            self.assertFalse(second["leader"])
+            self.assertEqual(gateway.return_value.rpc.call_args.args[1], first_payload)
+            self.assertEqual(first_payload["p_input_text"], "中" * 65536)
+            self.assertNotIn("p_input_expires_at", first_payload)
+
+    def test_nul_input_is_replaced_only_in_retained_copy(self):
+        with patch.object(platform, "SupabaseGateway") as gateway:
+            gateway.return_value.rpc.return_value = {"ok": True}
+            store = platform.TavernStore()
+            body = tavern.build_chat_request({"messages": [{"role": "user", "content": "前文\x00后文"}]})
             store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
-            name, payload = gateway.return_value.rpc.call_args.args
-            self.assertEqual(name, "begin_tavern_request")
-            self.assertEqual(len(payload["p_fingerprint"]), 64)
-            self.assertNotIn("private prompt", str(payload))
-            self.assertNotIn("endpoint", payload)
-            first = payload["p_fingerprint"]
-            store.begin(OWNER, REQUEST, "summary", body, tavern.DEFAULT_ENDPOINT, "0.1000")
-            self.assertNotEqual(first, gateway.return_value.rpc.call_args.args[1]["p_fingerprint"])
+            first_payload = deepcopy(gateway.return_value.rpc.call_args.args[1])
+            self.assertEqual(first_payload["p_input_text"], "前文\ufffd后文")
+            self.assertEqual(body["messages"][-1]["content"], "前文\x00后文")
+            body["messages"][-1]["content"] = "前文\ufffd后文"
+            store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
+            replacement_payload = gateway.return_value.rpc.call_args.args[1]
+            self.assertEqual(first_payload["p_input_text"], replacement_payload["p_input_text"])
+            self.assertNotEqual(first_payload["p_fingerprint"], replacement_payload["p_fingerprint"])
 
 
 if __name__ == "__main__":

@@ -32,9 +32,9 @@ test("identity stores and duplicate request IDs cannot overwrite each other", ()
   first.finish("a", { images: [{ filename: "private.png" }] });
   assert.deepEqual(second.getSnapshot(), []);
 });
-test("model choices omit retired Nano Banana Pro and reference inputs follow actual UI capabilities", () => {
-  assert.equal(IMAGE_MODEL_OPTIONS.length, 11);
-  for (const id of ["nano-banana-pro"]) assert.ok(!IMAGE_MODEL_OPTIONS.some(m => m.value === id));
+test("model choices omit retired models and reference inputs follow actual UI capabilities", () => {
+  assert.equal(IMAGE_MODEL_OPTIONS.length, 10);
+  for (const id of ["nano-banana-pro", "seedream-5-0-lite"]) assert.ok(!IMAGE_MODEL_OPTIONS.some(m => m.value === id));
   for (const model of APIMART_IMAGE_MODELS) {
     assert.equal(referenceCapability(model).limit, model.maxReferences);
     assert.equal(referenceCapability(model).disabled, model.maxReferences === 0);

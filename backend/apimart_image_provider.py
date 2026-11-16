@@ -29,6 +29,9 @@ MODELS = {
     "seedream-5-0-lite": {"name": "（即梦）Seedream 5.0 Lite", "references": 8, "count": 4, "resolutions": ("2K", "3K", "4K"), "credit_cost": 1, "canvas_edit": False},
     "seedream-5-0-flash": {"name": "（即梦）Seedream 5.0 Flash", "references": 8, "count": 1, "resolutions": ("1K", "1.5K", "2K"), "credit_cost": 0.5, "canvas_edit": True},
 }
+# Keep legacy metadata for historical tasks; it must not enable new submissions.
+RETIRED_MODELS = frozenset({"seedream-5-0-lite"})
+ACTIVE_MODELS = {model: spec for model, spec in MODELS.items() if model not in RETIRED_MODELS}
 RATIOS = {"square_1_1": "1:1", "landscape_3_2": "3:2", "portrait_2_3": "2:3", "landscape_16_9": "16:9", "portrait_9_16": "9:16", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "wide_21_9": "21:9"}
 TASK_ID = re.compile(r"^[A-Za-z0-9_-]{8,160}$")
 MAX_BYTES = 25 * 1024 * 1024
@@ -82,7 +85,9 @@ def _log_upload_quota(quota, request_id, index, *, level=logging.INFO):
 
 
 def build_request(model, data, references=(), *, mask=None):
-    if model not in MODELS:
+    if isinstance(model, str) and model in RETIRED_MODELS:
+        raise ImageTaskError("MODEL_RETIRED", "Seedream 5.0 Lite 已下架，请刷新页面后选择其他模型。")
+    if not isinstance(model, str) or model not in MODELS:
         raise ImageTaskError("MODEL_NOT_ALLOWED", "请选择已接入的图片模型。")
     spec = MODELS[model]
     if model.startswith("gpt-image-2.6-"):

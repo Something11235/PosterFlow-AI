@@ -9,6 +9,12 @@ from backend import apimart_image_routes as routes, server
 
 
 class SeedreamImageTests(unittest.TestCase):
+    def test_non_string_models_return_validation_errors(self):
+        for model in (None, [], {}, 7):
+            with self.subTest(model=model), self.assertRaises(provider.ImageTaskError) as error:
+                provider.build_request(model, {"prompt":"fixture"})
+            self.assertEqual(error.exception.code, "MODEL_NOT_ALLOWED")
+
     def test_nano_uses_official_model_without_ext_or_fallback(self):
         for resolution in ("1K", "2K", "4K"):
             body = provider.build_request("gemini-nano-banana-2.1", {"prompt":"fixture", "resolution":resolution, "model":"gemini-nano-banana-2.1-ext", "official_fallback":True})
@@ -20,7 +26,7 @@ class SeedreamImageTests(unittest.TestCase):
             provider.build_request("gemini-nano-banana-2.1",{"prompt":"fixture","count":2})
 
     def test_seedream_models_do_not_share_resolution_or_count_contracts(self):
-        for model,resolutions in [("seedream-5-0-pro",["1K","1.5K","2K"]),("seedream-5-0-lite",["2K","3K","4K"]),("seedream-5-0-flash",["1K","1.5K","2K"])]:
+        for model,resolutions in [("seedream-5-0-pro",["1K","1.5K","2K"]),("seedream-5-0-flash",["1K","1.5K","2K"])]:
             for resolution in resolutions:
                 body=provider.build_request(model,{"prompt":"fixture","resolution":resolution,"size":"landscape_4_3"},["one"])
                 self.assertEqual(body["model"],model)
@@ -31,7 +37,9 @@ class SeedreamImageTests(unittest.TestCase):
             with self.assertRaises(provider.ImageTaskError):provider.build_request(model,{"prompt":"fixture","resolution":"8K"})
         for model in ("seedream-5-0-pro","seedream-5-0-flash"):
             with self.assertRaises(provider.ImageTaskError):provider.build_request(model,{"prompt":"fixture","count":2})
-        self.assertEqual(provider.build_request("seedream-5-0-lite",{"prompt":"fixture","count":4})["n"],4)
+        with self.assertRaises(provider.ImageTaskError) as error:
+            provider.build_request("seedream-5-0-lite",{"prompt":"fixture","count":4})
+        self.assertEqual(error.exception.code,"MODEL_RETIRED")
 
     def test_canvas_and_unimplemented_special_operations_fail_before_upstream(self):
         for model in ("seedream-5-0-pro","seedream-5-0-lite","seedream-5-0-flash"):
@@ -71,12 +79,45 @@ class SeedreamImageTests(unittest.TestCase):
         self.assertEqual(params["p_model"],"seedream-5-0-flash")
         self.assertNotIn("unit_credit_cost",params)
 
-    def test_invalid_lite_canvas_request_never_reserves_or_submits(self):
-        with patch.dict("os.environ",{"APIMART_IMAGE_API_KEY":"synthetic"}), patch.object(server,"require_authenticated_user",return_value=Mock(id="user-fixture")), patch.object(server,"enforce_rate_limit"), patch.object(routes,"ImageStore") as store, patch.object(provider,"submit") as submit:
-            response=server.app.test_client().post('/api/apimart-images/generations',headers={'X-Billing-Mode':'platform'},json={'platform_model':'seedream-5-0-lite','request_id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','prompt':'fixture','canvas_workflow':'frame'})
-        self.assertEqual(response.status_code,400)
-        store.assert_not_called()
-        submit.assert_not_called()
+    def test_retired_lite_platform_and_own_key_requests_never_reserve_or_submit(self):
+        modes = [{'X-Billing-Mode':'platform'}, {'X-Billing-Mode':'own_key', 'X-Provider-Model':'seedream-5-0-lite',
+                  'X-Provider-Api-Key':'synthetic', 'X-Provider-Endpoint':provider.BASE+'/images/generations'}]
+        for headers in modes:
+            with self.subTest(headers=headers), patch.dict("os.environ",{"APIMART_IMAGE_API_KEY":"synthetic"}), patch.object(server,"require_authenticated_user",return_value=Mock(id="user-fixture")), patch.object(server,"set_optional_storage_scope",return_value=Mock(id="user-fixture")), patch.object(server,"enforce_rate_limit"), patch.object(routes,"ImageStore") as store, patch.object(provider,"submit") as submit, patch.object(server,"stored_reference_to_base64") as read_reference:
+                response=server.app.test_client().post('/api/apimart-images/generations',headers=headers,json={'platform_model':'seedream-5-0-lite','request_id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','prompt':'fixture','reference_storage_paths':['invalid-not-read']})
+            self.assertEqual(response.status_code,400)
+            self.assertEqual(response.json['code'],'MODEL_RETIRED')
+            self.assertFalse(response.json['generation_submitted'])
+            store.assert_not_called();submit.assert_not_called();read_reference.assert_not_called()
+
+    def test_retired_lite_is_not_advertised_and_generic_route_cannot_bypass_retirement(self):
+        response = server.app.test_client().get('/api/apimart-images/config')
+        self.assertNotIn('seedream-5-0-lite', [item['model'] for item in response.json['models']])
+        with server.app.test_request_context(headers={'X-Provider-Model':'seedream-5-0-lite',
+             'X-Provider-Api-Key':'synthetic', 'X-Provider-Endpoint':'https://example.invalid/v1/images/generations'}), patch.object(server,'validate_provider_endpoint') as validate:
+            with self.assertRaises(server.ProviderError) as error:
+                server.resolve_provider_config('own_key')
+            self.assertEqual(error.exception.code,'MODEL_RETIRED')
+            validate.assert_not_called()
+
+    def test_retired_lite_completed_and_pending_original_tasks_remain_queryable(self):
+        rid='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        for status in ('completed','submitted'):
+            store=Mock()
+            job={'id':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','request_id':rid,'model':'seedream-5-0-lite',
+                 'billing_mode':'platform','status':status,'image_keys':['original.png'] if status=='completed' else [],
+                 'provider_task_id':'task_synthetic_12345','requested_count':1}
+            store.jobs.return_value=[job]
+            store.apply.return_value={'job':{**job,'status':'processing'}}
+            with self.subTest(status=status),patch.dict('os.environ',{'APIMART_IMAGE_API_KEY':'synthetic'}),patch.object(server,'require_authenticated_user',return_value=Mock(id='user-fixture')),patch.object(server,'enforce_rate_limit'),patch.object(routes,'ImageStore',return_value=store),patch.object(provider,'query',return_value={'status':'processing'}) as query,patch.object(provider,'submit') as submit:
+                response=server.app.test_client().get('/api/apimart-images/tasks/'+rid,headers={'X-Billing-Mode':'platform'})
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.json['job']['model'],'seedream-5-0-lite')
+            if status=='completed':
+                self.assertEqual(response.json['images'][0]['filename'],'original.png');query.assert_not_called()
+            else:
+                query.assert_called_once_with('synthetic','task_synthetic_12345')
+            store.begin.assert_not_called();submit.assert_not_called()
 
     def test_nano_logical_price_model_stays_stable_while_official_is_submitted(self):
         store=Mock();job={'id':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','status':'submitting','request_id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}

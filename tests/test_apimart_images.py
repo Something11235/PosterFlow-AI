@@ -133,7 +133,7 @@ class ImageProtocolTests(unittest.TestCase):
         self.assertNotIn('private',text);self.assertNotIn('forged',text)
 
     def test_documented_models_and_fields(self):
-        for model in provider.MODELS:
+        for model in provider.ACTIVE_MODELS:
             body = provider.build_request(model, {"prompt": "猫", "count": 1, "size": "landscape_16_9"})
             self.assertEqual(body["n"], 1)
             if model.startswith("gpt-image-2.6-"):
@@ -146,7 +146,7 @@ class ImageProtocolTests(unittest.TestCase):
 
     def test_canvas_named_ratios_and_source_aspect_editing(self):
         frames = {"square_1_1": "1:1", "landscape_3_2": "3:2", "portrait_2_3": "2:3", "landscape_4_3": "4:3", "portrait_3_4": "3:4", "landscape_16_9": "16:9", "portrait_9_16": "9:16"}
-        for model in provider.MODELS:
+        for model in provider.ACTIVE_MODELS:
             for size, expected in frames.items():
                 body = provider.build_request(model, {"prompt": "synthetic canvas", "size": size})
                 self.assertEqual(body.get("aspect_ratio") or body.get("size"), expected)

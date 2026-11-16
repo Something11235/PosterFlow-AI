@@ -116,7 +116,7 @@ def create_image_blueprint(server):
             if getattr(server.g, "apimart_image_billing_mode", None) == "own_key" and getattr(error, "quota", None):
                 payload["upload_quota"] = error.quota
             return jsonify(payload), error.status
-        if error.code == "IMAGE_PROVIDER_CHANGED":
+        if error.code in {"IMAGE_PROVIDER_CHANGED", "MODEL_RETIRED"}:
             return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=False, generation_submitted=False, phase="validation", recovery=["刷新页面后再提交"]), error.status
         if error.code == "IMAGE_PRICING_CHANGED":
             return jsonify(error=error.message, code=error.code, detail=error.message, submission_unknown=False, generation_submitted=False, phase="validation", recovery=["刷新页面，核对当前积分后再生成"]), error.status
@@ -211,7 +211,7 @@ def create_image_blueprint(server):
 
     @bp.get("/config")
     def config():
-        return jsonify(success=True, platform_configured=bool(os.getenv("APIMART_IMAGE_API_KEY", "").strip()) and is_supabase_configured(), database_configured=is_supabase_configured(), models=[{"model": name, "credit_cost": 1, **spec} for name, spec in provider.MODELS.items()])
+        return jsonify(success=True, platform_configured=bool(os.getenv("APIMART_IMAGE_API_KEY", "").strip()) and is_supabase_configured(), database_configured=is_supabase_configured(), models=[{"model": name, "credit_cost": 1, **spec} for name, spec in provider.ACTIVE_MODELS.items()])
 
     @bp.post("/generations")
     def generate():
@@ -224,6 +224,8 @@ def create_image_blueprint(server):
         mode, key, owner, user_id = context()
         server.g.apimart_image_billing_mode = mode
         model = data.get("platform_model") if mode == "platform" else request.headers.get("X-Provider-Model", "").strip()
+        if isinstance(model, str) and model in provider.RETIRED_MODELS:
+            raise provider.ImageTaskError("MODEL_RETIRED", "Seedream 5.0 Lite 已下架，请刷新页面后选择其他模型。")
         if mode == "platform" and isinstance(model, str) and model.startswith("gpt-image-2.6-"):
             raise provider.ImageTaskError("IMAGE_PROVIDER_CHANGED", "图片服务线路已更新，请刷新页面后再提交；本次尚未提交生图。", 409)
         request_id = normalize_id(data.get("request_id"))

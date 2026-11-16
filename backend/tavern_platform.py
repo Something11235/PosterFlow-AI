@@ -1,4 +1,4 @@
-"""Server-owned tavern credit orchestration. No provider retries or prompt storage."""
+"""Server-owned tavern billing with temporary current-input and reply retention."""
 import hashlib
 import json
 import os
@@ -162,9 +162,14 @@ class TavernStore:
         fingerprint = hashlib.sha256(json.dumps({"body": body, "kind": kind, "endpoint": endpoint,
                                                 "pricing_version": PRICING_VERSION}, sort_keys=True,
                                                ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
-        return self.rpc("begin_tavern_request", {"p_user_id": user_id, "p_request_id": request_id,
+        # The validated request ends with this turn's user message. Retain only
+        # that input, not the system prompt or previously supplied history.
+        # PostgreSQL text rejects NUL; leave the provider request and its
+        # fingerprint untouched while making the retained copy representable.
+        input_text = body["messages"][-1]["content"].replace("\x00", "\ufffd")
+        return self.rpc("begin_tavern_request_with_input", {"p_user_id": user_id, "p_request_id": request_id,
                         "p_fingerprint": fingerprint, "p_model": body["model"], "p_kind": kind,
-                        "p_reserved_credits": reserved})
+                        "p_reserved_credits": reserved, "p_input_text": input_text})
 
     def apply(self, user_id, request_id, outcome, usage=None, content=None, error_code=None):
         # PostgreSQL text cannot represent NUL. Preserve real usage for billing

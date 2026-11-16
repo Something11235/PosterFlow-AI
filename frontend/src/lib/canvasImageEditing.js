@@ -1,6 +1,7 @@
-import { apimartImageModel, IMAGE_MODEL_OPTIONS, MAX_REFERENCE_IMAGES } from "./provider.js";
+import { apimartImageModel, IMAGE_MODEL_OPTIONS, MAX_REFERENCE_IMAGES, isRetiredImageModel } from "./provider.js";
 
 export function canvasEditCapability(model) {
+  if (isRetiredImageModel(model)) return { referenceLimit: 0, mask: false, kind: "disabled" };
   if (apimartImageModel(model)?.canvasEdit === false) return { referenceLimit: apimartImageModel(model).maxReferences, mask: false, kind: "disabled" };
   if (model === "grok-imagine-2.0-ext") return { referenceLimit: 1, mask: false, kind: "region" };
   const spec = apimartImageModel(model);
