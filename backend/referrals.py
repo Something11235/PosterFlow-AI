@@ -21,7 +21,7 @@ class ReferralError(Exception):
         self.code, self.message, self.status = code, message, status
 
 
-def create_referral_blueprint(require_user, rate_limit, error_response):
+def create_referral_blueprint(require_user, rate_limit, error_response, require_admin=None):
     bp = Blueprint("referrals", __name__, url_prefix="/api/referrals")
 
     @bp.after_request
@@ -51,19 +51,17 @@ def create_referral_blueprint(require_user, rate_limit, error_response):
             raise ReferralError("REFERRAL_INPUT_INVALID", "邀请奖励查询参数无效。")
         return values
 
-    def rpc(name, args):
-        value = SupabaseGateway().rpc(name, args)
+    def rpc(name, args, gateway=None):
+        value = (gateway or SupabaseGateway()).rpc(name, args)
         if not isinstance(value, dict) or value.get("ok") is not True:
             if isinstance(value, dict) and value.get("code") == "ACCOUNT_FROZEN":
                 raise ReferralError("ACCOUNT_FROZEN", "当前账户不可用。", 403)
+            if isinstance(value, dict) and value.get("code") == "ADMIN_REQUIRED":
+                raise ReferralError("ADMIN_REQUIRED", "邀请奖励管理仅对管理员开放。", 403)
             raise ReferralError("REFERRALS_UNAVAILABLE", "邀请奖励服务暂不可用，请稍后刷新重试。", 503)
         return value
 
-    @bp.get("")
-    def snapshot():
-        user = require_user()
-        rate_limit("referral-snapshot", user.id, 60, 60)
-        values = query({"limit", "offset"})
+    def pagination(values):
         limit_text, offset_text = values.get("limit", "20"), values.get("offset", "0")
         if (not re.fullmatch(r"[0-9]{1,2}", limit_text)
                 or not re.fullmatch(r"[0-9]{1,7}", offset_text)):
@@ -71,6 +69,14 @@ def create_referral_blueprint(require_user, rate_limit, error_response):
         limit, offset = int(limit_text), int(offset_text)
         if not 1 <= limit <= 50 or not 0 <= offset <= 1000000:
             raise ReferralError("REFERRAL_INPUT_INVALID", "奖励记录页码无效。")
+        return limit, offset
+
+    @bp.get("")
+    def snapshot():
+        user = require_user()
+        rate_limit("referral-snapshot", user.id, 60, 60)
+        values = query({"limit", "offset"})
+        limit, offset = pagination(values)
         value = rpc("referral_snapshot", {"p_user_id": user.id, "p_limit": limit, "p_offset": offset})
         # Never spread the RPC result: new database fields must be explicitly
         # reviewed before becoming part of the public account response.
@@ -80,6 +86,31 @@ def create_referral_blueprint(require_user, rate_limit, error_response):
         return jsonify(success=True, code=value["code"], rate=value["rate"],
                        invited_count=value["invited_count"], total_rewards=value["total_rewards"],
                        records=records, has_more=value["has_more"])
+
+    @bp.get("/admin")
+    def admin_overview():
+        if require_admin is None:
+            raise ReferralError("ADMIN_REQUIRED", "邀请奖励管理仅对管理员开放。", 403)
+        admin, gateway = require_admin()
+        rate_limit("referral-admin", admin.id, 60, 60)
+        values = query({"view", "search", "limit", "offset"})
+        view, search = values.get("view", "relations"), values.get("search", "")
+        if view not in {"relations", "rewards"} or len(search) > 120 or "\x00" in search:
+            raise ReferralError("REFERRAL_INPUT_INVALID", "请选择有效记录类型，搜索内容不超过 120 字。")
+        limit, offset = pagination(values)
+        value = rpc("admin_referral_overview", {
+            "p_admin": admin.id, "p_view": view, "p_search": search.strip(),
+            "p_limit": limit, "p_offset": offset,
+        }, gateway)
+        fields = ("invitee_id", "invitee_name", "invitee_email", "inviter_id", "inviter_name", "inviter_email",
+                  "redeemed_credits", "reward_credits")
+        fields += ("bound_at", "redemption_count") if view == "relations" else ("id", "redeemed_at", "status")
+        records = [{key: row.get(key) for key in fields} for row in value["records"]]
+        totals = {key: value["totals"][key] for key in (
+            "inviter_count", "invitee_count", "redemption_count", "redeemed_credits", "reward_credits",
+        )}
+        return jsonify(success=True, totals=totals, records=records,
+                       total_count=value["total_count"], has_more=value["has_more"])
 
     @bp.get("/validate")
     def validate():

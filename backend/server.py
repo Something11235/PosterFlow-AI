@@ -2740,7 +2740,7 @@ try:
     from backend.referrals import create_referral_blueprint
 except ModuleNotFoundError:
     from referrals import create_referral_blueprint
-app.register_blueprint(create_referral_blueprint(require_authenticated_user, enforce_rate_limit, provider_error_response))
+app.register_blueprint(create_referral_blueprint(require_authenticated_user, enforce_rate_limit, provider_error_response, require_admin_user))
 
 try:
     from backend.apimart_image_routes import create_image_blueprint

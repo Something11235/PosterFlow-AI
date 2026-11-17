@@ -11,6 +11,7 @@ import { beijingDate, initialStatsFrom } from "../lib/adminBookkeeping";
 import { creditText, creditUnits } from "../lib/credits";
 
 const AdminTavernBilling = lazy(() => import("./AdminTavernBilling"));
+const AdminReferralRewards = lazy(() => import("./AdminReferralRewards"));
 
 const METRIC_LABELS = {
   registered_users: "新增用户", verified_users: "已验证邮箱", daily_active_users: "今日活跃", monthly_active_users: "本月活跃",
@@ -237,6 +238,7 @@ export default function AdminMetricsPanel({ open, authHeaders, onClose }) {
           </section>
           <AdminModelBadges authHeaders={authHeaders} />
           <AnnouncementManager authHeaders={authHeaders} />
+          <Suspense fallback={<p role="status" className="my-5 text-sm text-text-muted">正在读取邀请奖励…</p>}><AdminReferralRewards authHeaders={authHeaders} /></Suspense>
           <AdminCreditCodes authHeaders={authHeaders} />
 
         </div>
