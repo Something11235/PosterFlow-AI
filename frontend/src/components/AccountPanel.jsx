@@ -1,8 +1,8 @@
 import { displayCredits } from "../lib/credits";
 import React, { useState } from "react";
-import { CircleUserRound, CreditCard, LogOut, MailCheck, Trash2, X } from "lucide-react";
+import { CircleUserRound, CreditCard, Gift, LogOut, MailCheck, Trash2, X } from "lucide-react";
 
-export default function AccountPanel({ open, account, loading, onClose, onSignOut, onDelete, onOpenRecharge }) {
+export default function AccountPanel({ open, account, loading, onClose, onSignOut, onDelete, onOpenRecharge, onOpenReferrals }) {
   const [deleting, setDeleting] = useState(false);
   if (!open) return null;
   const profile = account?.profile || {};
@@ -21,6 +21,7 @@ export default function AccountPanel({ open, account, loading, onClose, onSignOu
           <div className="rounded-lg border border-border-subtle bg-bg-tertiary p-4"><p className="text-sm font-medium text-text-primary">{profile.username || account?.email || "PosterFlow 用户"}</p><p className="mt-1 break-all text-sm text-text-muted">{account?.email || ""}</p><p className={`mt-3 inline-flex items-center gap-2 text-xs ${loading ? "animate-pulse text-text-muted" : verified ? "text-mint" : "text-gold"}`}><MailCheck size={14} />{loading ? "正在同步邮箱与积分状态…" : verified ? "邮箱已验证，积分奖励已激活" : "邮箱尚未验证，验证后领取注册赠送积分"}</p></div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Stat label="当前积分" value={loading ? "…" : credits.balance ?? "--"} accent /><Stat label="累计发放" value={loading ? "…" : credits.total_granted ?? "--"} /><Stat label="累计消费" value={loading ? "…" : credits.total_spent ?? "--"} /><Stat label="已退款" value={loading ? "…" : credits.total_refunded ?? "--"} /></div>
           {verified && <button type="button" onClick={onOpenRecharge} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-semibold text-white transition hover:bg-accent-hover"><CreditCard size={16} />购买积分</button>}
+          <button type="button" onClick={onOpenReferrals} className="inline-flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-accent transition hover:bg-accent/10"><span className="inline-flex items-center gap-2 font-semibold"><Gift size={17} />邀请奖励</span><span className="text-xs text-text-secondary">好友兑换，你获 10% 奖励积分</span></button>
           <div><h3 className="text-sm font-semibold text-text-primary">最近积分流水</h3><div className="mt-2 divide-y divide-border-subtle rounded-lg border border-border-subtle bg-bg-tertiary">{(account?.transactions || []).slice(0, 6).map(item => <TransactionRow key={item.id} item={item} />)}{loading ? <p className="animate-pulse px-3 py-4 text-sm text-text-muted">正在同步积分流水…</p> : !(account?.transactions || []).length && <p className="px-3 py-4 text-sm text-text-muted">暂时没有流水记录</p>}</div></div>
           <div className="flex flex-col-reverse gap-2 border-t border-border-subtle pt-4 sm:flex-row sm:justify-between"><button type="button" onClick={onSignOut} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border-default px-4 text-sm text-text-secondary hover:bg-bg-elevated"><LogOut size={16} />退出登录</button><button type="button" disabled={deleting} onClick={deleteAccount} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 text-sm text-error hover:bg-error/10 disabled:opacity-50"><Trash2 size={16} />{deleting ? "删除中" : "删除账号"}</button></div>
         </div>
@@ -35,6 +36,6 @@ function TransactionRow({ item }) {
   const tavern = item.metadata?.media_type === "tavern";
   const settled = tavern && item.type === "spend";
   const title = tavern ? `${item.metadata.kind === "assist" ? "酒馆AI助写" : item.metadata.kind === "summary" ? "酒馆剧情摘要" : "酒馆角色对话"} · ${item.type === "reserve" ? "积分预留" : item.type === "refund" ? "积分退回" : item.type === "spend" ? "已结算" : "积分变动"}`
-    : item.type === "signup_bonus" ? "注册奖励" : item.type === "refund" ? "生成退款" : item.type === "purchase" ? "充值到账" : item.type === "spend" ? "创作消费" : item.type === "reserve" ? "生成预扣" : "积分调整";
+    : item.type === "referral_bonus" ? "邀请奖励积分" : item.type === "signup_bonus" ? "注册奖励" : item.type === "refund" ? "生成退款" : item.type === "purchase" ? "充值到账" : item.type === "spend" ? "创作消费" : item.type === "reserve" ? "生成预扣" : "积分调整";
   return <div className="flex items-center justify-between gap-3 px-3 py-3 text-sm"><span className="min-w-0 text-text-secondary">{title}{settled && <small className="mt-1 block text-xs text-text-muted">从已预留积分中结算</small>}</span><strong className={`flex-shrink-0 text-right ${!settled && Number(item.delta) >= 0 ? "text-mint" : "text-text-primary"}`}>{settled ? <>消费 {displayCredits(item.metadata.charged_credits, "待确认")}</> : <>{Number(item.delta) > 0 ? "+" : ""}{displayCredits(item.delta)}</>}</strong></div>;
 }

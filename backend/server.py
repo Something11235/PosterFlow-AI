@@ -2737,6 +2737,12 @@ except ModuleNotFoundError:
 app.register_blueprint(create_credit_code_blueprint(require_authenticated_user, require_admin_user, enforce_rate_limit, ALLOWED_ORIGINS, provider_error_response))
 
 try:
+    from backend.referrals import create_referral_blueprint
+except ModuleNotFoundError:
+    from referrals import create_referral_blueprint
+app.register_blueprint(create_referral_blueprint(require_authenticated_user, enforce_rate_limit, provider_error_response))
+
+try:
     from backend.apimart_image_routes import create_image_blueprint
     from backend.buytoken_image_routes import create_buytoken_image_blueprint
 except ModuleNotFoundError:

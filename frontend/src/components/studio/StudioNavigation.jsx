@@ -1,7 +1,7 @@
 import { displayCredits } from "../../lib/credits";
 import React, {useEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
-import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video } from "lucide-react";
+import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video } from "lucide-react";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
@@ -29,7 +29,7 @@ function TavernResources({ detailsRef }) {
   </details>;
 }
 
-export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
+export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
   const tavernResources = useRef(null);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
@@ -59,6 +59,7 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
         <button type="button" title="历史记录" aria-label="历史记录" onClick={onOpenHistory}><History size={18} />历史记录</button>
         <button type="button" title="生图任务" aria-label="生图任务" onClick={onOpenImageTasks}><Image size={18} />生图任务</button>
         <button type="button" title="QQ交流群" aria-label="QQ交流群" onClick={onOpenCommunity}><Users size={18} />QQ交流群</button>
+        <button type="button" title="邀请奖励" aria-label="邀请奖励" onClick={onOpenReferrals}><Gift size={18} />邀请奖励</button>
         <button type="button" title="购买积分" aria-label="购买积分" className="studio-mobile-tool" onClick={onOpenRecharge}><ArrowUpRight size={18} />购买积分</button>
       </nav>
       <div className="studio-nav-bottom">

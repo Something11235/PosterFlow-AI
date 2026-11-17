@@ -1,7 +1,7 @@
 import { displayCredits } from "../lib/credits";
 import { PROMPT_RESOURCES } from "../lib/promptResources";
 import React from "react";
-import { BarChart3, BookOpen, CodeXml, CreditCard, ExternalLink, History, KeyRound, Settings2, Sparkles, UserRound, Users } from "lucide-react";
+import { BarChart3, BookOpen, CodeXml, CreditCard, ExternalLink, Gift, History, KeyRound, Settings2, Sparkles, UserRound, Users } from "lucide-react";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Something11235/PosterFlow-AI";
 const PROMPT_REFERENCE_LINKS = PROMPT_RESOURCES;
@@ -22,6 +22,7 @@ export default function Sidebar({
   onOpenAccount,
   onOpenMetrics,
   onOpenRecharge,
+  onOpenReferrals,
   onOpenHistory,
   onOpenImageTasks,
   onOpenCommunity,
@@ -96,6 +97,7 @@ export default function Sidebar({
         <button type="button" onClick={onOpenHistory} className="flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary/65 px-2 text-xs font-medium text-text-secondary transition hover:border-border-default hover:bg-bg-elevated hover:text-text-primary lg:min-h-11 lg:justify-start lg:px-3 lg:text-sm"><History size={17} />历史记录</button>
         <button type="button" onClick={onOpenImageTasks} className="flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/10 px-2 text-xs font-medium text-accent lg:min-h-11 lg:justify-start lg:px-3 lg:text-sm"><History size={17} />生图任务</button>
         <button type="button" onClick={onOpenCommunity} className="flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary/65 px-2 text-xs font-medium text-text-secondary lg:min-h-11 lg:justify-start lg:px-3 lg:text-sm"><Users size={17} />QQ交流群</button>
+        <button type="button" onClick={onOpenReferrals} className="flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-tertiary/65 px-2 text-xs font-medium text-text-secondary lg:min-h-11 lg:justify-start lg:px-3 lg:text-sm"><Gift size={17} />邀请奖励</button>
         <button type="button" onClick={onOpenRecharge} className="col-span-2 flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/8 px-3 text-sm font-medium text-accent transition hover:bg-accent/14 sm:col-span-4 lg:col-span-1 lg:justify-start">
           <CreditCard size={17} />购买积分
         </button>

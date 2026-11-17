@@ -50,6 +50,7 @@ export function createAuthProxyFetch(supabaseUrl, {fetchImpl=(...args)=>globalTh
 
 export function authErrorMessage(error) {
   const code=error?.code, message=String(error?.message||'');
+  if (code==='REFERRAL_CODE_INVALID' || /REFERRAL_CODE_INVALID/.test(message)) return '邀请码无效或暂不可用，请核对后重试，或留空继续注册。';
   if (code==='invalid_credentials' || /invalid login credentials/i.test(message)) return '邮箱或密码错误，请检查后重试。';
   if (code==='email_not_confirmed' || /email not confirmed/i.test(message)) return '邮箱尚未验证，请先打开验证邮件完成验证，再登录。';
   if (error?.status===429 || /^over_.*rate_limit$/.test(code||'')) return '操作过于频繁，请稍后再试。';

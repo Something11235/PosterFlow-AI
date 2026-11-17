@@ -54,9 +54,11 @@ import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
 import { appendReferenceFiles, removeReferenceMentions } from "./lib/referenceSelection";
 import { supabase, supabaseConfigured } from "./lib/supabase";
+import { invitationFromSearch } from "./lib/referrals";
 
 const CanvasWorkspace = lazy(() => import("./components/FabricCanvasWorkspace"));
 const StudioWorkspace = lazy(() => import("./components/studio/StudioWorkspace"));
+const ReferralRewardsPanel = lazy(() => import("./components/ReferralRewardsPanel"));
 
 const API_BASE = "/api";
 
@@ -223,9 +225,14 @@ export default function App() {
 
   const accountRequestRef = useRef(0);
   const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState("signIn");
+  const [authReady, setAuthReady] = useState(!supabaseConfigured);
+  const [invitationCode, setInvitationCode] = useState(() => invitationFromSearch(window.location.search));
+  const invitationOpened = useRef(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [referralsOpen, setReferralsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [imageTasksOpen, setImageTasksOpen] = useState(false);
   const [imageTasksLoading, setImageTasksLoading] = useState(false);
@@ -236,6 +243,21 @@ export default function App() {
   const [imageRecoveryPaused,setImageRecoveryPaused] = useState(false);
   const closeImageTasks = useCallback(()=>setImageTasksOpen(false),[]);
   const [communityOpen, setCommunityOpen] = useState(false);
+
+  useEffect(() => {
+    if (!authReady || invitationOpened.current || !invitationCode) return;
+    invitationOpened.current = true;
+    if (!session) { setAuthMode("signUp"); setAuthOpen(true); }
+  }, [authReady, session, invitationCode]);
+
+  function clearInvitation() {
+    setInvitationCode("");
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("invite")) {
+      url.searchParams.delete("invite");
+      window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -321,11 +343,12 @@ export default function App() {
       if (!alive) return;
       sessionRef.current = data.session;
       setSession(data.session);
+      setAuthReady(true);
       if (data.session) {
         syncBackendSession(data.session);
         refreshAccount(data.session);
       }
-    });
+    }).catch(() => { if (alive) setAuthReady(true); });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       sessionRef.current = nextSession;
       setSession(nextSession);
@@ -956,6 +979,7 @@ export default function App() {
           onOpenAuth={() => setAuthOpen(true)}
           onOpenAccount={() => setAccountOpen(true)}
           onOpenRecharge={() => setRechargeOpen(true)}
+          onOpenReferrals={() => setReferralsOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
           onOpenHistory={() => setHistoryOpen(true)}
           onOpenImageTasks={() => setImageTasksOpen(true)}
@@ -969,6 +993,7 @@ export default function App() {
           onOpenAuth={() => setAuthOpen(true)}
           onOpenAccount={() => setAccountOpen(true)}
           onOpenRecharge={() => setRechargeOpen(true)}
+          onOpenReferrals={() => setReferralsOpen(true)}
           onOpenMetrics={() => setMetricsOpen(true)}
           onOpenHistory={() => setHistoryOpen(true)}
           onOpenImageTasks={() => setImageTasksOpen(true)}
@@ -1221,11 +1246,12 @@ export default function App() {
         onClose={() => setShowProviderSettings(false)}
       />
 
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} onNotice={setNotice} />
+      <AuthModal open={authOpen} initialMode={authMode} initialInvitationCode={invitationCode} onRegistered={clearInvitation} onClose={() => { setAuthOpen(false); setAuthMode("signIn"); }} onNotice={setNotice} />
       <CommunityQrModal open={communityOpen} onClose={() => setCommunityOpen(false)} />
-      <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} />
+      <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} onOpenReferrals={() => { setAccountOpen(false); setReferralsOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />
       <RechargePanel key={`recharge:${session?.user?.id || "guest"}`} open={rechargeOpen} onClose={() => setRechargeOpen(false)} session={session} account={account} authHeaders={authHeaders} onLogin={() => {setRechargeOpen(false);setAuthOpen(true);}} onAccountRefresh={refreshAccount} />
+      {referralsOpen && <Suspense fallback={<div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70"><div role="status" className="rounded-lg border border-border-default bg-bg-secondary p-5 text-sm text-text-secondary">正在打开邀请奖励…<button type="button" onClick={() => setReferralsOpen(false)} className="ml-4 min-h-11 text-accent">取消</button></div></div>}><ReferralRewardsPanel key={`referrals:${session?.user?.id || "guest"}`} session={session} authHeaders={authHeaders} onClose={() => setReferralsOpen(false)} onLogin={() => { setReferralsOpen(false); setAuthOpen(true); }} /></Suspense>}
       <PromptHistoryPanel key={`history:${session?.user?.id || "guest"}`} open={historyOpen} onOpenImageTasks={() => {setHistoryOpen(false);setImageTasksOpen(true);}} userId={session?.user?.id} authHeaders={authHeaders} onClose={() => setHistoryOpen(false)} onUsePrompt={(value, item) => { if (item?.kind === "video") { setVideoHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("video"); } else if (item?.kind === "music") { setMusicHistoryRestore({ id: createRequestId(), identity: session?.user?.id || "guest", entry: item }); setStudioArea("music"); } else { setPrompt(value); setActivePreset(null); setMode("create"); setStudioArea("image"); } setHistoryOpen(false); setNotice("历史提示词已填入，请核对模型与参数后生成"); }} />
 
       <ImageTasksPanel key={`image-tasks:${imageTaskStore.identity}`} open={imageTasksOpen} tasks={imageTasks} loading={imageTasksLoading} warning={imageTasksWarning} onClose={closeImageTasks} onRefresh={() => void syncImageTasks()} onView={viewImageTask} onQuery={queryImageTask} />
