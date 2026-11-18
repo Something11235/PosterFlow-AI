@@ -18,8 +18,6 @@ import GalleryImagePreview from "./GalleryImagePreview";
 import { isPendingImageTaskError } from "../lib/imageTaskRecovery";
 import { imageRefundError } from "../lib/imageRefund";
 
-const PLATFORM_FAILURE_DETAIL = "一般为以下原因：\n1.提示词有模型不支持的参数或违规用词触发审核拒绝\n2.余额不足\n3.高峰期使用人数过多";
-
 export default function Gallery({
   images,
   isGenerating,
@@ -358,18 +356,45 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
     : uploadRateLimited ? ["稍后重试", "避免连续提交"]
     : referenceLinkUnavailable ? ["稍后重试", "持续失败请联系站主"] : null;
   const timedOut = errorInfo?.code === 'IMAGE_PROVIDER_TIMEOUT';
-  const pricingChanged = ['IMAGE_PRICING_CHANGED', 'IMAGE_PROVIDER_CHANGED', 'IMAGE_FEATURE_UNSUPPORTED', 'BUYTOKEN_ENDPOINT_INVALID', 'BUYTOKEN_REQUEST_REJECTED'].includes(errorInfo?.code);
+  const configurationError = ['IMAGE_PRICING_CHANGED', 'IMAGE_PROVIDER_CHANGED', 'IMAGE_FEATURE_UNSUPPORTED', 'BUYTOKEN_ENDPOINT_INVALID'].includes(errorInfo?.code);
+  const inputOrAccountError = ['PROMPT_INVALID', 'CREDITS_INSUFFICIENT', 'EMAIL_UNVERIFIED', 'AUTH_REQUIRED', 'ACCOUNT_FROZEN'].includes(errorInfo?.code);
   const processing = errorInfo?.code === 'IMAGE_TASK_PENDING';
   const saving = errorInfo?.code === 'IMAGE_SAVE_PENDING';
   const duplicate = errorInfo?.code === 'REQUEST_ALREADY_PROCESSED';
   const closed = errorInfo?.code === 'IMAGE_TASK_CLOSED';
   const pending = isPendingImageTaskError(errorInfo);
+  const showFailureAdvice = !pending && (Boolean(refunded) || !(uploadLimitDetail || referenceUploadFailed || configurationError || inputOrAccountError));
   const recoveryHint = autoRecovery
     ? "提交后的 20 分钟内，页面保持前台时系统会自动查询原任务，成功后更新图片；不会重新生图或重复扣积分。"
     : "请点击下方按钮查询原任务，也可以从“历史记录 → 生图任务”继续查看。请勿重复提交。";
-  const recovery = refunded ? refunded.recovery : pending ? ["查询原任务，不会重复扣积分", "请勿重复生成"] : closed ? errorInfo.recovery || ["查看原任务记录"] : uploadRecovery || (pricingChanged ? errorInfo.recovery || ["刷新页面，核对当前积分后再生成"] : timedOut ? errorInfo?.recovery?.length ? errorInfo.recovery : ['至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。'] : referenceUploadFailed ? ["稍后重试上传", "持续失败请联系站主"] : platform ? ["请修改提示词或更换参考图重试。不同模型的审核力度不同，可更换不同的模型进行尝试。"] : errorInfo?.recovery?.length
-    ? errorInfo.recovery
-    : ["检查 API Key", "确认后端进程", "重新发起生成"]);
+  let recovery = [];
+  if (refunded) recovery = refunded.recovery;
+  else if (pending) recovery = ["查询原任务，不会重复扣积分", "请勿重复生成"];
+  else if (closed) recovery = errorInfo.recovery || ["查看原任务记录"];
+  else if (uploadRecovery) recovery = uploadRecovery;
+  else if (configurationError) recovery = errorInfo.recovery || ["刷新页面，核对当前积分后再生成"];
+  else if (timedOut) recovery = errorInfo.recovery?.length ? errorInfo.recovery : ["至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。"];
+  else if (referenceUploadFailed) recovery = ["稍后重试上传", "持续失败请联系站主"];
+  else if (inputOrAccountError) recovery = errorInfo.recovery || [];
+  else if (!platform) recovery = errorInfo?.recovery?.length ? errorInfo.recovery : ["检查 API Key", "确认后端进程", "重新发起生成"];
+
+  const statusTitle = saving ? "图片已生成，正在保存"
+    : duplicate ? "已找到原任务，正在确认结果"
+    : processing ? "任务正在处理，请稍候"
+    : pending ? "结果暂未确认，原任务已保留"
+    : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽"
+    : uploadRateLimited ? "图片服务暂时限制参考图上传"
+    : referenceLinkUnavailable ? "参考图临时链接暂时无法准备"
+    : errorInfo?.message;
+  let detail;
+  if (pending) detail = `${saving || processing ? '' : '暂时未收到最终结果，不代表生成失败。'}${recoveryHint}`;
+  else if (refunded) detail = refunded.detail;
+  else if (uploadLimitDetail) detail = uploadLimitDetail;
+  else if (referenceUploadFailed) detail = "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。";
+  else if (timedOut) detail = errorInfo.detail || "图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。";
+  else if (closed || configurationError || inputOrAccountError || !platform) detail = errorInfo?.detail;
+  else detail = statusTitle;
+  if (!showFailureAdvice && detail === statusTitle) detail = null;
   const upstream = platform ? errorInfo?.upstream_error : null;
 
   return (
@@ -380,20 +405,27 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
           {refunded ? "预留积分已退回" : saving ? "图片保存中" : processing ? "生成处理中" : pending ? "正在确认原任务状态" : platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {refunded ? refunded.message : saving ? "图片已生成，正在保存" : duplicate ? "已找到原任务，正在确认结果" : processing ? "任务正在处理，请稍候" : pending ? "结果暂未确认，原任务已保留" : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽" : uploadRateLimited ? "图片服务暂时限制参考图上传" : referenceLinkUnavailable ? "参考图临时链接暂时无法准备" : errorInfo?.message || "画廊已准备好，当前生成服务暂时没有完成响应。"}
+          {showFailureAdvice ? "失败一般为以下原因：" : statusTitle || "本次生成未完成"}
         </h2>
-        <p className={`mt-3 max-w-lg text-sm leading-7 text-text-muted${platform ? " whitespace-pre-line" : ""}`}>
-          {refunded ? refunded.detail : pending ? `${saving || processing ? '' : '暂时未收到最终结果，不代表生成失败。'}${recoveryHint}` : closed ? errorInfo.detail : uploadLimitDetail || (pricingChanged ? errorInfo.detail || errorInfo.message : timedOut ? errorInfo?.detail || '图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。' : referenceUploadFailed ? "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。" : platform ? PLATFORM_FAILURE_DETAIL : errorInfo?.detail ||
-            "你仍然可以编辑提示词、调整参数和复用历史。确认图片服务可用后，重新连接即可继续生成。")}
-        </p>
+        {showFailureAdvice && <div className="mt-3 max-w-lg space-y-2 text-sm leading-7 text-text-secondary">
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>提示词或参考图有违规或涉及版权的内容，或模型不支持的参数</li>
+            <li>网络波动，改用科学上网且尽量不要使用公用网络</li>
+          </ol>
+          <p>请调整提示词或参考图，更换网络环境重试</p>
+        </div>}
+        {showFailureAdvice && !refunded && statusTitle && statusTitle !== detail && (
+          <p className="mt-3 max-w-lg text-sm font-medium text-text-secondary">{statusTitle}</p>
+        )}
+        {detail && <p className="mt-3 max-w-lg whitespace-pre-line text-sm leading-7 text-text-muted">{detail}</p>}
         {pending && <p className="mt-2 text-xs leading-6 text-text-muted">如果连接持续中断，可切换网络，或尝试使用科学上网后刷新重试；原任务记录会保留。</p>}
-        <div className="mt-5 flex flex-wrap gap-2">
+        {recovery.length > 0 && <div className="mt-5 flex flex-wrap gap-2">
           {recovery.map((chip) => (
             <span key={chip} className="rounded-md border border-border-subtle bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary">
               {chip}
             </span>
           ))}
-        </div>
+        </div>}
         {pending && onQueryTask && <button type="button" disabled={querying} onClick={async()=>{setQuerying(true);try{await onQueryTask();}finally{setQuerying(false);}}} className="mt-5 inline-flex min-h-12 items-center gap-2 rounded-lg bg-accent px-5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"><RefreshCw size={17} className={querying?'animate-spin':''}/>{querying?'正在查询原任务…':'查询原任务 · 找回图片'}</button>}
         {!pending && <button
           type="button"
@@ -445,12 +477,12 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
             <dt className="text-text-muted">恢复动作</dt>
             <dd className="text-right font-medium text-text-primary">{refunded ? '原任务已结束，可主动发起新任务' : pending ? autoRecovery ? '自动查询原任务，也可手动查询' : '查询原任务，不会重复扣积分' : '按建议处理后重试'}</dd>
           </div>
-          <div>
+          {recovery.length > 0 && <div>
             <dt className="mb-2 text-text-muted">建议说明</dt>
             <dd className={`rounded-lg border p-3 text-sm leading-6 text-text-secondary ${pending ? 'border-accent/25 bg-accent/8' : 'border-error/25 bg-error/8'}`}>
               {recovery.join(" / ")}
             </dd>
-          </div>
+          </div>}
         </dl>
       </div>
     </div>
