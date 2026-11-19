@@ -23,7 +23,7 @@ test('standard quotes use twenty percent and video-only duration while previous 
  const v={...defaultSeedance20(),resolution:'480p'},a={kind:'audio',duration_ms:3000};
  assert.equal(videoQuote(v,[a]).text,'7.5');assert.equal(videoQuote(v,[{kind:'video',duration_ms:3000},a]).reservedText,'11.5');
  assert.equal(videoQuote(defaultVideo()).text,'2.5');assert.equal(videoQuote(defaultSeedance25()).text,'11');
- assert.deepEqual(VIDEO_MODELS.slice(0,4).map(m=>m.id),['seedance-2.5','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini']);
+ assert.deepEqual(VIDEO_MODELS.slice(0,5).map(m=>m.id),['seedance-2.5','seedance-2-5-flash','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini']);
  assert.equal(VIDEO_MODELS[1].available,true);assert.equal(VIDEO_MODELS[2].available,true);
 });
 

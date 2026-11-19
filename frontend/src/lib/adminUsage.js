@@ -19,7 +19,7 @@ export function usageState(row) {
 export function usageBillingLabel(row) {
   if (row.billing_mode !== 'platform') return '不扣网站积分';
   if (row.kind === 'music') return row.billing_unit === 'song' ? '历史按首' : '按次计费';
-  if (row.kind === 'video') return row.billing_unit === 'actual_cost' || ['seedance-2.5','seedance-2.0','seedance-2.0-fast','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'].includes(row.model) ? '实际用量结算' : '按秒计费';
+  if (row.kind === 'video') return row.billing_unit === 'actual_cost' || ['seedance-2.5','seedance-2-5-flash','seedance-2.0','seedance-2.0-fast','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'].includes(row.model) ? '实际用量结算' : '按秒计费';
   return '按张计费';
 }
 

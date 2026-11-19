@@ -18,7 +18,7 @@ test('Fast and standard quotes use 1.2; old Mini and 2.5 prices and model order 
  for(const [resolution,price,reserve] of [['480p','4.5','7.5'],['720p','9.5','15.5']]){const q=videoQuote({...defaultSeedance20(SEEDANCE20_FAST),resolution});assert.equal(q.text,price);assert.equal(q.reservedText,reserve);}
  const q=videoQuote({...defaultSeedance20(SEEDANCE20_FAST),resolution:'480p'},[{kind:'video',duration_ms:3000},{kind:'audio',duration_ms:3000}]);assert.equal(q.text,'4.5');assert.equal(q.reservedText,'7');
  assert.equal(videoQuote({...defaultSeedance20(),resolution:'480p'}).text,'7.5');assert.equal(videoQuote(defaultVideo()).text,'2.5');assert.equal(videoQuote(defaultSeedance25()).text,'11');
- assert.deepEqual(VIDEO_MODELS.filter(m=>m.available).map(m=>m.id),['seedance-2.5','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video']);assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
+ assert.deepEqual(VIDEO_MODELS.filter(m=>m.available).map(m=>m.id),['seedance-2.5','seedance-2-5-flash','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video']);assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
  assert.equal(usageBillingLabel({kind:'video',model:SEEDANCE20_FAST,billing_mode:'platform'}),'实际用量结算');
 });
 

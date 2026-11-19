@@ -22,7 +22,7 @@ test('GPT26 versions lead the active catalog, remain single image 1K, and each c
     assert.equal(canvasEditCapability(id).kind, 'mask');
     assert.equal(canvasEditCapability(id).mask, true);
   }
-  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'hot').map(([id]) => id), ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']);
+  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([id,v]) => id.startsWith('gpt-image-') && v === 'hot').map(([id]) => id), ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']);
 });
 test('retired model saved in session requires explicit model selection and never sends a paid request', async () => {
   const priorWindow = global.window, priorFetch = global.fetch;

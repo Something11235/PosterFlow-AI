@@ -37,7 +37,7 @@ test('Omni has its own payload/history whitelist and exact maximum-output estima
  }
  const continued=buildVideoParameters({...base,continue_request_id:'11111111-1111-4111-8111-111111111111',task:'extend'});
  assert.deepEqual(buildVideoParameters(restoreVideoHistory({parameters:continued})),continued);
- assert.equal(VIDEO_MODELS.filter(m=>m.available)[4].id,OMNI_FLASH);
+ assert.equal(VIDEO_MODELS.filter(m=>m.available)[5].id,OMNI_FLASH);
  assert.throws(()=>buildVideoParameters({...base,resolution:'480p'}));
 });
 test('Omni rejects audio, unsupported approved assets, missing first frame, and long video without dropping materials',()=>{

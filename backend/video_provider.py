@@ -14,6 +14,8 @@ except ModuleNotFoundError:
     from music_provider import safe_media_url, custom_endpoints, pinned_custom_response, MusicError
 
 MODEL = 'seedance-2.0-mini'
+SEEDANCE25_FLASH_MODEL = 'seedance-2-5-flash'
+SEEDANCE25_MODELS = ('seedance-2.5', SEEDANCE25_FLASH_MODEL)
 API = 'https://api.apimart.ai/v1'
 TASK_ID = re.compile(r'^[A-Za-z0-9_-]{8,160}$')
 ASSET_URL = re.compile(r'^asset://[A-Za-z0-9_-]{4,160}$')
@@ -63,7 +65,7 @@ def normalized_video_parameters(data):
         try:from backend.seedance20 import normalized_parameters
         except ModuleNotFoundError:from seedance20 import normalized_parameters
         return normalized_parameters(data)
-    if isinstance(data,dict) and data.get('model')=='seedance-2.5':
+    if isinstance(data,dict) and data.get('model') in SEEDANCE25_MODELS:
         try:from backend.seedance25 import normalized_parameters
         except ModuleNotFoundError:from seedance25 import normalized_parameters
         return normalized_parameters(data)
@@ -106,7 +108,7 @@ def validate_video_references(references,parameters=None):
         try:from backend.omni_flash import validate_references
         except ModuleNotFoundError:from omni_flash import validate_references
         return validate_references(references,parameters)
-    if parameters and parameters.get('model')=='seedance-2.5':
+    if parameters and parameters.get('model') in SEEDANCE25_MODELS:
         try:from backend.seedance25 import validate_references
         except ModuleNotFoundError:from seedance25 import validate_references
         return validate_references(references,parameters)
@@ -166,7 +168,7 @@ def video_price(body, references):
         try:from backend.seedance20 import estimate
         except ModuleNotFoundError:from seedance20 import estimate
         return estimate(body,references)['reserved']
-    if body.get('model')=='seedance-2.5':
+    if body.get('model') in SEEDANCE25_MODELS:
         try:from backend.seedance25 import estimate
         except ModuleNotFoundError:from seedance25 import estimate
         return estimate(body,references)['reserved']
@@ -197,9 +199,11 @@ def video_payload(body, references, urls):
         raise VideoError('VIDEO_REFERENCE_INVALID','尚未取得有效素材地址。')
     if not references and not body.get('prompt') and 'draft_task_id' not in body:raise VideoError('INVALID_VIDEO_INPUT','文生视频需要填写提示词。')
     result={**body};images=[];roles=[];videos=[];audios=[]
+    if body.get('model')==SEEDANCE25_FLASH_MODEL and not references:
+        result.pop('omni_reference_task_type',None)
     # A single ordered image array keeps @图片N stable when ordinary references
     # and explicit frame roles are mixed. Never split that sequence in 2.5.
-    use_roles=body.get('model')=='seedance-2.5' and any(r['kind']=='image' and r.get('role') for r in references)
+    use_roles=body.get('model') in SEEDANCE25_MODELS and any(r['kind']=='image' and r.get('role') for r in references)
     for ref,url in zip(references,urls):
         if ref['kind']=='image':
             if ref.get('role') or use_roles:roles.append({'url':url,'role':ref.get('role') or 'reference_image'})
@@ -213,7 +217,7 @@ def video_payload(body, references, urls):
 
 def video_fingerprint(body, references):
     keys=['id','kind','sha256','asset_url','role','duration_ms','width','height']
-    if body.get('model') in {'seedance-2.5','seedance-2.0','seedance-2.0-fast','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:keys+=['fps','codec','size']
+    if body.get('model') in {*SEEDANCE25_MODELS,'seedance-2.0','seedance-2.0-fast','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:keys+=['fps','codec','size']
     if body.get('model') in {'MiniMax-H3','MiniMax-H3-Max'}:keys+=['audio_codecs']
     if body.get('model')=='wan3.0-video':keys+=['pages','has_alpha']
     stable=[{key:r[key] for key in keys if key in r} for r in references]
@@ -253,7 +257,7 @@ def video_endpoints(endpoint,query_template=''):
 
 
 def video_request(method,path,key,body=None,endpoint=None,query_template=None):
-    if not ((method=='POST' and path in ['/videos/generations','/seedance2/private-avatar']) or (method=='GET' and re.fullmatch(r'/tasks/[A-Za-z0-9_-]{8,160}\?language=zh',path))):
+    if not ((method=='POST' and path in ['/videos/generations','/seedance2/private-avatar','/seedance2/private-avatar/assets']) or (method=='GET' and re.fullmatch(r'/tasks/[A-Za-z0-9_-]{8,160}\?language=zh',path))):
         raise VideoError('INVALID_VIDEO_ROUTE','视频服务地址无效。')
     try:
         headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'}
@@ -261,7 +265,7 @@ def video_request(method,path,key,body=None,endpoint=None,query_template=None):
             endpoint,query_template=video_endpoints(endpoint,query_template)
         custom=bool(endpoint and (endpoint!=API+'/videos/generations' or query_template!=API+'/tasks/{task_id}'))
         if custom:
-            if path=='/seedance2/private-avatar':raise VideoError('VIDEO_OPERATION_UNSUPPORTED','当前自定义服务未配置素材审核接口；可直接上传素材进行创作。')
+            if path.startswith('/seedance2/private-avatar'):raise VideoError('VIDEO_OPERATION_UNSUPPORTED','当前自定义服务未配置素材审核接口；可直接上传素材进行创作。')
             url=endpoint if method=='POST' else query_template.replace('{task_id}',path.split('/')[2].split('?')[0])
             response=pinned_custom_response(method,url,headers,body)
         else:response=requests.request(method,API+path,headers=headers,json=body,timeout=(8,35),allow_redirects=False,stream=True)

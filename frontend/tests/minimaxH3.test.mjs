@@ -20,7 +20,7 @@ test('H3 has independent parameters, exact pricing, named model position and pre
   const refs=[...Array.from({length:9},(_,i)=>image(String(i))),video()];
   assert.equal(videoQuote({...base,resolution:'768p'},refs).text,'12.5');
   assert.equal(videoQuote({...base,resolution:'768p'},refs).extraImages,4);
-  assert.equal(VIDEO_MODELS.filter(m=>m.available)[5].id,MINIMAX_H3);
+  assert.equal(VIDEO_MODELS.filter(m=>m.available)[6].id,MINIMAX_H3);
   assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
   for(const patch of [{prompt:''},{prompt:'字'.repeat(7001)},{duration:3},{duration:16},{resolution:'720p'}])assert.throws(()=>buildVideoParameters({...base,...patch}));
 });

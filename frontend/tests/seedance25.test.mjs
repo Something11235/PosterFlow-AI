@@ -1,9 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildVideoParameters,videoQuote,videoReferenceInput,restoreVideoHistory,setVideoFrameRole} from '../src/lib/video.js';
-import {defaultSeedance25,seedance25DraftAvailable,SEEDANCE25_DRAFT_TTL_MS,seedance25EffectiveValues,seedance25AutoVideo} from '../src/lib/seedance25.js';
+import {buildVideoParameters,videoFile,videoQuote,videoReferenceInput,restoreVideoHistory,setVideoFrameRole} from '../src/lib/video.js';
+import {defaultSeedance25,seedance25DraftAvailable,SEEDANCE25_DRAFT_TTL_MS,SEEDANCE25_FLASH,seedance25EffectiveValues,seedance25AutoVideo} from '../src/lib/seedance25.js';
 import {VIDEO_MODELS} from '../src/lib/studioCatalog.js';
 const draftSource=extra=>({model:'seedance-2.5',is_draft:true,status:'completed',billing_status:'settled',provider_task_id:'task_draft_fixture',created_at:new Date().toISOString(),requested_duration:5,reference_duration_ms:0,...extra});
+
+test('Flash preserves its own model, supported options and history without sending draft fields',()=>{
+  const values={...defaultSeedance25(SEEDANCE25_FLASH),prompt:'镜头向前移动',output_format:'mov',return_last_frame:true,watermark:true,web_search:true};
+  const body=buildVideoParameters(values);
+  assert.equal(body.model,'seedance-2-5-flash');
+  assert.equal(body.resolution,'720p');
+  assert.equal(body.draft,undefined);
+  assert.equal(body.draft_request_id,undefined);
+  assert.deepEqual(buildVideoParameters(restoreVideoHistory({parameters:body})),body);
+  for(const settings of [{workflow:'draft'},{workflow:'final'},{duration:31},{size:'2:1'},{resolution:'1080p'}]){
+    assert.throws(()=>buildVideoParameters({...values,...settings}));
+  }
+});
+
+test('Flash estimates all four price tiers, 30s automatic output and independent reservation rounding',()=>{
+  const values=defaultSeedance25(SEEDANCE25_FLASH);
+  for(const [resolution,videoMs,expected,reserved] of [
+    ['480p',0,'7','11.5'],['480p',4000,'8','12.5'],
+    ['720p',0,'16','25.5'],['720p',4000,'17.5','28'],
+  ]){
+    const refs=[{kind:'audio',duration_ms:10000}];
+    if(videoMs)refs.push({kind:'video',duration_ms:videoMs});
+    const quote=videoQuote({...values,resolution},refs);
+    assert.deepEqual([quote.text,quote.reservedText],[expected,reserved]);
+  }
+  assert.equal(videoQuote({...values,duration:-1}).generatedSeconds,30);
+});
+
+test('Flash enforces reference counts, frame roles, reference duration and file limits',()=>{
+  const model=SEEDANCE25_FLASH,values=defaultSeedance25(model);
+  const refs=(kind,count,ms=2000)=>Array.from({length:count},(_,i)=>({
+    id:String(i),kind,state:'ready',reference:{id:String(i),kind,duration_ms:ms,width:640,height:640,receipt:'r'+i}
+  }));
+  for(const [kind,max] of [['image',10],['video',5],['audio',5]]){
+    assert.equal(videoReferenceInput(refs(kind,max),'unified',model,values).length,max);
+    assert.throws(()=>videoReferenceInput(refs(kind,max+1),'unified',model,values),/最多/);
+  }
+  assert.throws(()=>videoReferenceInput(refs('document',1),'unified',model,values),/移除其他类型/);
+  assert.throws(()=>videoReferenceInput(refs('audio',5,6100),'unified',model,values),/30 秒/);
+  const edit={...values,omni_reference_task_type:'edit',duration:-1};
+  assert.throws(()=>videoReferenceInput(refs('video',1),'unified',model,edit),/4–30/);
+  assert.equal(videoReferenceInput(refs('video',1,4000),'unified',model,edit).length,1);
+  const [frame]=refs('image',1);
+  assert.throws(()=>videoReferenceInput([{...frame,role:'last_frame'}],'unified',model,values),/首帧/);
+  assert.throws(()=>videoReferenceInput([{...frame,role:'first_frame'}],'unified',model,{...values,size:'16:9'}),/自适应/);
+  const mib=1024*1024;
+  assert.equal(videoFile({name:'scene.tiff',size:30*mib-1},model),'image');
+  assert.throws(()=>videoFile({name:'scene.jpg',size:30*mib},model));
+  assert.equal(videoFile({name:'clip.mp4',size:200*mib},model),'video');
+  assert.throws(()=>videoFile({name:'voice.wav',size:15*mib+1},model));
+});
 
 test('final Seedance quote includes original input video and three-day source eligibility',()=>{
  const values={...defaultSeedance25(),workflow:'final',draft_request_id:'11111111-1111-4111-8111-111111111111'};
@@ -54,8 +105,8 @@ test('automatic video constraints preserve the original fixed settings and never
 });
 
 test('model order matches the roadmap and Mini, standard and 2.5 are available',()=>{
- assert.deepEqual(VIDEO_MODELS.map(m=>m.name),['Seedance 2.5','Seedance 2.0','Seedance 2.0 Fast','Seedance 2.0 Mini','Gemini Omni 1.1 Flash','MiniMax H3','MiniMax H3 Max','Wan 3.0','FLUX 3 Video']);
- assert.deepEqual(VIDEO_MODELS.filter(m=>m.available).map(m=>m.id),['seedance-2.5','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video']);
+ assert.deepEqual(VIDEO_MODELS.map(m=>m.name),['Seedance 2.5','Seedance 2.5 Flash','Seedance 2.0','Seedance 2.0 Fast','Seedance 2.0 Mini','Gemini Omni 1.1 Flash','MiniMax H3','MiniMax H3 Max','Wan 3.0','FLUX 3 Video']);
+ assert.deepEqual(VIDEO_MODELS.filter(m=>m.available).map(m=>m.id),['seedance-2.5','seedance-2-5-flash','seedance-2.0','seedance-2.0-fast','seedance-2.0-mini','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video']);
 });
 test('2.5 quote uses half-credit units with a separate reservation and excludes audio duration',()=>{
  const v={...defaultSeedance25(),prompt:'clip'};

@@ -13,8 +13,8 @@ function currentSnapshot() {
   return snapshot;
 }
 
-test('only the two GPT Image 2.6 variants are hot and the three Seedream models are new', () => {
-  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'hot').map(([id]) => id), ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst']);
+test('the GPT Image 2.6 variants and Seedance 2.5 Flash are hot and the three Seedream models are new', () => {
+  assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'hot').map(([id]) => id), ['gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'seedance-2-5-flash']);
   assert.deepEqual(Object.entries(DEFAULT_MODEL_BADGES).filter(([,v]) => v === 'new').map(([id]) => id), ['seedream-5-5', 'seedream-5-0-pro', 'seedream-5-0-flash']);
 });
 test('parser permits explicit removal, fills newly added models, and strips private fields', () => {
@@ -24,11 +24,11 @@ test('parser permits explicit removal, fills newly added models, and strips priv
   assert.deepEqual(Object.keys(result), ['revision', 'badges']);
 });
 
-test('all active image, music and video models have unique editable badge slots and multimedia defaults are empty',()=>{
-  assert.deepEqual(MODEL_BADGE_GROUPS.map(group=>[group.value,group.options.length]),[['image',10],['music',2],['video',9]]);
-  assert.equal(new Set(MODEL_BADGE_OPTIONS.map(option=>option.value)).size,21);
+test('all active image, music and video models have unique editable badge slots and only Flash is hot by default among multimedia models',()=>{
+  assert.deepEqual(MODEL_BADGE_GROUPS.map(group=>[group.value,group.options.length]),[['image',10],['music',2],['video',10]]);
+  assert.equal(new Set(MODEL_BADGE_OPTIONS.map(option=>option.value)).size,22);
   const models=[...MUSIC_MODELS,...VIDEO_MODELS.filter(model=>model.available)];
-  for(const model of models)assert.equal(DEFAULT_MODEL_BADGES[model.id],'');
+  for(const model of models)assert.equal(DEFAULT_MODEL_BADGES[model.id],model.id==='seedance-2-5-flash'?'hot':'');
   const result=parseModelBadges({revision:5,badges:{'suno':'hot','flowmusic':'new','seedance-2.5':'hot','MiniMax-H3-Max':'new','seedream-5-0-pro':''}});
   assert.equal(result.badges.suno,'hot');assert.equal(result.badges.flowmusic,'new');
   assert.equal(result.badges['seedance-2.5'],'hot');assert.equal(result.badges['MiniMax-H3-Max'],'new');

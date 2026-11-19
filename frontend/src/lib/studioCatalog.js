@@ -27,6 +27,7 @@ export const MUSIC_MODELS = [
 ];
 export const VIDEO_MODELS = [
   { id: "seedance-2.5", name: "Seedance 2.5", maker: "Seedance", available: true, summary: "30 秒 · 多模态参考 · 视频编辑与延长" },
+  { id: "seedance-2-5-flash", name: "Seedance 2.5 Flash", maker: "Seedance", available: true, summary: "480P / 720P · 4–30 秒 · 多模态参考、视频编辑与延长" },
   { id: "seedance-2.0", name: "Seedance 2.0", maker: "Seedance", available: true, summary: "4–15 秒 · 最高 4K · 多模态参考与首尾帧" },
   { id: "seedance-2.0-fast", name: "Seedance 2.0 Fast", maker: "Seedance", available: true, summary: "快速生成 · 4–15 秒 · 多模态参考与首尾帧" },
   { id: "seedance-2.0-mini", name: "Seedance 2.0 Mini", maker: "Seedance", available: true, summary: "4–15 秒 · 多模态参考 · 首尾帧与声音" },

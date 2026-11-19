@@ -11,8 +11,9 @@ class ModelBadgeTests(unittest.TestCase):
         self.gateway.rpc.return_value = {'revision': 1, 'badges': badges.DEFAULTS}
         self.user = SimpleNamespace(id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
 
-    def test_defaults_have_only_requested_five_badges(self):
-        self.assertEqual(sum(v == 'hot' for v in badges.DEFAULTS.values()), 2)
+    def test_default_hot_badges_include_seedance_flash(self):
+        self.assertEqual({model for model, tag in badges.DEFAULTS.items() if tag == 'hot'},
+                         {'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'seedance-2-5-flash'})
         self.assertEqual(sum(v == 'new' for v in badges.DEFAULTS.values()), 3)
         with patch.object(badges, 'is_supabase_configured', return_value=False), patch.object(badges, 'SupabaseGateway') as gateway:
             response = self.client.get('/api/model-badges')
@@ -21,13 +22,14 @@ class ModelBadgeTests(unittest.TestCase):
         gateway.assert_not_called()
 
     def test_music_video_and_legacy_image_reads_preserve_existing_tags(self):
-        self.assertEqual(len(badges.MODEL_IDS),21)
-        self.assertEqual(len(set(badges.MODEL_IDS)),21)
+        self.assertEqual(len(badges.MODEL_IDS),22)
+        self.assertEqual(len(set(badges.MODEL_IDS)),22)
         self.gateway.rpc.return_value={'revision':7,'badges':{model:('new' if model=='gpt-image-2.6-flare' else '') for model in badges.IMAGE_MODEL_IDS}}
         with patch.object(badges,'is_supabase_configured',return_value=True),patch.object(badges,'SupabaseGateway',return_value=self.gateway):
             response=self.client.get('/api/model-badges')
         self.assertEqual(response.json['badges']['gpt-image-2.6-flare'],'new')
-        for model in (*badges.MUSIC_MODEL_IDS,*badges.VIDEO_MODEL_IDS):self.assertEqual(response.json['badges'][model],'')
+        for model in (*badges.MUSIC_MODEL_IDS,*badges.VIDEO_MODEL_IDS):
+            self.assertEqual(response.json['badges'][model], badges.DEFAULTS[model])
 
     def test_public_read_sanitizes_metadata_and_cannot_write(self):
         self.gateway.rpc.return_value.update(updated_by='private-identifier', updated_at='private-date')
@@ -97,6 +99,18 @@ class ModelBadgeTests(unittest.TestCase):
         response=self.post({'revision':8,'badges':image_edit})
         self.assertEqual(response.status_code,409)
         self.gateway.rpc.assert_called_once_with('get_model_badges',{})
+
+    def test_pre_flash_admin_save_preserves_current_flash_badge(self):
+        current = {**badges.DEFAULTS, badges.SEEDANCE25_FLASH_MODEL: 'new'}
+        edits = {model: tag for model, tag in current.items() if model != badges.SEEDANCE25_FLASH_MODEL}
+        edits['seedance-2.5'] = 'hot'
+        expected = {**current, **edits}
+        self.gateway.rpc.side_effect = [{'revision': 8, 'badges': current},
+                                        {'ok': True, 'revision': 9, 'badges': expected}]
+        response = self.post({'revision': 8, 'badges': edits})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['badges'], expected)
+        self.assertEqual(self.gateway.rpc.call_args.args[1]['p_badges'], expected)
 
     def test_partial_multimedia_map_and_bad_music_value_are_rejected_before_rpc(self):
         for mapping in [{**{key:badges.DEFAULTS[key] for key in badges.IMAGE_MODEL_IDS},'suno':'hot'},{**badges.DEFAULTS,'suno':'<script>'},{key:value for key,value in badges.DEFAULTS.items() if key!='wan3.0-video'}]:

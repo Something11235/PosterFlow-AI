@@ -1,5 +1,13 @@
 # Seedance 2.5 接入（2026-10-25 已发布）
 
+## Seedance 2.5 Flash
+
+在「视频创作」中，Seedance 2.5 Flash 紧随 Seedance 2.5。Flash 的模型 ID 为 `seedance-2-5-flash`，输出支持 480p 和 720p，可指定 4–30 秒或选择自动时长。可以使用首尾帧、多模态参考、编辑和延长视频。单次最多 10 张图、5 段视频和 5 段音频，视频和音频各自合计最多 30 秒。需要样片转正式片时请选择完整版。[Flash 生成文档](https://docs.apimart.ai/cn/api-reference/videos/seedance-2-5-flash/generation)
+
+Flash 沿用完整版的积分公式。平台模式按上游实际美元费用 × 7 ÷ 0.38 × 1.2 结算，向上取到 0.5 积分。预估使用 Flash 的每秒速率，有参考视频时用对应输入价，计入参考视频与输出的总时长。例如 5 秒、720p、无参考视频时，预计 16 积分，提交时预留 25.5 积分。自动时长按 30 秒输出预估。[Flash 价格表](https://apimart.ai/zh/model/doubao-seedance-2-5-flash)
+
+## Seedance 2.5 完整版接入记录
+
 正式基线：dpl_7Xhy4C1B9aJEJjdHLgCohvDcFCeE；迁移20261025091626已应用。发布记录见 multimedia-release-and-rollback.md。下方“未部署”描述为历史实施阶段，不代表现行生产状态。
 
 本轮按用户给定顺序，只新增第一个待接模型 `seedance-2.5`；保留已实现的 Mini。网页、数据库迁移和测试均为本地工作，生产项目、环境变量、余额和任务没有写入。

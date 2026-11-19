@@ -13,7 +13,7 @@ test('Wan uses its own parameters, exact half-credit quotes and model order',()=
   assert.equal(body.audio,false);assert.equal(body.seed,0);assert.equal(Object.hasOwn(body,'generate_audio'),false);assert.equal(Object.hasOwn(body,'return_last_frame'),false);
   assert.deepEqual(buildVideoParameters(restoreVideoHistory({parameters:body})),body);
  }
- assert.equal(VIDEO_MODELS.filter(m=>m.available)[7].id,WAN30);assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
+ assert.equal(VIDEO_MODELS.filter(m=>m.available)[8].id,WAN30);assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
  for(const patch of [{duration:1},{duration:31},{duration:3.5},{size:'21:9'},{seed:-1},{resolution:'2k'}])assert.throws(()=>buildVideoParameters({...base(),...patch}));
  assert.equal(videoQuote({...base(),resolution:'720p',duration:-1},[ref('video','v',{duration_ms:15000})]).text,'44');
 });

@@ -37,6 +37,26 @@ class VideoReferenceTests(unittest.TestCase):
         for bad in (b'not a video',data[:-10],b'\0\0\0\x01moov'+b'\xff'*8,data.replace(b'mdat',b'xxxx')):
             with self.subTest(bad=bad[:12]),self.assertRaises(VideoError):reference_metadata(bad,'mp4')
 
+    def test_flash_image_formats_and_cross_model_ticket_reuse(self):
+        import hashlib
+        flash='seedance-2-5-flash'
+        for ext,fmt in [('gif','GIF'),('tiff','TIFF'),('bmp','BMP'),('png','PNG')]:
+            stream=io.BytesIO();Image.new('RGB',(320,320)).save(stream,fmt)
+            data=stream.getvalue()
+            ref={'id':'1700000000-'+'a'*32+'.'+ext,'owner':'a'*64,'model':flash,
+                 'sha256':hashlib.sha256(data).hexdigest(),**reference_metadata(data,ext,flash)}
+            self.server._supabase_storage_request.reset_mock()
+            self.server._supabase_storage_request.return_value=response(data=data)
+            if ext=='png':
+                self.assertEqual(self.refs.revalidate(ref,'seedance-2.5')['width'],320)
+            else:
+                with self.assertRaises(VideoError) as error:self.refs.revalidate(ref,'seedance-2.5')
+                self.assertEqual(error.exception.code,'VIDEO_REFERENCE_TYPE')
+                self.server._supabase_storage_request.assert_not_called()
+        with self.assertRaises(VideoError) as error:
+            self.refs.revalidate({'kind':'video','size':100*1024*1024},'seedance-2.0-mini')
+        self.assertEqual(error.exception.code,'VIDEO_REFERENCE_SIZE')
+
     def test_image_decoding_and_audio_duration_cannot_be_forged_by_names(self):
         data=io.BytesIO();Image.new('RGB',(300,450)).save(data,'PNG')
         self.assertEqual(reference_metadata(data.getvalue(),'png')['height'],450)

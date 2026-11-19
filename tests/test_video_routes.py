@@ -90,6 +90,26 @@ class VideoRouteTests(unittest.TestCase):
         self.assertNotIn('private database detail',response.get_data(as_text=True))
         submit.assert_not_called()
 
+    def test_flash_uploads_check_destination_model_before_new_jobs_and_skip_checks_on_replay(self):
+        self.ref.update(model=r.seedance25.FLASH_MODEL)
+        self.input['references']=[{'receipt':'synthetic-flash-upload'}]
+        self.input['parameters']['model']=r.seedance25.MODEL
+        self.store.apply25=self.store.apply
+        self.refs.revalidate.side_effect=VideoError('VIDEO_REFERENCE_TYPE','fixture')
+        with patch.object(r,'submit_video',return_value=TASK) as submit:
+            response=self.client.post('/api/video/generations',json=self.input)
+            self.assertEqual(response.json['code'],'VIDEO_REFERENCE_TYPE')
+            self.refs.revalidate.assert_called_once_with(self.ref,r.seedance25.MODEL)
+            self.assertEqual(self.store.begin_calls,[])
+            submit.assert_not_called()
+            self.refs.revalidate.side_effect=None
+            self.refs.revalidate.return_value=self.ref.copy()
+            self.assertEqual(self.client.post('/api/video/generations',json=self.input).status_code,202)
+            self.refs.revalidate.reset_mock()
+            self.assertTrue(self.client.post('/api/video/generations',json=self.input).json['idempotent'])
+            self.refs.revalidate.assert_not_called()
+            submit.assert_called_once()
+
     def test_reservation_and_single_post_are_idempotent_across_refresh_and_expiry(self):
         self.input['references']=[{'receipt':'proof'}]
         with patch.object(r,'submit_video',return_value=TASK) as submit:

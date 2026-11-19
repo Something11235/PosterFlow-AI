@@ -150,7 +150,7 @@ PosterFlow AI 面向想做图、写歌、制作视频素材与角色故事的创
 | --- | --- |
 | 图像 | GPT Image 2.6 Flare / Sunburst、GPT Image 2.5 Flare / Sunburst、Nano Banana 2.1、Grok Imagine Image 2.0 / Ext、（即梦）Seedream 5.5、Seedream 5.0 Pro / Lite / Flash |
 | 音乐 | Suno、Flow Music |
-| 视频 | Seedance 2.5、Seedance 2.0 / Fast / Mini、Gemini Omni 1.1 Flash、MiniMax H3 / H3 Max、Wan 3.0、FLUX 3 Video |
+| 视频 | Seedance 2.5、Seedance 2.5 Flash、Seedance 2.0 / Fast / Mini、Gemini Omni 1.1 Flash、MiniMax H3 / H3 Max、Wan 3.0、FLUX 3 Video |
 | 角色对话 | 平台 DeepSeek V4.1 Flash；自带 Key 可配置兼容的 `/chat/completions` 服务与模型 |
 
 模型的分辨率、批量数量、素材类型和编辑能力各不相同，具体以网站「模型一览」及创作表单为准。

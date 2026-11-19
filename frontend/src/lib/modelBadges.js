@@ -2,7 +2,7 @@ import {useEffect, useSyncExternalStore} from 'react';
 import {MODEL_BADGE_OPTIONS} from './modelBadgeCatalog.js';
 
 export const BADGE_LABELS = {'': '无', new: '新', hot: '热'};
-export const DEFAULT_MODEL_BADGES = Object.fromEntries(MODEL_BADGE_OPTIONS.map(model => [model.value, model.value.startsWith('gpt-image-2.6-') ? 'hot' : model.value.startsWith('seedream-') ? 'new' : '']));
+export const DEFAULT_MODEL_BADGES = Object.fromEntries(MODEL_BADGE_OPTIONS.map(model => [model.value, (model.value.startsWith('gpt-image-2.6-') || model.value === 'seedance-2-5-flash') ? 'hot' : model.value.startsWith('seedream-') ? 'new' : '']));
 let snapshot = {revision: 0, badges: DEFAULT_MODEL_BADGES};
 let pending = null, timer = null, lastRead = 0;
 const listeners = new Set();

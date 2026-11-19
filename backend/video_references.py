@@ -17,10 +17,12 @@ try:
     from backend.music_provider import pinned_custom_response, safe_media_url
     from backend.music_references import MusicReferences
     from backend.video_provider import VideoError, validate_image_dimensions
+    from backend import seedance25
 except ModuleNotFoundError:
     from music_provider import pinned_custom_response, safe_media_url
     from music_references import MusicReferences
     from video_provider import VideoError, validate_image_dimensions
+    import seedance25
 
 LIMITS={'image':16*1024*1024,'audio':20*1024*1024,'video':50*1024*1024}
 TYPES={'png':('image','image/png'),'jpg':('image','image/jpeg'),'jpeg':('image','image/jpeg'),
@@ -30,11 +32,21 @@ TYPES={'png':('image','image/png'),'jpg':('image','image/jpeg'),'jpeg':('image',
 try:from backend.wan_documents import MIMES as DOCUMENT_MIMES
 except ModuleNotFoundError:from wan_documents import MIMES as DOCUMENT_MIMES
 TYPES.update({ext:('document',mime) for ext,mime in DOCUMENT_MIMES.items()})
-TYPES['bmp']=('image','image/bmp')
-REFERENCE_ID=re.compile(r'^[0-9]{10}-[a-f0-9]{32}\.(png|jpe?g|webp|bmp|heic|heif|mp3|wav|mp4|mov|pdf|docx?|xlsx?|pptx?|txt|md|key|pages|numbers)$')
+TYPES.update({'bmp':('image','image/bmp'),'gif':('image','image/gif'),
+              'tif':('image','image/tiff'),'tiff':('image','image/tiff')})
+REFERENCE_ID=re.compile(r'^[0-9]{10}-[a-f0-9]{32}\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif|mp3|wav|mp4|mov|pdf|docx?|xlsx?|pptx?|txt|md|key|pages|numbers)$')
+
+
+def image_formats(model):
+    formats={'png':'PNG','jpg':'JPEG','jpeg':'JPEG','webp':'WEBP'}
+    if model in {seedance25.FLASH_MODEL,'wan3.0-video'}:formats['bmp']='BMP'
+    if model in {seedance25.FLASH_MODEL,'MiniMax-H3','MiniMax-H3-Max'}:formats.update(heic='HEIF',heif='HEIF')
+    if model==seedance25.FLASH_MODEL:formats.update(gif='GIF',tif='TIFF',tiff='TIFF')
+    return formats
 
 
 def media_limits(model):
+    if model==seedance25.FLASH_MODEL:return seedance25.FLASH_MEDIA_LIMITS
     if model=='wan3.0-video':
         try:from backend.wan30 import LIMITS as wan_limits
         except ModuleNotFoundError:from wan30 import LIMITS as wan_limits
@@ -117,16 +129,16 @@ def reference_metadata(data,extension,model='seedance-2.0-mini'):
     kind,mime=TYPES[extension]
     wan=model=='wan3.0-video'
     flux=model=='flux-3-video'
+    flash=model==seedance25.FLASH_MODEL
     if flux and (kind not in {'image','video'} or kind=='video' and extension!='mp4'):raise VideoError('VIDEO_REFERENCE_TYPE','FLUX 支持 JPG / PNG / WebP 或 MP4，不支持独立音频。')
     if kind=='document':
         if not wan:raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持参考文档。')
         try:from backend.wan_documents import metadata
         except ModuleNotFoundError:from wan_documents import metadata
         return metadata(data,extension)
-    if extension=='bmp' and not wan:raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持 BMP。')
+    if kind=='image' and extension not in image_formats(model):raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该图片格式。')
     omni=model=='gemini-omni-1.1-flash'
     h3=model in {'MiniMax-H3','MiniMax-H3-Max'}
-    if extension in {'heic','heif'} and not h3:raise VideoError('VIDEO_REFERENCE_TYPE','该型号不支持 HEIC / HEIF，请转换为 PNG、JPEG 或 WebP。')
     enable_heif(extension)
     if omni and kind=='audio':raise VideoError('VIDEO_REFERENCE_TYPE','Omni 不支持上传参考音频，请使用图片或视频。')
     if not data or len(data)>media_limits(model)[kind]:raise VideoError('VIDEO_REFERENCE_SIZE','参考素材大小超出当前模型限制。')
@@ -134,8 +146,8 @@ def reference_metadata(data,extension,model='seedance-2.0-mini'):
     try:
         if kind=='image':
             with Image.open(io.BytesIO(data)) as img:
-                expected={'png':'PNG','jpg':'JPEG','jpeg':'JPEG','webp':'WEBP','bmp':'BMP','heic':'HEIF','heif':'HEIF'}[extension]
-                if img.format!=expected or img.width*img.height>(64000000 if wan else 5760*5760 if h3 else 32_000_000) or min(img.size)<1:raise ValueError('invalid image')
+                expected=image_formats(model)[extension]
+                if img.format!=expected or img.width*img.height>(64000000 if wan else 5760*5760 if h3 else 36_000_000 if flash else 32_000_000) or min(img.size)<1:raise ValueError('invalid image')
                 if wan and extension=='png' and ('A' in img.getbands() or 'transparency' in img.info):raise VideoError('VIDEO_REFERENCE_FORMAT','Wan 不支持带透明通道的 PNG，请转换为不透明 PNG 或 JPG。')
                 has_alpha=extension=='png' and ('A' in img.getbands() or 'transparency' in img.info)
                 width,height=img.size;img.verify()
@@ -163,10 +175,7 @@ def reference_metadata(data,extension,model='seedance-2.0-mini'):
                 if b'qt  ' in data[:32] or not 0<info['duration_ms']<=30000 or info['width']*info['height']>32000000:raise VideoError('VIDEO_REFERENCE_FORMAT','请上传有效 MP4；本站暂限 30 秒、3200 万像素。')
             elif omni:
                 if not 0<info['duration_ms']<=10000:raise VideoError('VIDEO_REFERENCE_DURATION','Omni 参考视频最多 10 秒。')
-            elif model=='seedance-2.5':
-                if not 2000<=info['duration_ms']<=30000 or not 480<=min(info['width'],info['height'])<=1080:
-                    raise VideoError('VIDEO_REFERENCE_FORMAT','2.5 参考视频须为 480P–1080P、2–30 秒。')
-            elif not 2000<=info['duration_ms']<=15000 or not 480<=min(info['width'],info['height'])<=720:
+            elif model not in seedance25.MODELS and (not 2000<=info['duration_ms']<=15000 or not 480<=min(info['width'],info['height'])<=720):
                 raise VideoError('VIDEO_REFERENCE_FORMAT','Mini 参考视频须为 480P–720P，单段时长 2–15 秒。')
         else:
             if extension=='wav':
@@ -177,17 +186,15 @@ def reference_metadata(data,extension,model='seedance-2.0-mini'):
                 if not(data.startswith(b'ID3') or len(data)>1 and data[0]==255 and data[1]&224==224):raise ValueError('invalid MP3')
                 tag=TinyTag.get(file_obj=io.BytesIO(data));seconds=tag.duration
                 if not tag.samplerate:raise ValueError('missing sample rate')
-            if not seconds or not math.isfinite(seconds) or not (1 if wan else 2)<=seconds<=(30 if model=='seedance-2.5' else 15):
-                raise VideoError('VIDEO_REFERENCE_DURATION','Wan 参考音频每段须为 1–15 秒。' if wan else '2.5 参考音频须为 2–30 秒。' if model=='seedance-2.5' else 'Mini 参考音频每段须为 2–15 秒，总时长最多 15 秒。')
+            if not seconds or not math.isfinite(seconds) or not (1 if wan else 2)<=seconds<=(30 if model in seedance25.MODELS else 15):
+                raise VideoError('VIDEO_REFERENCE_DURATION','Wan 参考音频每段须为 1–15 秒。' if wan else '2.5 参考音频须为 2–30 秒。' if model in seedance25.MODELS else 'Mini 参考音频每段须为 2–15 秒，总时长最多 15 秒。')
             info={'duration_ms':round(seconds*1000)}
     except VideoError:raise
     except Exception as exc:
         raise VideoError('VIDEO_REFERENCE_FORMAT','素材内容无法识别，请使用有效的 PNG/JPG/WebP、MP4/MOV 或 MP3/PCM WAV。') from None
     result={'kind':kind,'size':len(data),'content_type':mime,**info}
-    if model=='seedance-2.5':
-        try:from backend.seedance25 import validate_references
-        except ModuleNotFoundError:from seedance25 import validate_references
-        validate_references([{'id':'verified-file',**result}],{'size':'adaptive'})
+    if model in seedance25.MODELS:
+        seedance25.validate_references([{'id':'verified-file',**result}],{'model':model,'size':'adaptive','omni_reference_task_type':'reference'})
     return result
 
 
@@ -208,7 +215,7 @@ class VideoReferences(MusicReferences):
             if value.get('v')!=1 or value.get('stage')!=stage or value.get('owner')!=hashlib.sha256(owner.encode()).hexdigest():raise ValueError()
             if not REFERENCE_ID.fullmatch(value.get('id','')):raise ValueError()
             ext=value['id'].rsplit('.',1)[1];kind=TYPES[ext][0]
-            if ext in {'heic','heif'} and value.get('model') not in {'MiniMax-H3','MiniMax-H3-Max'}:raise ValueError()
+            if kind=='image' and ext not in image_formats(value.get('model')):raise ValueError()
             if value.get('kind')!=kind or type(value.get('size')) is not int or not 0<value['size']<=media_limits(value.get('model'))[kind]:raise ValueError()
             if type(value.get('issued')) is not int or value['issued']>time.time()+30 or value.get('expires')!=value['issued']+(7200 if stage=='upload' else 43200):raise ValueError()
             if stage=='verified' and not re.fullmatch(r'[a-f0-9]{64}',str(value.get('sha256',''))):raise ValueError()
@@ -219,16 +226,18 @@ class VideoReferences(MusicReferences):
         return value
 
     def issue(self,owner,filename,size,content_type='',model='seedance-2.0-mini'):
-        if model not in {'seedance-2.0-mini','seedance-2.0','seedance-2.0-fast','seedance-2.5','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
+        if model not in {'seedance-2.0-mini','seedance-2.0','seedance-2.0-fast',*seedance25.MODELS,'gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
         if not isinstance(filename,str):raise VideoError('VIDEO_REFERENCE_TYPE','请选择有效文件。')
         name=re.sub(r'[\x00-\x1f\x7f]','',re.split(r'[\\/]',filename)[-1])[:120];ext=name.rsplit('.',1)[-1].lower()
         if ext not in TYPES:raise VideoError('VIDEO_REFERENCE_TYPE','支持 PNG/JPG/WebP、MP4/MOV、MP3/WAV。')
-        if ext in {'heic','heif'} and model not in {'MiniMax-H3','MiniMax-H3-Max'}:raise VideoError('VIDEO_REFERENCE_TYPE','该型号不支持 HEIC / HEIF。')
         kind,mime=TYPES[ext]
+        if kind=='image' and ext not in image_formats(model):raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该图片格式。')
         if model=='flux-3-video' and (kind=='audio' or kind=='video' and ext!='mp4'):raise VideoError('VIDEO_REFERENCE_TYPE','FLUX 仅支持图片或 MP4。')
-        if model!='wan3.0-video' and (kind=='document' or ext=='bmp'):raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该素材格式。')
+        if model!='wan3.0-video' and kind=='document':raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该素材格式。')
         if model=='gemini-omni-1.1-flash' and kind=='audio':raise VideoError('VIDEO_REFERENCE_TYPE','Omni 不支持参考音频。')
-        if type(size) is not int or not 0<size<=media_limits(model)[kind]:raise VideoError('VIDEO_REFERENCE_SIZE',f'当前模型的{dict(image="图片",video="视频",audio="音频")[kind]}素材上限 {media_limits(model)[kind]//(1024*1024)} MB。')
+        if type(size) is not int or not 0<size<=media_limits(model)[kind]:
+            if model==seedance25.FLASH_MODEL and kind=='image':raise VideoError('VIDEO_REFERENCE_SIZE','Flash 图片须小于 30 MB。')
+            raise VideoError('VIDEO_REFERENCE_SIZE',f'当前模型的{dict(image="图片",video="视频",audio="音频")[kind]}素材上限 {media_limits(model)[kind]//(1024*1024)} MB。')
         now=int(time.time());value={'v':1,'stage':'upload','owner':hashlib.sha256(owner.encode()).hexdigest(),
             'id':f'{now}-{uuid.uuid4().hex}.{ext}','kind':kind,'name':name,'size':size,'issued':now,'expires':now+7200}
         if model!='seedance-2.0-mini':value['model']=model
@@ -243,6 +252,11 @@ class VideoReferences(MusicReferences):
         return {'id':value['id'],'name':value['name'],**info,'expires_at':value['expires'],'receipt':self._token(value)}
 
     def revalidate(self,value,model):
+        kind=value['kind']
+        if value['size']>media_limits(model).get(kind,0):
+            raise VideoError('VIDEO_REFERENCE_SIZE','素材超出当前模型限制，请重新添加。')
+        if kind=='image' and value['id'].rsplit('.',1)[-1] not in image_formats(model):
+            raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该图片格式。')
         path=self.server._supabase_object_path(self.path(value))
         with self._request('GET','/object/authenticated/'+path,headers={'Accept':'application/octet-stream'},stream=True,_allow_missing=True) as response:
             chunks=[];size=0
@@ -266,13 +280,13 @@ class VideoReferences(MusicReferences):
         return self._verified(value,b''.join(chunks))
 
     def import_url(self,owner,url,filename,model='seedance-2.0-mini'):
-        if model not in {'seedance-2.0-mini','seedance-2.0','seedance-2.0-fast','seedance-2.5','gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
+        if model not in {'seedance-2.0-mini','seedance-2.0','seedance-2.0-fast',*seedance25.MODELS,'gemini-omni-1.1-flash','MiniMax-H3','MiniMax-H3-Max','wan3.0-video','flux-3-video'}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
         if not safe_media_url(url):raise VideoError('VIDEO_REFERENCE_URL','请填写可公开读取的 HTTPS 素材链接。')
         ext=filename.rsplit('.',1)[-1].lower() if isinstance(filename,str) else ''
         if ext not in TYPES:raise VideoError('VIDEO_REFERENCE_TYPE','链接需要对应支持的素材文件名。')
-        if ext in {'heic','heif'} and model not in {'MiniMax-H3','MiniMax-H3-Max'}:raise VideoError('VIDEO_REFERENCE_TYPE','该型号不支持 HEIC / HEIF。')
+        if TYPES[ext][0]=='image' and ext not in image_formats(model):raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该图片格式。')
         if model=='flux-3-video' and (TYPES[ext][0]=='audio' or TYPES[ext][0]=='video' and ext!='mp4'):raise VideoError('VIDEO_REFERENCE_TYPE','FLUX 仅支持图片或 MP4。')
-        if model!='wan3.0-video' and (TYPES[ext][0]=='document' or ext=='bmp'):raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该素材格式。')
+        if model!='wan3.0-video' and TYPES[ext][0]=='document':raise VideoError('VIDEO_REFERENCE_TYPE','当前模型不支持该素材格式。')
         enable_heif(ext)
         if model=='gemini-omni-1.1-flash' and TYPES[ext][0]=='audio':raise VideoError('VIDEO_REFERENCE_TYPE','Omni 不支持参考音频，请使用图片或视频。')
         try:
@@ -292,7 +306,7 @@ class VideoReferences(MusicReferences):
         if TYPES[ext][0]=='image':
             try:
                 with Image.open(io.BytesIO(data)) as img:
-                    ext={'PNG':'png','JPEG':'jpg','WEBP':'webp',**({'BMP':'bmp'} if model=='wan3.0-video' else {}),**({'HEIF':'heic'} if model in {'MiniMax-H3','MiniMax-H3-Max'} else {})}[img.format]
+                    ext=next(key for key,fmt in image_formats(model).items() if fmt==img.format)
                 filename=filename.rsplit('.',1)[0]+'.'+ext
             except Exception:
                 raise VideoError('VIDEO_REFERENCE_FORMAT','链接未返回支持的图片文件。') from None

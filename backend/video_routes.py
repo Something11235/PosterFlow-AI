@@ -177,11 +177,12 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
 
     def model_header():
         model=request.headers.get('X-Video-Model',MODEL)
-        if model not in {MODEL,seedance25.MODEL,*seedance20.MODELS,omni_flash.MODEL,*minimax_h3.MODELS,wan30.MODEL,flux3.MODEL}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
+        if model not in {MODEL,*seedance25.MODELS,*seedance20.MODELS,omni_flash.MODEL,*minimax_h3.MODELS,wan30.MODEL,flux3.MODEL}:raise VideoError('INVALID_VIDEO_MODEL','该视频模型尚未接入。')
         return model
 
     def references(raw,owner,store,model=MODEL):
-        if not isinstance(raw,list) or len(raw)>(50 if model==seedance25.MODEL else 21 if model==wan30.MODEL else 15):raise VideoError('VIDEO_REFERENCE_COUNT','参考素材数量超出当前模型限制。')
+        max_references={seedance25.MODEL:50,seedance25.FLASH_MODEL:20,wan30.MODEL:21}.get(model,15)
+        if not isinstance(raw,list) or len(raw)>max_references:raise VideoError('VIDEO_REFERENCE_COUNT','参考素材数量超出当前模型限制。')
         approved=None;result=[]
         for item in raw:
             if not isinstance(item,dict) or set(item)-{'receipt','asset_url','role'} or ('receipt' in item)==('asset_url' in item):
@@ -212,7 +213,8 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         if provider and operation=='asset_review':raise VideoError('VIDEO_OPERATION_UNSUPPORTED','当前自定义服务未配置素材审核接口，可直接上传素材进行创作。')
         params=normalized_video_parameters(raw['parameters']) if operation=='generate' else {}
         model=params.get('model',model_header())
-        newer=model==seedance25.MODEL
+        newer=model in seedance25.MODELS
+        flash=model==seedance25.FLASH_MODEL
         standard=model in seedance20.MODELS
         omni=model==omni_flash.MODEL
         h3=model in minimax_h3.MODELS
@@ -234,6 +236,12 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
             if existing[0].get('request_fingerprint')!=fingerprint or existing[0].get('operation')!=operation:
                 raise VideoError('VIDEO_REQUEST_CONFLICT','该请求编号对应另一组参数，请查询原任务。',409)
             return jsonify(success=True,job=public_job(existing[0]),idempotent=True)
+        # Older workflows accept smaller files and fewer image formats. Verify
+        # shared uploads against the destination model before creating a new job.
+        if model not in {wan30.MODEL,flux3.MODEL}:
+            for i,value in enumerate(values):
+                if not value.get('asset_url') and value.get('model')!=model and (flash or value.get('model')==seedance25.FLASH_MODEL):
+                    values[i]=reference_service.revalidate(value,model)
         source=None
         if newer and operation=='generate':
             seedance25.validate_references(values,params)
@@ -262,6 +270,7 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
             'asset_type':values[0]['kind'].title(),'assets':[{'url':media_urls[0],'name':'素材 '+values[0]['id'][:20]}]}
         reservation_params=params if operation=='generate' or not cost_based else {'model':model}
         begin_rpc='begin_flux3_job' if flux else 'begin_wan30_job' if wan else 'begin_minimax_h3_max_job' if model==minimax_h3.MAX_MODEL else 'begin_minimax_h3_job' if h3 else 'begin_omni_flash_job' if omni else 'begin_seedance25_job_v2' if newer else 'begin_seedance20_fast_job' if model==seedance20.FAST_MODEL else 'begin_seedance20_job' if standard else 'begin_video_job'
+        if flash:begin_rpc='begin_seedance25_flash_job'
         g.video_submission_phase='reservation'
         reserved=store.rpc(begin_rpc,{'p_owner':owner,'p_user_id':user_id,'p_request_id':rid,'p_mode':mode,
             'p_operation':operation,'p_fingerprint':fingerprint,'p_parameters':reservation_params,'p_references':metadata(values,model)})
@@ -271,8 +280,13 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         try:
             if operation=='generate':task=submit_video(key,payload,**provider)
             else:
-                data=video_request('POST','/seedance2/private-avatar',key,payload).get('data')
-                task=data.get('id') if isinstance(data,dict) else None
+                review_path='/seedance2/private-avatar'
+                if flash:
+                    payload['model']=model
+                    review_path+='/assets'
+                data=video_request('POST',review_path,key,payload).get('data')
+                if flash and isinstance(data,list) and len(data)==1:data=data[0]
+                task=(data.get('id') or data.get('task_id')) if isinstance(data,dict) else None
                 if not isinstance(task,str) or not TASK_ID.fullmatch(task):
                     raise VideoError('VIDEO_SUBMISSION_UNKNOWN','素材审核提交结果待确认，请保留原编号。',502,True)
         except VideoError as error:
@@ -287,7 +301,7 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         return jsonify(success=True,model=MODEL,platform_configured=bool(os.getenv('APIMART_VIDEO_API_KEY','').strip()) and is_supabase_configured(),
             database_configured=is_supabase_configured(),references_configured=reference_service.available,
             prices={'480p':'0.5','720p':'1'},billable_references=['video'],reference_retention_hours=12,media_retention_hours=72,
-            models=[MODEL,seedance25.MODEL,seedance20.MODEL,seedance20.FAST_MODEL,omni_flash.MODEL,minimax_h3.MODEL,minimax_h3.MAX_MODEL,wan30.MODEL,flux3.MODEL],seedance25_pricing=seedance25.PROFILE,seedance20_pricing=seedance20.PROFILE,seedance20_fast_pricing=seedance20.FAST_PROFILE,omni_flash_pricing=omni_flash.PROFILE,minimax_h3_pricing=minimax_h3.PROFILE,minimax_h3_max_pricing=minimax_h3.MAX_PROFILE,wan30_pricing=wan30.PROFILE,flux3_pricing=flux3.PROFILE)
+            models=[MODEL,*seedance25.MODELS,seedance20.MODEL,seedance20.FAST_MODEL,omni_flash.MODEL,minimax_h3.MODEL,minimax_h3.MAX_MODEL,wan30.MODEL,flux3.MODEL],seedance25_pricing=seedance25.PROFILE,seedance25_flash_pricing=seedance25.FLASH_PROFILE,seedance20_pricing=seedance20.PROFILE,seedance20_fast_pricing=seedance20.FAST_PROFILE,omni_flash_pricing=omni_flash.PROFILE,minimax_h3_pricing=minimax_h3.PROFILE,minimax_h3_max_pricing=minimax_h3.MAX_PROFILE,wan30_pricing=wan30.PROFILE,flux3_pricing=flux3.PROFILE)
 
     @bp.post('/references/uploads')
     def upload():
@@ -346,10 +360,10 @@ def create_video_blueprint(require_user, rate_limit, allowed_origins, reference_
         if status=='completed' and (not assets if job['operation']=='asset_review' else not result['videos']):
             return jsonify(success=True,job=public_job(job),videos=[],warning='任务已完成，暂未取得可用结果，请保留原任务编号后刷新。',progress=result['progress'])
         event=status if status in {'completed','failed','unknown'} else 'processing'
-        if job.get('model') in {seedance25.MODEL,*seedance20.MODELS,omni_flash.MODEL,*minimax_h3.MODELS,wan30.MODEL,flux3.MODEL}:
+        if job.get('model') in {*seedance25.MODELS,*seedance20.MODELS,omni_flash.MODEL,*minimax_h3.MODELS,wan30.MODEL,flux3.MODEL}:
             tokens=(payload.get('data',{}).get('usage') or {}).get('completion_tokens')
             tokens=tokens if type(tokens) is int and 0<=tokens<=1000000000 else None
-            apply_cost=store.apply_flux if job['model']==flux3.MODEL else store.apply_wan if job['model']==wan30.MODEL else store.apply_h3_max if job['model']==minimax_h3.MAX_MODEL else store.apply_h3 if job['model']==minimax_h3.MODEL else store.apply_omni if job['model']==omni_flash.MODEL else store.apply25 if job['model']==seedance25.MODEL else partial(store.apply20,model=job['model'])
+            apply_cost=store.apply_flux if job['model']==flux3.MODEL else store.apply_wan if job['model']==wan30.MODEL else store.apply_h3_max if job['model']==minimax_h3.MAX_MODEL else store.apply_h3 if job['model']==minimax_h3.MODEL else store.apply_omni if job['model']==omni_flash.MODEL else store.apply25 if job['model'] in seedance25.MODELS else partial(store.apply20,model=job['model'])
             applied=apply_cost(owner,rid,event,error_code=result['error_code'],assets=assets,cost=seedance25.actual_cost(payload.get('data')),tokens=tokens)
         else:applied=store.apply(owner,rid,event,error_code=result['error_code'],assets=assets)
         visible=applied['job'];settled=visible.get('billing_status') in {'settled','not_applicable'}

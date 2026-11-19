@@ -3,22 +3,26 @@ from flask import Blueprint, jsonify, request
 try:
     from backend.apimart_image_provider import ACTIVE_MODELS as MODELS
     from backend.supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
+    from backend.video_provider import SEEDANCE25_FLASH_MODEL
 except ModuleNotFoundError:
     from apimart_image_provider import ACTIVE_MODELS as MODELS
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
+    from video_provider import SEEDANCE25_FLASH_MODEL
 
 IMAGE_MODEL_IDS = ("gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst", *(model for model in MODELS if not model.startswith("gpt-image-2.6-")))
 MUSIC_MODEL_IDS = ("suno", "flowmusic")
-VIDEO_MODEL_IDS = ("seedance-2.5", "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "gemini-omni-1.1-flash", "MiniMax-H3", "MiniMax-H3-Max", "wan3.0-video", "flux-3-video")
+VIDEO_MODEL_IDS = ("seedance-2.5", SEEDANCE25_FLASH_MODEL, "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini", "gemini-omni-1.1-flash", "MiniMax-H3", "MiniMax-H3-Max", "wan3.0-video", "flux-3-video")
 MODEL_IDS = (*IMAGE_MODEL_IDS, *MUSIC_MODEL_IDS, *VIDEO_MODEL_IDS)
 DEFAULTS = {model: "hot" if model.startswith("gpt-image-2.6-") else "new" if model.startswith("seedream-") else "" for model in MODEL_IDS}
+DEFAULTS[SEEDANCE25_FLASH_MODEL] = "hot"
+SUPPORTED_KEY_SETS = (set(MODEL_IDS), set(MODEL_IDS) - {SEEDANCE25_FLASH_MODEL}, set(IMAGE_MODEL_IDS))
 
 
 def validate_badges(data):
     if not isinstance(data, dict) or set(data) != {"revision", "badges"} or type(data["revision"]) is not int or not 1 <= data["revision"] < 2**53:
         raise ValueError()
     badges = data["badges"]
-    if not isinstance(badges, dict) or set(badges) not in (set(MODEL_IDS), set(IMAGE_MODEL_IDS)) or any(type(value) is not str or value not in ("", "new", "hot") for value in badges.values()):
+    if not isinstance(badges, dict) or set(badges) not in SUPPORTED_KEY_SETS or any(type(value) is not str or value not in ("", "new", "hot") for value in badges.values()):
         raise ValueError()
     return badges
 
@@ -72,9 +76,8 @@ def create_model_badge_blueprint(server):
             badges = validate_badges(data)
         except ValueError:
             return jsonify(success=False, error="请为每款模型选择无、新或热，并重新加载有效版本后保存。", code="MODEL_BADGES_INVALID"), 400
-        if set(badges) == set(IMAGE_MODEL_IDS):
-            # An older open admin page sends image models only. Keep the other
-            # categories and use the same DB revision check to prevent lost edits.
+        if set(badges) != set(MODEL_IDS):
+            # Preserve badges that an older open admin page could not edit.
             current = read(gateway)
             if current["revision"] != data["revision"]:
                 return jsonify(success=False, code="MODEL_BADGES_CONFLICT", error="配置已被其他管理员更新，请重新加载后再保存。"), 409

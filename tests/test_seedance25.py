@@ -15,6 +15,24 @@ def draft_source(**extra):return {'model':s.MODEL,'is_draft':True,'status':'comp
 
 
 class Seedance25Tests(unittest.TestCase):
+    def test_flash_gold_rates_auto_reservation_and_reference_seconds(self):
+        refs=[video(duration_ms=3250),audio(duration_ms=5000)]
+        cases=[
+            ('480p',5,[],'.06312','.3156',7,11.5),
+            ('720p',5,[],'.14192','.7096',16,25.5),
+            ('480p',5,refs,'.0384','.3168',7.5,11.5),
+            ('720p',5,refs,'.0864','.7128',16,25.5),
+            ('720p',-1,refs,'.0864','2.8728',64,102),
+        ]
+        for resolution,duration,media,rate,usd,estimated,reserved in cases:
+            with self.subTest(resolution=resolution,duration=duration,media=bool(media)):
+                body=s.normalized_parameters({'model':s.FLASH_MODEL,'prompt':'fixture','resolution':resolution,
+                                              'duration':duration,'omni_reference_task_type':'reference' if media else 'auto'})
+                quote=s.estimate(body,media)
+                self.assertEqual((quote['rate_usd'],quote['estimated_usd']),(Decimal(rate),Decimal(usd)))
+                self.assertEqual((quote['estimated'],quote['reserved']),(estimated,reserved))
+                self.assertEqual(quote['profile']['version'],'seedance25-flash-gold-half-v1')
+
     def test_final_quote_inherits_original_inputs_and_uses_input_rate(self):
         body=s.normalized_parameters({'model':s.MODEL,'draft_request_id':'11111111-1111-4111-8111-111111111111'})
         source=draft_source(requested_duration=11,reference_duration_ms=22000)
@@ -44,6 +62,69 @@ class Seedance25Tests(unittest.TestCase):
                 self.assertEqual(response.json['code'],'VIDEO_DRAFT_INVALID')
                 self.assertEqual(fx.store.begin_calls,[]);submit.assert_not_called()
         finally:fx.tearDown()
+
+    def test_flash_contract_omits_draft_and_text_only_reference_mode(self):
+        base={'model':s.FLASH_MODEL,'prompt':'fixture'}
+        params=p.normalized_video_parameters(base)
+        payload=p.video_payload(params,[],[])
+        self.assertEqual((payload['model'],payload['resolution'],payload['size'],payload['duration']),
+                         ('seedance-2-5-flash','720p','adaptive',5))
+        self.assertNotIn('omni_reference_task_type',payload)
+        self.assertNotIn('draft',payload)
+        for invalid in [{'draft':False},{'draft_task_id':'other'},{'draft_request_id':'other'},
+                        {'resolution':'1080p'},{'duration':31},{'omni_reference_task_type':'edit','duration':5}]:
+            with self.subTest(invalid=invalid),self.assertRaises(p.VideoError):
+                p.normalized_video_parameters(base|invalid)
+
+    def test_flash_validates_reference_limits_and_keeps_frame_order(self):
+        params=p.normalized_video_parameters({'model':s.FLASH_MODEL,'prompt':'@图片1 @视频1 @音频1'})
+        images=[image('i'+str(i)) for i in range(10)]
+        videos=[video('v'+str(i),width=2560,height=1440,duration_ms=6000) for i in range(5)]
+        audios=[audio('a'+str(i),duration_ms=6000) for i in range(5)]
+        references=images+videos+audios
+        self.assertEqual(p.validate_video_references(references,params),30000)
+        for refs in [images+[image('extra')],videos+[video('extra')],audios+[audio('extra')],
+                     [image(role='last_frame')],[image(size=30*1024*1024)]]:
+            with self.subTest(count=len(refs)),self.assertRaises(p.VideoError):
+                p.validate_video_references(refs,params)
+        edit=params|{'omni_reference_task_type':'edit','duration':-1}
+        for refs in [[],[video(duration_ms=3000)]]:
+            with self.assertRaises(p.VideoError):p.validate_video_references(refs,edit)
+        media=[image('first',role='first_frame'),image('ref'),audio()]
+        urls=['asset://first','asset://second','asset://audio']
+        payload=p.video_payload(params,media,urls)
+        self.assertEqual(payload['image_with_roles'],[{'url':urls[0],'role':'first_frame'},{'url':urls[1],'role':'reference_image'}])
+        self.assertNotIn('image_urls',payload)
+        self.assertEqual(payload['audio_urls'],[urls[2]])
+        self.assertEqual(p.video_payload(params,[audio()],[urls[2]])['audio_urls'],[urls[2]])
+
+    def test_flash_generation_and_private_asset_review_route_submit_once(self):
+        from test_video_routes import VideoRouteTests,TASK
+        from backend import video_routes as routes
+        for review in [False,True]:
+            fx=VideoRouteTests();fx.setUp()
+            try:
+                fx.store.apply25=fx.store.apply
+                fx.ref.update(model=s.FLASH_MODEL)
+                fx.input['parameters']={} if review else {'model':s.FLASH_MODEL,'prompt':'fixture'}
+                fx.input['references']=[{'receipt':'synthetic'}] if review else []
+                endpoint='/api/video/assets/reviews' if review else '/api/video/generations'
+                headers={'X-Video-Model':s.FLASH_MODEL}
+                with patch.object(fx.store,'rpc',wraps=fx.store.rpc) as rpc, patch.object(routes,'submit_video',return_value=TASK) as submit, patch.object(routes,'video_request',return_value={'data':{'id':TASK}}) as upload:
+                    response=fx.client.post(endpoint,json=fx.input,headers=headers)
+                    self.assertEqual(response.status_code,202,response.json)
+                    self.assertEqual(rpc.call_args.args[0],'begin_seedance25_flash_job')
+                    self.assertTrue(fx.client.post(endpoint,json=fx.input,headers=headers).json['idempotent'])
+                    if review:
+                        upload.assert_called_once()
+                        self.assertEqual(upload.call_args.args[1],'/seedance2/private-avatar/assets')
+                        self.assertEqual(upload.call_args.args[3]['model'],s.FLASH_MODEL)
+                        submit.assert_not_called()
+                    else:
+                        submit.assert_called_once()
+                        self.assertNotIn('draft',submit.call_args.args[1])
+                        upload.assert_not_called()
+            finally:fx.tearDown()
 
     def test_final_route_uses_new_reservation_rpc_without_resending_original_inputs(self):
         from test_video_routes import VideoRouteTests,UID,TASK

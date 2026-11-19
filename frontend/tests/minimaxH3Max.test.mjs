@@ -10,7 +10,7 @@ const video={id:'v',kind:'video',size:1024,width:854,height:480,duration_ms:3000
 const base=()=>({...defaultMinimaxH3(MINIMAX_H3_MAX),prompt:'镜头缓缓推进'});
 
 test('Max has exact name/order, three resolutions, five-second minimum and its own prices',()=>{
-  assert.equal(VIDEO_MODELS.filter(m=>m.available)[6].id,MINIMAX_H3_MAX);
+  assert.equal(VIDEO_MODELS.filter(m=>m.available)[7].id,MINIMAX_H3_MAX);
   assert.equal(VIDEO_MODELS.find(m=>m.id==='flux-3-video').available,true);
   assert.equal(base().resolution,'768p');
   for(const [resolution,estimated,reserved] of [['480p','4.5','7'],['768p','6.5','10.5'],['1080p','14.5','23']]){
