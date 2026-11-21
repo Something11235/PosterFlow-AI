@@ -143,6 +143,8 @@ MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_IMAGES = 8
 REFERENCE_UPLOAD_MAX_BYTES = 16 * 1024 * 1024
+# Leave room for the multipart envelope within the hosting request limit.
+REFERENCE_RELAY_MAX_BYTES = 4 * 1024 * 1024
 PROVIDER_REQUEST_TIMEOUT_BASE_SECONDS = 240
 PROVIDER_REQUEST_TIMEOUT_MAX_SECONDS = 280
 REFERENCE_UPLOAD_EXTENSIONS = {
@@ -2338,6 +2340,78 @@ def reference_upload_url():
         pathname = f"{_reference_storage_prefix()}{uuid.uuid4().hex}.{extension}"
         signed = _supabase_create_signed_upload(pathname)
         return jsonify({"success": True, **signed, "max_bytes": REFERENCE_UPLOAD_MAX_BYTES})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+def _relay_reference_upload(pathname, token, content, mime):
+    # The token authorizes one specific object. The client never supplies the host,
+    # bucket, or an outbound header, and this write uses no server credential.
+    url = _supabase_storage_url(f"/object/upload/sign/{_supabase_object_path(pathname)}")
+    try:
+        with requests.put(
+            url, params={"token": token}, headers={"x-upsert": "false"},
+            data={"cacheControl": "3600"}, files={"": (pathname.rsplit("/", 1)[1], content, mime)},
+            timeout=(5, 40), allow_redirects=False,
+        ) as response:
+            status = response.status_code
+            if 200 <= status < 300:
+                return
+            try:
+                error = response.json()
+            except ValueError:
+                error = {}
+        reason = str(error.get("code") or error.get("error") or "").lower() if isinstance(error, dict) else ""
+        if status in (400, 409) and reason in {"resourcealreadyexists", "keyalreadyexists", "already_exists", "duplicate"}:
+            # A direct PUT can succeed even when the browser loses its response.
+            # Continue only if this owner's stored object is the submitted image.
+            offset = 0
+            with _supabase_download(pathname, stream=True) as existing:
+                for chunk in existing.iter_content(65536):
+                    if content[offset:offset + len(chunk)] != chunk:
+                        break
+                    offset += len(chunk)
+                else:
+                    if offset == len(content):
+                        return
+            raise ProviderError("REFERENCE_UPLOAD_FAILED", "参考图与已上传的文件不一致，请重新选择图片。", 409)
+    except requests.RequestException:
+        raise ProviderError("REFERENCE_UPLOAD_FAILED", "网站连接图片存储超时或中断，请稍后重新上传参考图。", 503) from None
+    if status in (401, 403) or reason in {"invalidjwt", "invalidsignature", "expiredsignature"}:
+        raise ProviderError("REFERENCE_UPLOAD_FAILED", "参考图上传凭证无效或已过期，请重新上传。", 403)
+    if status == 429:
+        raise ProviderError("REFERENCE_UPLOAD_FAILED", "图片存储请求较多，请稍后重新上传参考图。", 429)
+    raise ProviderError("REFERENCE_UPLOAD_FAILED", f"备用线路上传参考图时，图片存储返回 HTTP {status}。", 502)
+
+
+@app.route("/api/reference-upload-fallback", methods=["POST"])
+def reference_upload_fallback():
+    try:
+        body_limit = REFERENCE_RELAY_MAX_BYTES + 64 * 1024
+        request.max_content_length = min(request.max_content_length or body_limit, body_limit)
+        if request.content_length and request.content_length > request.max_content_length:
+            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "备用上传线路支持最大 4 MiB 的参考图。", 413)
+        if parse_billing_mode({}) == "platform":
+            require_authenticated_user()
+        else:
+            set_optional_storage_scope()
+        if _storage_backend() != "supabase":
+            raise ProviderError("REFERENCE_STORAGE_UNAVAILABLE", "参考图上传服务未配置。", 503)
+        pathname = validate_reference_storage_paths([request.form.get("path")])[0]
+        token = request.form.get("token", "")
+        if not token or len(token) > 8192:
+            raise ProviderError("REFERENCE_UPLOAD_INVALID", "参考图上传凭证无效，请重新上传。", 400)
+        file = request.files.get("file")
+        if file is None:
+            raise ProviderError("REFERENCE_IMAGE_INVALID", "缺少参考图，请重新选择图片。", 400)
+        content = file.read(REFERENCE_RELAY_MAX_BYTES + 1)
+        if len(content) > REFERENCE_RELAY_MAX_BYTES:
+            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "备用上传线路支持最大 4 MiB 的参考图。", 413)
+        mime = _reference_image_mime(content)
+        if not mime or REFERENCE_UPLOAD_EXTENSIONS[mime] != pathname.rsplit(".", 1)[1].lower():
+            raise ProviderError("REFERENCE_IMAGE_INVALID", "参考图内容与签名时的图片格式不符，请重新选择图片。", 400)
+        _relay_reference_upload(pathname, token, content, mime)
+        return jsonify({"success": True, "path": pathname})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
 

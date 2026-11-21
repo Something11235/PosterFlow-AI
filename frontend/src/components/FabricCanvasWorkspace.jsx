@@ -17,6 +17,7 @@ import {
 } from "fabric";
 import { apimartImageModel } from "../lib/provider";
 import { cleanupReferencePaths, uploadReferenceBlobs } from "../lib/referenceUpload";
+import { imageDiagnosticText } from "../lib/imageGenerationError";
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -1614,13 +1615,15 @@ export default function FabricCanvasWorkspace({
           }
         }
       }
-      console.error("Fabric canvas AI generation failed", finalError);
-      setAiError({
-        message: finalError?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败",
-        detail: finalError.detail || finalError.message || "浏览器未能完成服务请求或结果插入。",
-      });
-      setStatus({ type: "error", message: finalError?.code?.startsWith("REFERENCE_") ? "画布参考图上传失败" : "画布 AI 生成失败" });
-      if (billingMode === "platform") await onAccountRefresh?.();
+      const referenceFailure = !generationRequestStarted &&
+        (finalError?.phase === "reference_upload" || finalError?.code?.startsWith("REFERENCE_"));
+      const message = referenceFailure ? "画布参考图上传未完成，尚未提交生图" : "画布 AI 生成失败";
+      const explanation = finalError?.detail || finalError?.message || "浏览器未能完成服务请求或结果插入。";
+      const detail = referenceFailure ? [explanation, imageDiagnosticText(finalError.diagnostic)].filter(Boolean).join(" ") : explanation;
+      if (!referenceFailure) console.error("Fabric canvas AI generation failed", finalError);
+      setAiError({ message, detail });
+      setStatus({ type: "error", message });
+      if (billingMode === "platform" && generationRequestStarted) await onAccountRefresh?.();
     } finally {
       await cleanupReferencePaths(temporaryReferencePaths, referenceUploadHeaders);
       setAiBusy(false);
