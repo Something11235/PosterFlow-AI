@@ -245,7 +245,7 @@ export async function downloadImage(filename, options = {}) {
   return saveBrowserFile(filename, () => fetchImageBlob(filename, options));
 }
 
-export async function recoverGeneration(requestId, { attempts = 10, intervalMs = 2000, headers = {} } = {}) {
+export async function recoverGeneration(requestId, { attempts = 10, intervalMs = 2000, headers = {}, includeTerminal = false } = {}) {
   if (!requestId) return null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -257,7 +257,7 @@ export async function recoverGeneration(requestId, { attempts = 10, intervalMs =
       const payload = await response.json();
       if (!response.ok) return null;
       if (payload?.status === "succeeded" && payload.images?.length) return payload;
-      if (["failed", "refunded"].includes(payload?.status)) return null;
+      if (["failed", "refunded"].includes(payload?.status)) return includeTerminal ? payload : null;
     } catch {
       // A transient status request failure should not hide the original error.
     }

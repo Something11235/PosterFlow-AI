@@ -241,7 +241,7 @@ def access_token_from_request():
     return request.cookies.get(AUTH_COOKIE_NAME, "").strip()
 
 
-def optional_authenticated_user():
+def optional_authenticated_user(*, report_cookie_errors=False):
     token = access_token_from_request()
     if not token:
         return None
@@ -249,13 +249,13 @@ def optional_authenticated_user():
         return authenticate_access_token(token)
     except SupabaseError:
         # A stale resource cookie must not prevent anonymous self-key usage.
-        if request.headers.get("Authorization", "").strip():
+        if report_cookie_errors or request.headers.get("Authorization", "").strip():
             raise
         return None
 
 
-def require_authenticated_user():
-    user = optional_authenticated_user()
+def require_authenticated_user(*, report_cookie_errors=False):
+    user = optional_authenticated_user(report_cookie_errors=report_cookie_errors)
     if not user:
         raise ProviderError(
             "AUTH_REQUIRED",

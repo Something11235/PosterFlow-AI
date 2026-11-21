@@ -15,6 +15,7 @@ import ImageTaskQueue from "./components/ImageTaskQueue";
 import ImageTasksPanel from "./components/ImageTasksPanel";
 import { createImageTaskStore, getCompletedImageTask, getRefundedImageTask, IMAGE_TASK_LIMIT, referenceCapability, syncImageTaskSelection } from "./lib/imageTasks";
 import { canAutoQueryImageTask, startImageTaskRecovery } from "./lib/imageTaskRecovery";
+import { closedImageFailure, imageClientFailure, imageQueryFailureMessage, readImageGenerationResult } from "./lib/imageGenerationError";
 import { accountAfterImageRefund, imageRefundError } from './lib/imageRefund';
 import { imageGenerationFetch, imageTaskPendingState, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
@@ -66,10 +67,10 @@ function createRequestId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 const DEFAULT_ERROR = {
-  message: "生成失败，请检查接口配置",
+  message: "本次生成未完成",
   code: "GENERATE_FAILED",
-  detail: "本次生成没有完成，请稍后重试或检查服务配置。",
-  recovery: ["检查 API Key", "确认后端服务", "重新发起生成"],
+  detail: "",
+  recovery: [],
 };
 const TECHNICAL_ERROR_PATTERNS = [
   /HTTPSConnectionPool/i,
@@ -81,23 +82,18 @@ const TECHNICAL_ERROR_PATTERNS = [
 ];
 
 function normalizeApiError(data, fallback = DEFAULT_ERROR) {
-  const rawMessage = String(data?.error || data?.message || "");
+  const rawMessage = typeof data?.error === "string" ? data.error : typeof data?.message === "string" ? data.message : "";
+  const recovery = Array.isArray(data?.recovery) ? data.recovery.filter(item => typeof item === "string") : fallback.recovery;
   const looksTechnical = TECHNICAL_ERROR_PATTERNS.some((pattern) => pattern.test(rawMessage));
 
   if (looksTechnical) {
     return {
-      message: "无法连接图片生成服务",
-      code: data?.code || "PROVIDER_NETWORK_BLOCKED",
+      message: "图片服务请求未完成",
+      code: data?.code || "PROVIDER_REQUEST_FAILED",
       submission_unknown: Boolean(data?.submission_unknown),
       upstream_error: data?.upstream_error,
-      detail:
-        data?.detail ||
-        "后端向图片服务发起 HTTPS 请求时被网络策略拦截。常见原因包括中转站地址错误、防火墙、代理或当前运行环境禁止 Python 进程出站访问。",
-      recovery: data?.recovery || [
-        "允许 Python/服务器进程访问外网 443 端口",
-        "确认中转站地址、代理和防火墙规则",
-        "部署到可访问目标服务的公网服务器",
-      ],
+      detail: "图片服务请求返回了技术错误，可保留任务编号供管理员排查。",
+      recovery,
     };
   }
 
@@ -105,8 +101,10 @@ function normalizeApiError(data, fallback = DEFAULT_ERROR) {
     message: rawMessage || fallback.message,
     code: data?.code || fallback.code,
     submission_unknown: Boolean(data?.submission_unknown),
-    detail: data?.detail || fallback.detail,
-    recovery: data?.recovery || fallback.recovery,
+    diagnostic: data?.diagnostic,
+    diagnostic_phase: data?.diagnostic_phase,
+    detail: typeof data?.detail === "string" ? data.detail : fallback.detail,
+    recovery,
     upstream_error: data?.upstream_error,
   };
 }
@@ -624,7 +622,7 @@ export default function App() {
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
       if (live() && backgroundTarget && data.images?.length) queueTavernBackgrounds(data.images.map(image => image.filename), backgroundTarget.name, requestId, backgroundTarget.identity);
     };
-    let paths = [], started = false;
+    let paths = [], started = false, uploadingReferences = false;
     try {
       const body = { prompt: taskPrompt.trim(), request_id: requestId,
         ...(previousImage ? { previous_image: previousImage, ...(apimartSpec?.value.startsWith('gpt-image-2.6-') ? {count} : {}) } : { count }),
@@ -634,23 +632,29 @@ export default function App() {
         ...(apimartSpec && !apimartSpec.automaticResolution ? { resolution: imageResolution } : {}),
         ...(apimartSpec?.outputFormats ? {output_format: imageOutputFormat} : {}) };
       if (!previousImage && !referenceSpec.disabled && referenceFiles.length) {
+        uploadingReferences = true;
         paths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders });
+        uploadingReferences = false;
         body.reference_storage_paths = paths;
       }
       // A removed file/config change affects only the next task; this closure
       // retains this submission's complete parameters and credential headers.
       if (!live()) { store.finish(requestId, { error: { message: "登录身份已变化，尚未提交生成。" } }); return; }
-      started = true;
       if (!session?.user?.id) rememberGuestPrompt(body.prompt, requestId);
+      started = true;
       const response = await imageGenerationFetch(`${API_BASE}/${previousImage ? "modify" : "generate"}`, {
         method: "POST", headers: { "Content-Type": "application/json", "X-Request-Id": requestId, ...providerHeaders },
         body: JSON.stringify(body),
       });
-      const data = await response.json();
+      const data = await readImageGenerationResult(response);
       if (!response.ok || data.error) {
         const refunded = imageRefundError(data, billingMode);
-        const pending = !refunded && Boolean(["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || (routedImageSpec && !data.job?.status?.match(/^(failed|completed)$/) && (data.submission_unknown || /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || ""))));
-        const failure = refunded || { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
+        const confirmedUnsubmitted = data.generation_submitted === false && data.submission_unknown === false;
+        const pending = !refunded && !confirmedUnsubmitted && !['failed','completed'].includes(data.job?.status) && Boolean(
+          ["REQUEST_ALREADY_PROCESSED", "IMAGE_TASK_PENDING"].includes(data.code) || data.submission_unknown ||
+          (routedImageSpec && /UNKNOWN|PENDING|QUERY|UNCERTAIN|TIMEOUT|CONNECTION_FAILED/.test(data.code || "")));
+        const failure = refunded ? {...refunded, upstream_error:data.upstream_error, cause:typeof data.job?.failure_reason === 'string' ? data.job.failure_reason : data.error} :
+          { ...normalizeApiError(data), billing_mode: billingMode, submission_unknown:Boolean(data.submission_unknown), recovery_confirmed:data.recovery_confirmed===true };
         if (live() && refunded) setAccount(current => accountAfterImageRefund(current, data, billingMode));
         store.finish(requestId, { error: failure, pending });
         showFailure(failure);
@@ -658,12 +662,15 @@ export default function App() {
     } catch (reason) {
       // Existing synchronous models have their original GET-only recovery.
       const recovered = started && billingMode === "platform" && !routedImageSpec
-        ? await recoverGeneration(requestId, { headers: authHeaders }).catch(() => null) : null;
+        ? await recoverGeneration(requestId, { headers: authHeaders, includeTerminal:true }).catch(() => null) : null;
       if (recovered?.images?.length) show(recovered);
+      else if (recovered) {
+        const failure = imageRefundError(recovered, billingMode) || closedImageFailure(recovered, billingMode);
+        store.finish(requestId, { error: failure });
+        showFailure(failure);
+      }
       else {
-        const failure = { message: reason?.code?.startsWith("REFERENCE_") ? "参考图上传失败" : "生成请求暂未完成",
-          code: reason?.code || "BACKEND_OFFLINE", billing_mode: billingMode, submission_unknown:started,
-          detail: reason?.detail || reason?.message || "请查询原任务状态，避免重复提交。" };
+        const failure = imageClientFailure(reason, { started, uploadingReferences, billingMode });
         store.finish(requestId, { error: failure, pending: started });
         showFailure(failure);
       }
@@ -698,31 +705,43 @@ export default function App() {
 
   const syncImageTasks = useCallback(signal => {
     const store=imageTaskStore;
-    const live=()=>!signal?.aborted && imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
     if(!session?.user?.id){setImageTasksWarning('登录后可同步本人平台任务；当前仅显示本机记录。');return;}
     const running = imageTaskSync.current;
     if (running?.store === store && running.headers === authHeaders && !running.signal?.aborted) return running.promise;
     const request = {store, signal, headers:authHeaders};
+    imageTaskSync.current=request;
+    const live=()=>imageTaskSync.current===request && !signal?.aborted && imageTaskStoreRef.current===store && (sessionRef.current?.user?.id||'guest')===store.identity;
     request.promise = (async () => {
       setImageTasksLoading(true);setImageTasksWarning('');
       try {
-      const data=await listImageTasks({...authHeaders,'X-Billing-Mode':'platform'},signal);
-      if(!live())return;
-      const selected = syncImageTaskSelection(store, data.jobs, {
-        currentStore: imageTaskStoreRef.current,
-        currentOwner: sessionRef.current?.user?.id || 'guest',
-        selectedId: selectedTaskRef.current,
-      });
-      if (selected) { setImages(selected.images); setCurrentPrompt(selected.prompt); setError(selected.error || null); }
-      if (selected) await refreshAccount();
-      if(data.unavailable)setImageTasksWarning('部分任务暂未同步，请稍后刷新；已有记录仍可查询。');
-      } catch { if(live())setImageTasksWarning('任务同步暂时中断，已有记录已保留；恢复网络后会再次同步。'); }
+        // A tab returning to the foreground can still hold the previous access token.
+        const {data, error} = await supabase.auth.getSession();
+        if (!live()) return;
+        if (error || !data?.session?.access_token || data.session.user?.id !== store.identity) {
+          setImageTasksWarning(error ? '登录状态暂时无法确认，请先刷新网页。' : '当前没有可用的登录状态。请刷新网页，如果仍显示未登录，请登录后同步任务。');
+          return;
+        }
+        const headers = {...CLIENT_HEADERS, Authorization:`Bearer ${data.session.access_token}`, 'X-Billing-Mode':'platform'};
+        const result = await listImageTasks(headers, signal);
+        if (!live()) return;
+        const selected = syncImageTaskSelection(store, result.jobs, {
+          currentStore: imageTaskStoreRef.current,
+          currentOwner: sessionRef.current?.user?.id || 'guest',
+          selectedId: selectedTaskRef.current,
+        });
+        setImageTasksWarning(result.warning);
+        if (selected) {
+          setImages(selected.images);
+          setCurrentPrompt(selected.prompt);
+          setError(selected.error || null);
+          await refreshAccount();
+        }
+      } catch { if(live())setImageTasksWarning('任务暂时无法同步，已有记录仍可查看。请稍后刷新。'); }
       finally {
         if(live())setImageTasksLoading(false);
         if(imageTaskSync.current===request)imageTaskSync.current=null;
       }
     })();
-    imageTaskSync.current=request;
     return request.promise;
   },[imageTaskStore,session?.user?.id,authHeaders,refreshAccount]);
 
@@ -791,7 +810,7 @@ export default function App() {
       }else if(data?.job?.status==='failed' || ['failed','refunded'].includes(data?.status)){
         terminal = true;
         const refunded=imageRefundError(data,task.billingMode);
-        const failure=refunded || (data?.status ? {message:'原任务已结束',code:'IMAGE_TASK_CLOSED',detail:'原任务已结束，未取得成功图片。此次查询没有再次生成或扣分。',recovery:['查看任务记录与积分明细'],billing_mode:task.billingMode} : {message:data.job.failure_reason||'原任务未完成，预留积分已按实际结果处理。',code:data.job.error_code,billing_mode:task.billingMode});
+        const failure=refunded || closedImageFailure(data,task.billingMode);
         if (refunded) setAccount(current => accountAfterImageRefund(current,data,task.billingMode));
         store.finish(task.id,{error:failure});
         const completed = getCompletedImageTask(store, task.id);
@@ -818,9 +837,10 @@ export default function App() {
         if(task.billingMode==='platform' && currentAuthorization() && [401,403].includes(reason?.status)){
           imageRecoveryAuthBlocked.current=true;
           setImageRecoveryPaused(true);
-          const message='登录状态暂时无法验证，已暂停自动查询。请重新登录或刷新页面后查询原任务，任务记录仍保留。';
+          const message=reason.status === 403 ? '当前请求没有查看原任务的权限，已暂停自动查询。请先刷新页面，如果仍无法查看，请确认使用的是提交任务的账号。' :
+            imageQueryFailureMessage(reason);
           setNotice(message);setImageTasksWarning(message);
-        }else announce('原任务暂时无法查询，任务记录已保留；恢复网络后继续查询，请勿重复生成。');
+        }else if (currentAuthorization()) announce(imageQueryFailureMessage(reason));
       }
     }
     finally{imageQueries.current.delete(key);}

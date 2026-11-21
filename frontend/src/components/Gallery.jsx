@@ -17,6 +17,7 @@ import BackupImageDownload from "./BackupImageDownload";
 import GalleryImagePreview from "./GalleryImagePreview";
 import { isPendingImageTaskError } from "../lib/imageTaskRecovery";
 import { imageRefundError } from "../lib/imageRefund";
+import { imageAuthNeedsRefresh, imageAuthRefreshHint, imageDiagnosticText, imageFailureTitle } from "../lib/imageGenerationError";
 
 export default function Gallery({
   images,
@@ -337,8 +338,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
       ? {
           message: error,
           code: "GENERATE_FAILED",
-          detail: "本次请求没有完成，请根据建议检查服务状态。",
-          recovery: ["检查 API Key", "确认后端进程", "重新发起生成"],
+          recovery: [],
         }
       : error;
   const platform = (errorInfo?.billing_mode || billingMode) === "platform";
@@ -363,39 +363,52 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
   const duplicate = errorInfo?.code === 'REQUEST_ALREADY_PROCESSED';
   const closed = errorInfo?.code === 'IMAGE_TASK_CLOSED';
   const pending = isPendingImageTaskError(errorInfo);
-  const showFailureAdvice = !pending && (Boolean(refunded) || !(uploadLimitDetail || referenceUploadFailed || configurationError || inputOrAccountError));
+  const refreshAuth = !refunded && imageAuthNeedsRefresh(errorInfo?.code);
+  const diagnostic = imageDiagnosticText(errorInfo?.diagnostic);
+  const referencePreparation = errorInfo?.diagnostic_phase === 'reference';
+  const knownTitle = imageFailureTitle(errorInfo?.code);
+  const genericFailure = !errorInfo?.code || ['GENERATE_FAILED','IMAGE_TASK_FAILED','APIMART_TASK_FAILED','IMAGE_UNDELIVERED_REFUNDED'].includes(errorInfo.code);
+  const showFailureAdvice = !pending && !diagnostic && !errorInfo?.upstream_error?.message && !referencePreparation && !uploadLimitDetail && !knownTitle && genericFailure;
   const recoveryHint = autoRecovery
     ? "提交后的 20 分钟内，页面保持前台时系统会自动查询原任务，成功后更新图片；不会重新生图或重复扣积分。"
     : "请点击下方按钮查询原任务，也可以从“历史记录 → 生图任务”继续查看。请勿重复提交。";
   let recovery = [];
   if (refunded) recovery = refunded.recovery;
   else if (pending) recovery = ["查询原任务，不会重复扣积分", "请勿重复生成"];
+  else if (refreshAuth) recovery = [];
   else if (closed) recovery = errorInfo.recovery || ["查看原任务记录"];
   else if (uploadRecovery) recovery = uploadRecovery;
   else if (configurationError) recovery = errorInfo.recovery || ["刷新页面，核对当前积分后再生成"];
   else if (timedOut) recovery = errorInfo.recovery?.length ? errorInfo.recovery : ["至少等待 2 分钟后再尝试；已有任务请先查询原任务，勿重复提交。"];
   else if (referenceUploadFailed) recovery = ["稍后重试上传", "持续失败请联系站主"];
   else if (inputOrAccountError) recovery = errorInfo.recovery || [];
-  else if (!platform) recovery = errorInfo?.recovery?.length ? errorInfo.recovery : ["检查 API Key", "确认后端进程", "重新发起生成"];
+  else recovery = errorInfo?.recovery || [];
 
-  const statusTitle = saving ? "图片已生成，正在保存"
+  const statusTitle = refunded ? knownTitle || (!saving && !processing && !duplicate && errorInfo.cause) || refunded.message
+    : refreshAuth ? knownTitle
+    : saving ? "图片已生成，正在保存"
     : duplicate ? "已找到原任务，正在确认结果"
     : processing ? "任务正在处理，请稍候"
-    : pending ? "结果暂未确认，原任务已保留"
+    : pending ? knownTitle || "结果暂未确认，请查询原任务"
     : uploadQuotaExceeded ? "图片服务的参考素材上传额度已用尽"
     : uploadRateLimited ? "图片服务暂时限制参考图上传"
     : referenceLinkUnavailable ? "参考图临时链接暂时无法准备"
-    : errorInfo?.message;
+    : referencePreparation ? knownTitle || errorInfo?.message
+    : errorInfo?.message || knownTitle;
   let detail;
-  if (pending) detail = `${saving || processing ? '' : '暂时未收到最终结果，不代表生成失败。'}${recoveryHint}`;
+  if (refreshAuth) detail = pending ? imageAuthRefreshHint + ' 刷新后可继续查询原任务。' : imageAuthRefreshHint;
+  else if (pending) detail = recoveryHint;
   else if (refunded) detail = refunded.detail;
   else if (uploadLimitDetail) detail = uploadLimitDetail;
-  else if (referenceUploadFailed) detail = "参考图未完成上传，尚未提交生图任务。请稍后重试上传；若持续失败，请联系站主。";
+  else if (referencePreparation || referenceUploadFailed) detail = [errorInfo.detail !== statusTitle && errorInfo.detail, '生图请求尚未提交，请处理参考图后重试。'].filter(Boolean).join(' ');
+  else if (errorInfo?.diagnostic_phase === 'preparation') detail = '生图请求尚未提交，请检查输入后重试。';
   else if (timedOut) detail = errorInfo.detail || "图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。";
-  else if (closed || configurationError || inputOrAccountError || !platform) detail = errorInfo?.detail;
-  else detail = statusTitle;
-  if (!showFailureAdvice && detail === statusTitle) detail = null;
-  const upstream = platform ? errorInfo?.upstream_error : null;
+  else detail = errorInfo?.detail;
+  if (detail === statusTitle || /^(?:失败)?一般为以下原因/.test(detail || '')) detail = null;
+  const diagnosticPhase = {query:'查询原任务时',reference:'上传参考图时',preparation:'准备生图请求时'}[errorInfo?.diagnostic_phase] || '提交生图请求时';
+  const upstream = platform && errorInfo?.upstream_error ? Object.fromEntries(
+    Object.entries(errorInfo.upstream_error).filter(([,value]) => typeof value === 'string' || typeof value === 'number')
+  ) : null;
 
   return (
     <div className={`grid items-center gap-5 xl:grid-cols-[0.95fr_1.05fr] ${pending ? 'min-h-[320px]' : 'min-h-[520px]'}`}>
@@ -405,20 +418,20 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
           {refunded ? "预留积分已退回" : saving ? "图片保存中" : processing ? "生成处理中" : pending ? "正在确认原任务状态" : platform ? "本次生成未完成" : "服务状态需要处理"}
         </div>
         <h2 className="max-w-lg text-2xl font-semibold leading-tight text-text-primary">
-          {showFailureAdvice ? "失败一般为以下原因：" : statusTitle || "本次生成未完成"}
+          {showFailureAdvice && !refunded ? "生图未完成，具体原因暂未确认" : statusTitle || "本次生成未完成"}
         </h2>
+        {diagnostic && <p className="mt-3 max-w-lg text-sm leading-7 text-text-secondary">{diagnosticPhase}，{diagnostic}</p>}
+        {upstream?.message && <p className="mt-3 max-w-lg whitespace-pre-wrap break-words text-sm leading-7 text-text-secondary">图片服务返回的说明：{upstream.message}</p>}
         {showFailureAdvice && <div className="mt-3 max-w-lg space-y-2 text-sm leading-7 text-text-secondary">
+          <p>{refunded ? "这笔任务没有记录具体失败原因。可排查以下情况：" : "可排查以下情况："}</p>
           <ol className="list-decimal space-y-1 pl-5">
             <li>提示词或参考图有违规或涉及版权的内容，或模型不支持的参数</li>
             <li>网络波动，改用科学上网且尽量不要使用公用网络</li>
           </ol>
           <p>请调整提示词或参考图，更换网络环境重试</p>
         </div>}
-        {showFailureAdvice && !refunded && statusTitle && statusTitle !== detail && (
-          <p className="mt-3 max-w-lg text-sm font-medium text-text-secondary">{statusTitle}</p>
-        )}
         {detail && <p className="mt-3 max-w-lg whitespace-pre-line text-sm leading-7 text-text-muted">{detail}</p>}
-        {pending && <p className="mt-2 text-xs leading-6 text-text-muted">如果连接持续中断，可切换网络，或尝试使用科学上网后刷新重试；原任务记录会保留。</p>}
+        {pending && ['BROWSER_OFFLINE','CONNECTION_INTERRUPTED'].includes(errorInfo.diagnostic) && <p className="mt-2 text-xs leading-6 text-text-muted">如果连接持续中断，可切换网络，或尝试使用科学上网后刷新重试。</p>}
         {recovery.length > 0 && <div className="mt-5 flex flex-wrap gap-2">
           {recovery.map((chip) => (
             <span key={chip} className="rounded-md border border-border-subtle bg-bg-tertiary px-3 py-1.5 text-xs text-text-secondary">
@@ -427,7 +440,8 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
           ))}
         </div>}
         {pending && onQueryTask && <button type="button" disabled={querying} onClick={async()=>{setQuerying(true);try{await onQueryTask();}finally{setQuerying(false);}}} className="mt-5 inline-flex min-h-12 items-center gap-2 rounded-lg bg-accent px-5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"><RefreshCw size={17} className={querying?'animate-spin':''}/>{querying?'正在查询原任务…':'查询原任务 · 找回图片'}</button>}
-        {!pending && <button
+        {refreshAuth && <button type="button" onClick={() => window.location.reload()} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover"><RefreshCw size={16} />刷新页面</button>}
+        {!pending && !refreshAuth && <button
           type="button"
           onClick={onRetry}
           className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-white transition hover:bg-accent-hover"
@@ -453,10 +467,6 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
             <dt className="shrink-0 text-text-muted">{pending ? "任务状态" : platform ? "错误类别" : "当前状态"}</dt>
             <dd className="min-w-0 break-all text-right font-medium text-text-primary">{errorInfo?.code || "GENERATE_FAILED"}</dd>
           </div>
-          {upstream?.message && <div>
-            <dt className="mb-2 text-text-muted">图片服务返回的说明</dt>
-            <dd className="whitespace-pre-wrap break-words rounded-lg border border-border-subtle bg-bg-tertiary p-3 text-sm leading-6 text-text-secondary">{upstream.message}</dd>
-          </div>}
           {upstream?.code && <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">上游错误码</dt>
             <dd className="min-w-0 break-all text-right text-text-secondary">{upstream.code}</dd>
@@ -475,7 +485,7 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
           </div>}
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">恢复动作</dt>
-            <dd className="text-right font-medium text-text-primary">{refunded ? '原任务已结束，可主动发起新任务' : pending ? autoRecovery ? '自动查询原任务，也可手动查询' : '查询原任务，不会重复扣积分' : '按建议处理后重试'}</dd>
+            <dd className="text-right font-medium text-text-primary">{refunded ? '原任务已结束，可主动发起新任务' : refreshAuth ? '刷新页面更新登录状态' : pending ? autoRecovery ? '自动查询原任务，也可手动查询' : '查询原任务，不会重复扣积分' : '按建议处理后重试'}</dd>
           </div>
           {recovery.length > 0 && <div>
             <dt className="mb-2 text-text-muted">建议说明</dt>

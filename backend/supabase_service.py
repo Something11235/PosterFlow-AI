@@ -99,6 +99,8 @@ def _decode_access_token(token: str) -> dict[str, Any]:
         raise
     except jwt.ExpiredSignatureError as exc:
         raise SupabaseError("AUTH_SESSION_EXPIRED", "登录状态已过期，请重新登录", 401) from exc
+    except jwt.PyJWKClientConnectionError as exc:
+        raise SupabaseError("AUTH_VERIFY_UNAVAILABLE", "暂时无法验证登录状态", 503) from exc
     except jwt.PyJWTError as exc:
         raise SupabaseError("AUTH_TOKEN_INVALID", "登录凭证无效，请重新登录", 401) from exc
     except requests.RequestException as exc:

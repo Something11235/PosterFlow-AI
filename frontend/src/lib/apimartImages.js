@@ -1,5 +1,6 @@
 import { apimartImageModel, IMAGE_TIER_MODELS, isRetiredImageModel } from "./provider.js";
 import { imageRefundError } from './imageRefund.js';
+import { imageTransportDiagnostic } from './imageGenerationError.js';
 
 export const APIMART_IMAGES_BASE = "/api/apimart-images";
 export const BUYTOKEN_IMAGES_BASE = "/api/buytoken-images";
@@ -33,31 +34,37 @@ async function boundedFetch(url, init, milliseconds) {
   }
 }
 
+async function readTaskReply(response) {
+  const data = await response.json().catch(() => null);
+  if (response.ok && typeof (data?.job?.status ?? data?.status) === 'string' && !data.error) return data;
+  const code = typeof data?.code === 'string' ? data.code :
+    response.status === 401 ? 'AUTH_REQUIRED' : response.status === 403 ? 'ACCESS_DENIED' : undefined;
+  const reason = data?.detail || data?.error;
+  const detail = typeof reason === 'string' && code ? reason : '原任务暂时无法查询。';
+  throw Object.assign(new Error(detail), {code, status:response.status, diagnostic:imageTransportDiagnostic(null, response.status)});
+}
+
 export async function readImageTask(requestId, headers, signal, model = new Headers(headers).get("X-Provider-Model"), route, { timeoutMs = 230000, allowLegacyFallback = true } = {}) {
   const buytoken = route ? route === 'buytoken' : usesBuyToken(model, headers);
   const deadline = Date.now() + timeoutMs;
-  let response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, timeoutMs);
+  const readFrom = async (base, timeout) => readTaskReply(await boundedFetch(`${base}/tasks/${encodeURIComponent(requestId)}`, {headers, signal, cache:'no-store'}, timeout));
   // Pre-migration GPT2.6 tasks keep their original APIMart query path and Key.
   // This is a GET-only recovery fallback, never another generation submission.
-  if (buytoken && allowLegacyFallback && response.status === 404) {
-    const missing = await response.clone().json();
-    if (missing.code === "IMAGE_TASK_NOT_FOUND" && Date.now() < deadline) response = await boundedFetch(`${APIMART_IMAGES_BASE}/tasks/${encodeURIComponent(requestId)}`, { headers, signal, cache: "no-store" }, deadline - Date.now());
+  try {
+    return await readFrom(buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE, timeoutMs);
+  } catch (error) {
+    if (buytoken && allowLegacyFallback && error.status === 404 && error.code === 'IMAGE_TASK_NOT_FOUND' && Date.now() < deadline) {
+      return readFrom(APIMART_IMAGES_BASE, deadline - Date.now());
+    }
+    throw error;
   }
-  let data;
-  try { data = await response.json(); }
-  catch { throw Object.assign(new Error("图片任务暂时无法查询。"), { status: response.status,
-    code:response.status === 401 ? 'AUTH_REQUIRED' : response.status === 403 ? 'ACCESS_DENIED' : undefined }); }
-  if (!response.ok || data.error) throw Object.assign(new Error(data.detail || data.error || "图片任务暂时无法查询。"), { code: data.code, status: response.status });
-  return data;
 }
 
 // The synchronous route has the same owned GET recovery, including terminal
 // states. Keep those states so an already-refunded task is not left pending.
 export async function readLegacyImageTask(requestId, headers) {
   const response = await boundedFetch(`/api/generations/${encodeURIComponent(requestId)}`, {headers, credentials:'include', cache:'no-store'}, 20000);
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error('原任务暂时无法查询，请稍后重试。');
-  return data;
+  return readTaskReply(response);
 }
 
 // Read owned metadata only. Each provider can fail independently; never submit
@@ -66,11 +73,29 @@ export async function listImageTasks(headers, signal) {
   const results = await Promise.allSettled(['buytoken', 'apimart'].map(async route => {
     const base = route === 'buytoken' ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE;
     const response = await boundedFetch(`${base}/tasks`, {headers, signal, cache:'no-store'}, 20000);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null);
+      throw Object.assign(new Error('任务列表读取失败'), {status: response.status, code: failure?.code});
+    }
     const data = await response.json();
-    if (!response.ok || !Array.isArray(data.jobs)) throw new Error('TASK_LIST_UNAVAILABLE');
+    if (!Array.isArray(data?.jobs)) throw new Error('任务列表格式无效');
     return data.jobs.map(job => imageJobMetadata(job, route));
   }));
-  return {jobs:results.flatMap(result => result.status === 'fulfilled' ? result.value : []), unavailable:results.some(result => result.status === 'rejected')};
+  const failures = results.filter(result => result.status === 'rejected');
+  let warning = '';
+  if (failures.length) {
+    const scope = failures.length === results.length ? '任务列表' : '部分任务';
+    if (failures.every(result => result.reason?.status === 401)) {
+      warning = `${scope}暂未通过登录验证，请先刷新网页后再查看。`;
+    } else if (failures.every(result => result.reason?.code === 'AUTH_VERIFY_UNAVAILABLE')) {
+      warning = '登录验证服务暂时不可用，请稍后刷新任务列表。';
+    } else if (failures.every(result => result.reason?.code === 'IMAGE_TASK_LIST_READ_FAILED')) {
+      warning = `${scope}暂时无法从数据库读取，请稍后刷新。已有记录仍可查看。`;
+    } else {
+      warning = `${scope}暂未同步，请稍后刷新。已有记录仍可查看。`;
+    }
+  }
+  return {jobs:results.flatMap(result => result.status === 'fulfilled' ? result.value : []), unavailable:Boolean(warning), warning};
 }
 
 const unknownSubmission = () => ({
@@ -99,7 +124,7 @@ export function imageJobMetadata(job, route) {
   const pendingState = imageTaskPendingState(job, route) || {code:'IMAGE_TASK_REVIEW_REQUIRED',submission_unknown:true};
   return {id:job.request_id, model:job.model, billingMode:job.billing_mode, createdAt:Date.parse(job.created_at), route,
     status, images:(Array.isArray(job.image_keys) ? job.image_keys : []).map(filename => ({filename})),
-    ...(status==='pending' ? {error:pendingState} : status==='failed' ? {error:imageRefundError(job) || {code:job.error_code || 'IMAGE_TASK_FAILED',submission_unknown:false,billing_mode:job.billing_mode}} : {})};
+    ...(status==='pending' ? {error:pendingState} : status==='failed' ? {error:imageRefundError(job) || {code:job.error_code || 'IMAGE_TASK_FAILED',message:job.failure_reason,recovery:job.recovery,submission_unknown:false,billing_mode:job.billing_mode}} : {})};
 }
 
 // Legacy requests remain byte-for-byte on their existing routes. New model
@@ -145,21 +170,27 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
   const recoverUnknown = new Headers(init.headers).get('X-Billing-Mode') === 'platform';
   const recoverableCodes = new Set(['IMAGE_SUBMISSION_UNKNOWN','IMAGE_TASK_UNAVAILABLE','IMAGE_DATABASE_UNAVAILABLE','IMAGE_REFUND_PENDING','IMAGE_SAVE_PENDING','IMAGE_TASK_QUERY_FAILED']);
   let response, data, submissionUncertain = false;
+  let diagnostic, diagnosticPhase = 'submission';
   try {
     response = await boundedFetch(`${buytoken ? BUYTOKEN_IMAGES_BASE : APIMART_IMAGES_BASE}/generations`, init, buytoken ? 230000 : 90000);
     try { data = await response.clone().json(); }
-    catch {
-      if ([401,403].includes(response.status)) return responseJson({error:response.status === 401 ? '登录已失效，请重新登录后查询原任务。' : '暂时没有权限访问原任务，请确认当前账号。',code:response.status === 401 ? 'AUTH_REQUIRED' : 'ACCESS_DENIED',submission_unknown:false},response.status);
-      if (recoverUnknown && (response.ok || response.status >= 500)) submissionUncertain = true;
-      else return responseJson({error:'暂时无法读取任务响应，请查询原任务。',...unknownSubmission()},503);
+    catch { /* A gateway may send HTML instead of the task response. */ }
+    if (!data || typeof data !== 'object' || Array.isArray(data)
+        || !data.job && !data.refunded && (typeof data.code !== 'string' || typeof data.error === 'object')) {
+      if ([401,403].includes(response.status)) return responseJson({error:response.status === 401 ? '登录状态需要更新，请先刷新网页后重试。' : '当前请求没有访问权限，请确认账户权限。',code:response.status === 401 ? 'AUTH_REQUIRED' : 'ACCESS_DENIED',submission_unknown:false},response.status);
+      diagnostic = imageTransportDiagnostic(null, response.status);
+      submissionUncertain = true;
+      data = {};
     }
-  } catch {
+  } catch (error) {
+    diagnostic = imageTransportDiagnostic(error);
     submissionUncertain = true;
   } finally {
     window.dispatchEvent(new Event("posterflow:image-tasks"));
   }
   if (response && !response.ok && !submissionUncertain) {
-    if (!recoverUnknown || data?.refunded || ['failed','completed'].includes(data?.job?.status)
+    const rejectedBeforeSubmission = data?.generation_submitted === false && data?.submission_unknown !== true;
+    if (!recoverUnknown || data?.refunded || rejectedBeforeSubmission || ['failed','completed'].includes(data?.job?.status)
       || !recoverableCodes.has(data?.code)) return response;
     submissionUncertain = !data?.job;
   }
@@ -169,7 +200,7 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
   const waiting = () => {
     if (init.signal?.aborted) return responseJson({error:'已停止本页等待，原任务可能仍在处理中；可手动查询结果。',code:'IMAGE_QUERY_CANCELLED',submission_unknown:true,recovery_confirmed:false},202);
     const state = pendingState() || unknownSubmission();
-    return responseJson({...data,error:state.message,...state},202);
+    return responseJson({...data,error:state.message,...state,...(diagnostic && {diagnostic, diagnostic_phase:diagnosticPhase})},202);
   };
   if (submissionUncertain && (!recoverUnknown || init.signal?.aborted)) return waiting();
   const deadline = Date.now() + maxWait;
@@ -181,20 +212,26 @@ export async function imageGenerationFetch(endpoint, init, { pollInterval = 4000
     try {
       data = await readImageTask(body.request_id, init.headers, init.signal, model, route, {timeoutMs:Math.min(230000, deadline-Date.now()),allowLegacyFallback:false});
       if (!data || typeof data !== 'object' || Array.isArray(data)) data = {};
+      if (data.job?.status) diagnostic = undefined;
       submissionUncertain = !imageTaskPendingState(data.job,route) && !['completed','failed'].includes(data.job?.status);
       queryFailures = 0;
     } catch (error) {
       // An uncertain POST may still be running on the server. Only read its
       // original ID; a short not-found race is not permission to submit again.
       if (init.signal?.aborted) return waiting();
-      const transient = !error.status || error.status === 408 || error.status === 429 || error.status >= 500
+      const transient = !error.status || error.diagnostic === 'RESPONSE_INVALID' || error.status === 408 || error.status === 429 || error.status >= 500
         || recoverUnknown && error.status === 404 && error.code === 'IMAGE_TASK_NOT_FOUND';
       if (error.code === 'IMAGE_SUBMISSION_UNKNOWN') { data = {}; submissionUncertain = true; }
       if (pendingState() && transient && !init.signal?.aborted) {
+        if (error.status !== 404 && error.code !== 'IMAGE_SUBMISSION_UNKNOWN') {
+          diagnostic = ['AUTH_VERIFY_UNAVAILABLE','IMAGE_DATABASE_UNAVAILABLE'].includes(error.code)
+            ? error.code : error.diagnostic || imageTransportDiagnostic(error, error.status);
+          diagnosticPhase = 'query';
+        }
         if (++queryFailures < 3 && Date.now() < deadline) continue;
         return waiting();
       }
-      return responseJson({ error: error.message + " 可在图片任务窗口继续查询，请勿重复生成。", code: error.code || "IMAGE_TASK_QUERY_FAILED", submission_unknown:true, recovery_confirmed:false }, error.status || 503);
+      return responseJson({ error: error.message + " 可在图片任务窗口继续查询，请勿重复生成。", code: error.code || "IMAGE_TASK_QUERY_FAILED", diagnostic:error.diagnostic, diagnostic_phase:'query', submission_unknown:true, recovery_confirmed:false }, error.status || 503);
     }
   }
   window.dispatchEvent(new Event("posterflow:image-tasks"));

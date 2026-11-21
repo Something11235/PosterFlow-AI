@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import uuid
@@ -23,6 +24,51 @@ except ModuleNotFoundError:
     from supabase_service import SupabaseGateway, SupabaseError, is_supabase_configured
 
 PUBLIC_FIELDS = ("request_id", "model", "billing_mode", "status", "requested_count", "image_keys", "error_code", "created_at", "reference_count", "unit_credit_cost", "pricing_resolution")
+IMAGE_AUTH_MESSAGES = {
+    "AUTH_SESSION_EXPIRED": "登录状态已过期",
+    "AUTH_TOKEN_INVALID": "登录凭证无效",
+    "AUTH_REQUIRED": "当前尚未登录",
+    "AUTH_VERIFY_UNAVAILABLE": "暂时无法验证登录状态",
+}
+LIST_LOG_CODES = set(IMAGE_AUTH_MESSAGES) | {
+    "SUPABASE_UNAVAILABLE", "SUPABASE_NOT_CONFIGURED",
+    "SUPABASE_REQUEST_FAILED", "SUPABASE_BAD_RESPONSE",
+}
+
+
+class ImageIdentityError(SupabaseError):
+    """Authentication stopped this HTTP request before the task store was accessed."""
+
+
+def image_request_user(server, *, required):
+    try:
+        if required:
+            return server.require_authenticated_user(report_cookie_errors=True)
+        return server.set_optional_storage_scope()
+    except SupabaseError as error:
+        if error.code not in IMAGE_AUTH_MESSAGES:
+            raise
+        raise ImageIdentityError(error.code, IMAGE_AUTH_MESSAGES[error.code], error.status) from error
+
+
+def image_auth_recovery(code, action):
+    if code == "AUTH_REQUIRED":
+        return [f"请先登录，再{action}"]
+    if code == "AUTH_VERIFY_UNAVAILABLE":
+        return [f"请稍后刷新页面，再{action}"]
+    return [f"请先刷新页面，再{action}", "如果刷新后仍提示登录状态异常，请重新登录"]
+
+
+def image_identity_error_response(error):
+    querying = request.method in {"GET", "HEAD"}
+    action = "查询原任务" if querying else "重试"
+    recovery = image_auth_recovery(error.code, action)
+    payload = dict(error=error.message, code=error.code, detail="。".join([error.message, *recovery]) + "。",
+                   recovery=recovery, phase="query" if querying else "authentication",
+                   submission_unknown=querying)
+    if not querying:
+        payload["generation_submitted"] = False
+    return jsonify(payload), error.status
 
 
 def public_job(job):
@@ -37,6 +83,38 @@ def public_job(job):
         if job.get('error_code') == 'IMAGE_PROVIDER_TIMEOUT':
             result['recovery'] = provider.IMAGE_TIMEOUT_RECOVERY
     return result
+
+
+def list_image_jobs(server, provider_name, get_owner, store_type, public_view):
+    """List owned metadata without submitting work or fetching an image."""
+    stage = "identity"
+    try:
+        owner = get_owner()
+        stage = "database"
+        rows = store_type().jobs(owner)
+        stage = "format"
+        jobs = [public_view(job) for job in rows if job.get("submission_provider", provider_name) == provider_name]
+        return jsonify(success=True, jobs=jobs)
+    except (server.ProviderError, provider.ImageTaskError):
+        # Request validation and rate limits already carry a specific status.
+        raise
+    except SupabaseError as error:
+        if stage == "identity" and isinstance(error, ImageIdentityError):
+            code, status = error.code, error.status
+            message = "。".join([error.message, *image_auth_recovery(code, "查看任务列表")]) + "。"
+        elif stage == "identity":
+            code, message, status = "AUTH_VERIFY_UNAVAILABLE", "暂时无法验证登录状态，请稍后刷新任务列表。", 503
+        else:
+            code, message, status = "IMAGE_TASK_LIST_READ_FAILED", "暂时无法读取任务记录，请稍后刷新任务列表。", 503
+        # PostgREST supplies some codes. Keep free text out of operational logs.
+        known_code = error.code in LIST_LOG_CODES or re.fullmatch(r"(?:[0-9][0-9A-Z]{4}|PGRST[0-9X]{3})", error.code)
+        reason = error.code if known_code else "SUPABASE_ERROR"
+    except Exception as error:
+        code, message, status = "IMAGE_TASK_LIST_UNAVAILABLE", "任务列表暂时无法加载，请稍后刷新。", 500
+        reason = type(error).__name__
+    logging.getLogger(__name__).warning("image_task_list provider=%s stage=%s reason=%s status=%d",
+                                        provider_name, stage, reason, status)
+    return jsonify(error=message, code=code), status
 
 
 class ImageStore:
@@ -98,6 +176,7 @@ class Seedream55ImageStore(ImageStore):
 
 def create_image_blueprint(server):
     bp = Blueprint("apimart_images", __name__, url_prefix="/api/apimart-images")
+    bp.register_error_handler(ImageIdentityError, image_identity_error_response)
 
     @bp.after_request
     def private_response(response):
@@ -137,14 +216,14 @@ def create_image_blueprint(server):
         # Never log raw provider errors, URLs, request bodies or credentials.
         return jsonify(error="图片任务暂未完成，请保留任务记录后查询。", code="IMAGE_TASK_UNAVAILABLE"), 503
 
-    def context():
+    def context(*, for_list=False):
         mode = server.parse_billing_mode({})
         if mode == "platform":
             if any(request.headers.get(name, "").strip() for name in ("X-Provider-Api-Key", "X-Provider-Endpoint", "X-Provider-Model", "X-Provider-Auth-Type")):
                 raise provider.ImageTaskError("PLATFORM_PROVIDER_OVERRIDE_BLOCKED", "平台模式不能混用个人服务配置。")
-            user = server.require_authenticated_user()
+            user = image_request_user(server, required=True)
             key = os.getenv("APIMART_IMAGE_API_KEY", "").strip()
-            if not key:
+            if not for_list and not key:
                 raise provider.ImageTaskError("APIMART_IMAGE_NOT_CONFIGURED", "平台图片服务尚未配置，可使用原有模型。", 503)
             return mode, key, "user-" + user.id, user.id
         key = request.headers.get("X-Provider-Api-Key", "").strip()
@@ -153,7 +232,7 @@ def create_image_blueprint(server):
             raise provider.ImageTaskError("APIMART_ENDPOINT_INVALID", "新增模型需要填写完整的图片生成地址，并使用 Bearer 鉴权。")
         if not key or len(key) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in key):
             raise provider.ImageTaskError("PROVIDER_KEY_MISSING", "请填写有效的图片服务 API Key。")
-        user = server.set_optional_storage_scope()
+        user = image_request_user(server, required=False)
         identity = "user-" + user.id if user else "guest-" + server.current_client_id()
         owner = identity + "-" + hashlib.sha256(key.encode()).hexdigest()
         return mode, key, owner, user.id if user else None
@@ -355,8 +434,10 @@ def create_image_blueprint(server):
 
     @bp.get("/tasks")
     def tasks():
-        _mode, _key, owner, _user = context()
-        return jsonify(success=True, jobs=[public_job(job) for job in ImageStore().jobs(owner) if job.get("submission_provider", "apimart") == "apimart"])
+        def get_owner():
+            _mode, _key, owner, _user = context(for_list=True)
+            return owner
+        return list_image_jobs(server, "apimart", get_owner, ImageStore, public_job)
 
     @bp.get("/tasks/<request_id>")
     def task(request_id):

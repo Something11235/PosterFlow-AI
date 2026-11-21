@@ -10,9 +10,29 @@ test('refresh lists both owned providers using GET only and keeps the healthy pr
   install(t,async(url,init)=>{calls.push({url,init});if(url.includes('apimart-images'))return json({error:'unavailable'},503);
     return json({jobs:[{request_id:requestId,status:'completed',created_at:new Date().toISOString(),model:'gpt-image-2.6-flare',billing_mode:'platform',image_keys:['restored.png'],provider_result_urls:['https://secret.invalid'],api_key:'never'}]});});
   const data=await listImageTasks({'X-Billing-Mode':'platform',Authorization:'Bearer synthetic'});
-  assert.equal(data.unavailable,true);assert.equal(data.jobs.length,1);assert.equal(data.jobs[0].route,'buytoken');
+  assert.equal(data.unavailable,true);assert.match(data.warning,/部分任务/);assert.equal(data.jobs.length,1);assert.equal(data.jobs[0].route,'buytoken');
   assert.equal(data.jobs[0].status,'completed');assert.ok(!JSON.stringify(data).includes('never'));assert.ok(!JSON.stringify(data).includes('secret.invalid'));
   assert.ok(calls.every(x=>!x.init.method || x.init.method==='GET'));assert.equal(calls.length,2);
+});
+
+test('both task lists rejecting a stale session report login trouble, including an HTML rejection', async t => {
+  install(t, async url => url.includes('buytoken')
+    ? new Response('<html>denied</html>', {status:401})
+    : json({code:'AUTH_SESSION_EXPIRED'}, 401));
+  const result = await listImageTasks({'X-Billing-Mode':'platform'});
+  assert.deepEqual(result.jobs, []);
+  assert.match(result.warning, /登录验证/);
+  assert.match(result.warning, /刷新网页/);
+  assert.doesNotMatch(result.warning, /数据库|后端离线/);
+});
+
+test('a 503 distinguishes verification service failure from reading task records', async t => {
+  let code = 'AUTH_VERIFY_UNAVAILABLE';
+  install(t, async () => json({code}, 503));
+  const headers = {'X-Billing-Mode':'platform'};
+  assert.match((await listImageTasks(headers)).warning, /登录验证服务/);
+  code = 'IMAGE_TASK_LIST_READ_FAILED';
+  assert.match((await listImageTasks(headers)).warning, /数据库读取/);
 });
 test('restored task queries retain their original provider even after a model configuration change',async t=>{
   const calls=[];install(t,async(url,init)=>{calls.push({url,method:init.method||'GET'});return json({job:{status:'submission_unknown'}});});
@@ -106,6 +126,7 @@ test('exhausted transient queries preserve accepted state for bounded later reco
   const data=await response.json();
   assert.equal(response.status,202);assert.equal(data.code,'IMAGE_TASK_PENDING');assert.equal(data.job.status,'submitted');
   assert.equal(data.submission_unknown,false);
+  assert.equal(data.diagnostic,'IMAGE_DATABASE_UNAVAILABLE');assert.equal(data.diagnostic_phase,'query');
   assert.deepEqual(calls,['POST','GET','GET','GET']);
 });
 
@@ -173,6 +194,34 @@ test("failed or unknown free preparation never sends a paid edit", async t => {
  });
 
 const platformBuyToken = () => ({method:'POST',headers:{'X-Billing-Mode':'platform',Authorization:'Bearer synthetic'},body:JSON.stringify({platform_model:'gpt-image-2.6-flare',request_id:requestId,prompt:'fixture'})});
+
+test('an unstructured gateway rejection keeps the observed HTTP status and the original request', async t => {
+  const calls = [];
+  install(t, async (_url, init) => {
+    calls.push(init.method || 'GET');
+    if (calls.length === 1) return json({error:{code:'FUNCTION_INVOCATION_TIMEOUT'}}, 504);
+    return json({error:'not visible yet',code:'IMAGE_TASK_NOT_FOUND'}, 404);
+  });
+  const data = await (await imageGenerationFetch('/api/generate', platformBuyToken(), {pollInterval:0})).json();
+  assert.equal(data.code, 'IMAGE_SUBMISSION_UNKNOWN');
+  assert.equal(data.diagnostic, 'HTTP_504');
+  assert.equal(data.diagnostic_phase, 'submission');
+  assert.deepEqual(calls, ['POST','GET','GET','GET']);
+});
+
+test('an explicit pre-submission failure is shown without querying a nonexistent job', async t => {
+  const calls = [];
+  install(t, async (_url, init) => {
+    calls.push(init.method || 'GET');
+    return json({error:'无法读取任务数据库',code:'IMAGE_DATABASE_UNAVAILABLE',generation_submitted:false,submission_unknown:false}, 503);
+  });
+  const response = await imageGenerationFetch('/api/generate', platformBuyToken(), {pollInterval:0});
+  const error = await response.json();
+  assert.equal(response.status, 503);
+  assert.equal(error.code, 'IMAGE_DATABASE_UNAVAILABLE');
+  assert.equal(error.generation_submitted, false);
+  assert.deepEqual(calls, ['POST']);
+});
 
 test('a duplicate submit returning a still-generating original task waits for its image, never reports failure or repeats POST',async t=>{
   const calls=[];

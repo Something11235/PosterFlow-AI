@@ -11,12 +11,16 @@ from flask import Blueprint, jsonify, request
 try:
     from backend import buytoken_image_provider as provider
     from backend.apimart_image_provider import ImageTaskError
-    from backend.apimart_image_routes import ImageStore, public_job
+    from backend.apimart_image_routes import (
+        ImageIdentityError, ImageStore, image_identity_error_response, image_request_user, list_image_jobs, public_job,
+    )
     from backend.supabase_service import SupabaseError, is_supabase_configured
 except ModuleNotFoundError:
     import buytoken_image_provider as provider
     from apimart_image_provider import ImageTaskError
-    from apimart_image_routes import ImageStore, public_job
+    from apimart_image_routes import (
+        ImageIdentityError, ImageStore, image_identity_error_response, image_request_user, list_image_jobs, public_job,
+    )
     from supabase_service import SupabaseError, is_supabase_configured
 
 
@@ -58,6 +62,7 @@ def public_buytoken_job(job):
 
 def create_buytoken_image_blueprint(server):
     bp = Blueprint("buytoken_images", __name__, url_prefix="/api/buytoken-images")
+    bp.register_error_handler(ImageIdentityError, image_identity_error_response)
 
     @bp.after_request
     def private_response(response):
@@ -89,11 +94,11 @@ def create_buytoken_image_blueprint(server):
         if mode == "platform":
             if any(request.headers.get(name, "").strip() for name in ("X-Provider-Api-Key", "X-Provider-Endpoint", "X-Provider-Model", "X-Provider-Auth-Type")):
                 raise ImageTaskError("PLATFORM_PROVIDER_OVERRIDE_BLOCKED", "平台模式不能混用个人服务配置。")
-            user = server.require_authenticated_user()
+            user = image_request_user(server, required=True)
             return mode, "user-" + user.id, user.id
         model = request.headers.get("X-Provider-Model", "").strip()
         config = provider.resolve_config(server, mode, model)
-        user = server.set_optional_storage_scope()
+        user = image_request_user(server, required=False)
         identity = "user-" + user.id if user else "guest-" + server.current_client_id()
         return mode, identity + "-" + hashlib.sha256(config.api_key.encode()).hexdigest(), user.id if user else None
 
@@ -246,9 +251,10 @@ def create_buytoken_image_blueprint(server):
 
     @bp.get("/tasks")
     def tasks():
-        _mode, owner, _user = context()
-        server.enforce_rate_limit("buytoken-image-list", owner, 30, 60)
-        # Listing never downloads results, settles credits or submits a model.
-        return jsonify(success=True, jobs=[public_buytoken_job(job) for job in BuyTokenStore().jobs(owner)])
+        def get_owner():
+            _mode, owner, _user = context()
+            server.enforce_rate_limit("buytoken-image-list", owner, 30, 60)
+            return owner
+        return list_image_jobs(server, "buytoken", get_owner, BuyTokenStore, public_buytoken_job)
 
     return bp
