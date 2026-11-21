@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { afterEach, mock, test } from "node:test";
 import { uploadReferenceBlobs } from "../src/lib/referenceUpload.js";
 
 const signUrl = "/api/reference-upload-url";
 const relayUrl = "/api/reference-upload-fallback";
+const completeUrl = relayUrl + "/complete";
+const partBytes = 4 * 1024 * 1024;
 const cleanupUrl = "/api/reference-cleanup";
 const path = "accounts/test/references/mask.png";
 const directUrl = "https://storage.example/upload/sign/test?token=fixture";
 const mask = { name: "mask.png", blob: new Blob(["mask pixels"], { type: "image/png" }), preservePixels: true };
-const signed = () => Response.json({ signed_url: directUrl, path, token: "fixture" });
+const signed = () => Response.json({ signed_url: directUrl, path, token: "fixture", relay_ticket: "relay-fixture" });
 afterEach(() => mock.restoreAll());
 
 test("a lost Storage connection uploads the same mask and ticket through the site exactly once", async () => {
@@ -84,17 +87,117 @@ for (const status of [403, 429]) {
   });
 }
 
-test("a file above 4 MiB remains direct-only and includes compression advice after a connection failure", async () => {
-  const file = { ...mask, blob: new Blob([new Uint8Array(4 * 1024 * 1024 + 1)], { type: mask.blob.type }) };
+for (const size of [partBytes + 1, partBytes * 4]) {
+  test(`direct failure relays all ${size} bytes in order and verifies the original mask digest`, async () => {
+    const bytes = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) bytes[i] = i % 251;
+    const file = { ...mask, blob: new Blob([bytes], { type: mask.blob.type }) };
+    const parts = new Map();
+    const calls = [];
+    mock.method(globalThis, "fetch", async (url, init) => {
+      if (url === signUrl) {
+        calls.push("sign");
+        assert.deepEqual(JSON.parse(init.body), { content_type: "image/png", size });
+        return signed();
+      }
+      if (url === directUrl) {
+        calls.push("direct");
+        throw new TypeError("Failed to fetch");
+      }
+      const ticket = { path, token: "fixture", relay_ticket: "relay-fixture" };
+      assert.equal(init.credentials, "same-origin");
+      assert.equal(init.method, "POST");
+      if (url === relayUrl) {
+        const index = Number(init.body.get("part_index"));
+        calls.push(index);
+        for (const [key, value] of Object.entries(ticket)) assert.equal(init.body.get(key), value);
+        const part = init.body.get("file");
+        assert.equal(part.type, "application/octet-stream");
+        assert.equal(part.size, Math.min(partBytes, size - index * partBytes));
+        const data = Buffer.from(await part.arrayBuffer());
+        assert.deepEqual(data, bytes.subarray(index * partBytes, index * partBytes + part.size));
+        if (index === 1 && !parts.has(index)) {
+          parts.set(index, data);
+          throw new TypeError("Lost receipt for an accepted part");
+        }
+        parts.set(index, data);
+        return Response.json({ success: true, path, part_index: index });
+      }
+      assert.equal(url, completeUrl);
+      assert.equal(init.headers["Content-Type"], "application/json");
+      assert.deepEqual(Buffer.concat([...parts.values()]), bytes);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      assert.deepEqual(JSON.parse(init.body), { ...ticket, sha256 });
+      if (!calls.includes("complete")) {
+        calls.push("complete");
+        return new Response(null, { status: 504 });
+      }
+      calls.push("complete");
+      return Response.json({ success: true, path });
+    });
+    assert.deepEqual(await uploadReferenceBlobs([file]), [path]);
+    const indexes = Array.from({ length: Math.ceil(size / partBytes) }, (_, index) => index);
+    indexes.splice(2, 0, 1);
+    assert.deepEqual(calls, ["sign", "direct", ...indexes, "complete", "complete"]);
+  });
+}
+
+test("a rejected or mismatched part receipt stops the upload and cleans up the signed path", async () => {
+  const file = { ...mask, blob: new Blob([Buffer.alloc(partBytes + 1)], { type: mask.blob.type }) };
+  for (const status of [200, 403, 503]) {
+    const calls = [];
+    const fetch = mock.method(globalThis, "fetch", async (url, init) => {
+      calls.push(url);
+      if (url === signUrl) return signed();
+      if (url === directUrl) throw new TypeError("Failed to fetch");
+      if (url === relayUrl) {
+        assert.equal(init.body.get("part_index"), "0");
+        return Response.json({ success: true, path, part_index: 1 }, { status });
+      }
+      assert.equal(url, cleanupUrl);
+      assert.deepEqual(JSON.parse(init.body), { paths: [path], relay_paths: [path] });
+      return Response.json({ success: true });
+    });
+    await assert.rejects(uploadReferenceBlobs([file]), { phase: "reference_upload" });
+    const attempts = status === 503 ? 2 : 1;
+    assert.deepEqual(calls, [signUrl, directUrl, ...Array(attempts).fill(relayUrl), cleanupUrl]);
+    fetch.mock.restore();
+  }
+});
+
+test("files larger than 16 MiB are rejected before either upload route", async () => {
+  const file = { ...mask, blob: new Blob([Buffer.alloc(partBytes * 4 + 1)], { type: mask.blob.type }) };
+  const fetch = mock.method(globalThis, "fetch");
+  await assert.rejects(uploadReferenceBlobs([file]), { code: "REFERENCE_IMAGE_TOO_LARGE" });
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("a large direct upload succeeds without a chunk ticket or Web Crypto", async () => {
+  const file = { ...mask, blob: new Blob([Buffer.alloc(partBytes + 1)], { type: mask.blob.type }) };
+  mock.getter(globalThis, "crypto", () => undefined);
   const calls = [];
   mock.method(globalThis, "fetch", async (url) => {
     calls.push(url);
-    if (url === signUrl) return signed();
+    if (url === signUrl) return Response.json({ signed_url: directUrl, path });
+    assert.equal(url, directUrl);
+    return new Response(null, { status: 200 });
+  });
+  assert.deepEqual(await uploadReferenceBlobs([file]), [path]);
+  assert.deepEqual(calls, [signUrl, directUrl]);
+});
+
+test("an older signing response cannot authorize staging a large file", async () => {
+  const file = { ...mask, blob: new Blob([Buffer.alloc(partBytes + 1)], { type: mask.blob.type }) };
+  const calls = [];
+  mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push(url);
+    if (url === signUrl) return Response.json({ signed_url: directUrl, path, token: "fixture" });
     if (url === directUrl) throw new TypeError("Failed to fetch");
     assert.equal(url, cleanupUrl);
+    assert.deepEqual(JSON.parse(init.body), { paths: [path] });
     return Response.json({ success: true });
   });
-  await assert.rejects(uploadReferenceBlobs([file]), { phase: "reference_upload", detail: /压缩至 4 MiB/, diagnostic: "CONNECTION_INTERRUPTED" });
+  await assert.rejects(uploadReferenceBlobs([file]), { phase: "reference_upload", detail: /上传凭证缺失/ });
   assert.deepEqual(calls, [signUrl, directUrl, cleanupUrl]);
 });
 

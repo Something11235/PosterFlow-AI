@@ -50,6 +50,7 @@ try:
     from backend.image_edit_mask import validate_edit_mask
     from backend.credits import credit_amount, credit_text
     from backend import image_tier_pricing as image_tiers
+    from backend.reference_upload_parts import ReferenceUploadParts
     from backend.admin_multimedia import enrich_overview
     from backend.supabase_service import (
         AuthenticatedUser,
@@ -68,6 +69,7 @@ except ModuleNotFoundError:  # Allows `python backend/server.py` in local develo
     from image_edit_mask import validate_edit_mask
     from credits import credit_amount, credit_text
     import image_tier_pricing as image_tiers
+    from reference_upload_parts import ReferenceUploadParts
     from admin_multimedia import enrich_overview
     from supabase_service import (
         AuthenticatedUser,
@@ -463,8 +465,21 @@ def _supabase_storage_url(path=""):
     return f"{SUPABASE_STORAGE_URL}/storage/v1{path}"
 
 
+def _storage_error_name(response):
+    try:
+        error = response.json()
+    except ValueError:
+        return ""
+    return str(error.get("code") or error.get("error") or "").lower() if isinstance(error, dict) else ""
+
+
+def _storage_duplicate(status, reason):
+    return status in (400, 409) and reason in {"resourcealreadyexists", "keyalreadyexists", "already_exists", "duplicate"}
+
+
 def _supabase_storage_request(method, path, **kwargs):
     allow_missing = kwargs.pop("_allow_missing", False)
+    allow_duplicate = kwargs.pop("_allow_duplicate", False)
     try:
         response = requests.request(
             method,
@@ -481,11 +496,17 @@ def _supabase_storage_request(method, path, **kwargs):
             "Supabase Storage 没有完成本次读写操作。",
             ["稍后重试", "检查 Supabase Storage 配置", "查看 Vercel Function 日志"],
         ) from exc
-    if response.status_code == 404:
+    status = response.status_code
+    reason = _storage_error_name(response) if status in (400, 409) and (allow_missing or allow_duplicate) else ""
+    if allow_duplicate and _storage_duplicate(status, reason):
+        return response
+    if status == 404 or (allow_missing and status == 400 and reason in {"not_found", "nosuchkey", "object_not_found"}):
+        response.close()
         if allow_missing:
             raise ProviderError("STORAGE_FILE_MISSING", "图片不存在或暂时无法读取", 404)
         raise ProviderError("STORAGE_UNAVAILABLE", "Supabase Storage 配置或对象路径无效", 503)
     if not 200 <= response.status_code < 300:
+        response.close()
         raise ProviderError(
             "STORAGE_UNAVAILABLE",
             "云端图片存储暂时不可用",
@@ -2339,9 +2360,41 @@ def reference_upload_url():
             )
         pathname = f"{_reference_storage_prefix()}{uuid.uuid4().hex}.{extension}"
         signed = _supabase_create_signed_upload(pathname)
+        if announced_size > REFERENCE_RELAY_MAX_BYTES:
+            signed["relay_ticket"] = reference_parts.issue(pathname, signed["token"], announced_size)
         return jsonify({"success": True, **signed, "max_bytes": REFERENCE_UPLOAD_MAX_BYTES})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
+
+
+reference_parts = ReferenceUploadParts(sys.modules[__name__])
+
+
+def _require_identical_reference(pathname, content):
+    try:
+        offset = 0
+        with _supabase_download(pathname, stream=True) as existing:
+            for chunk in existing.iter_content(65536):
+                if content[offset:offset + len(chunk)] != chunk:
+                    break
+                offset += len(chunk)
+            else:
+                if offset == len(content):
+                    return
+    except requests.RequestException:
+        raise ProviderError("REFERENCE_UPLOAD_FAILED", "读取已有文件时连接中断，请重试。", 503) from None
+    raise ProviderError("REFERENCE_UPLOAD_FAILED", "参考图与已上传的文件不一致，请重新选择图片。", 409)
+
+
+def _supabase_create_reference_part(pathname, content):
+    with _supabase_storage_request(
+        "POST", f"/object/{_supabase_object_path(pathname)}",
+        headers={"Content-Type": "application/octet-stream", "x-upsert": "false"}, data=content,
+        allow_redirects=False, _allow_duplicate=True,
+    ) as response:
+        if 200 <= response.status_code < 300:
+            return
+    _require_identical_reference(pathname, content)
 
 
 def _relay_reference_upload(pathname, token, content, mime):
@@ -2357,24 +2410,10 @@ def _relay_reference_upload(pathname, token, content, mime):
             status = response.status_code
             if 200 <= status < 300:
                 return
-            try:
-                error = response.json()
-            except ValueError:
-                error = {}
-        reason = str(error.get("code") or error.get("error") or "").lower() if isinstance(error, dict) else ""
-        if status in (400, 409) and reason in {"resourcealreadyexists", "keyalreadyexists", "already_exists", "duplicate"}:
+            reason = _storage_error_name(response)
+        if _storage_duplicate(status, reason):
             # A direct PUT can succeed even when the browser loses its response.
-            # Continue only if this owner's stored object is the submitted image.
-            offset = 0
-            with _supabase_download(pathname, stream=True) as existing:
-                for chunk in existing.iter_content(65536):
-                    if content[offset:offset + len(chunk)] != chunk:
-                        break
-                    offset += len(chunk)
-                else:
-                    if offset == len(content):
-                        return
-            raise ProviderError("REFERENCE_UPLOAD_FAILED", "参考图与已上传的文件不一致，请重新选择图片。", 409)
+            return _require_identical_reference(pathname, content)
     except requests.RequestException:
         raise ProviderError("REFERENCE_UPLOAD_FAILED", "网站连接图片存储超时或中断，请稍后重新上传参考图。", 503) from None
     if status in (401, 403) or reason in {"invalidjwt", "invalidsignature", "expiredsignature"}:
@@ -2384,33 +2423,56 @@ def _relay_reference_upload(pathname, token, content, mime):
     raise ProviderError("REFERENCE_UPLOAD_FAILED", f"备用线路上传参考图时，图片存储返回 HTTP {status}。", 502)
 
 
+def _reference_relay_target(data):
+    if parse_billing_mode({}) == "platform":
+        require_authenticated_user()
+    else:
+        set_optional_storage_scope()
+    if _storage_backend() != "supabase":
+        raise ProviderError("REFERENCE_STORAGE_UNAVAILABLE", "参考图上传服务未配置。", 503)
+    pathname = validate_reference_storage_paths([data.get("path")])[0]
+    token = data.get("token", "")
+    if not isinstance(token, str) or not token or len(token) > 8192:
+        raise ProviderError("REFERENCE_UPLOAD_INVALID", "参考图上传凭证无效，请重新上传。", 400)
+    return pathname, token
+
+
 @app.route("/api/reference-upload-fallback", methods=["POST"])
 def reference_upload_fallback():
     try:
         body_limit = REFERENCE_RELAY_MAX_BYTES + 64 * 1024
         request.max_content_length = min(request.max_content_length or body_limit, body_limit)
         if request.content_length and request.content_length > request.max_content_length:
-            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "备用上传线路支持最大 4 MiB 的参考图。", 413)
-        if parse_billing_mode({}) == "platform":
-            require_authenticated_user()
-        else:
-            set_optional_storage_scope()
-        if _storage_backend() != "supabase":
-            raise ProviderError("REFERENCE_STORAGE_UNAVAILABLE", "参考图上传服务未配置。", 503)
-        pathname = validate_reference_storage_paths([request.form.get("path")])[0]
-        token = request.form.get("token", "")
-        if not token or len(token) > 8192:
-            raise ProviderError("REFERENCE_UPLOAD_INVALID", "参考图上传凭证无效，请重新上传。", 400)
+            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "单次上传的数据块超过 4 MiB。", 413)
+        pathname, token = _reference_relay_target(request.form)
         file = request.files.get("file")
         if file is None:
             raise ProviderError("REFERENCE_IMAGE_INVALID", "缺少参考图，请重新选择图片。", 400)
         content = file.read(REFERENCE_RELAY_MAX_BYTES + 1)
         if len(content) > REFERENCE_RELAY_MAX_BYTES:
-            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "备用上传线路支持最大 4 MiB 的参考图。", 413)
+            raise ProviderError("REFERENCE_IMAGE_TOO_LARGE", "单次上传的数据块超过 4 MiB。", 413)
+        if "part_index" in request.form or "relay_ticket" in request.form:
+            index = reference_parts.accept(pathname, token, request.form.get("relay_ticket"),
+                                           request.form.get("part_index"), content)
+            return jsonify({"success": True, "path": pathname, "part_index": index})
         mime = _reference_image_mime(content)
         if not mime or REFERENCE_UPLOAD_EXTENSIONS[mime] != pathname.rsplit(".", 1)[1].lower():
             raise ProviderError("REFERENCE_IMAGE_INVALID", "参考图内容与签名时的图片格式不符，请重新选择图片。", 400)
         _relay_reference_upload(pathname, token, content, mime)
+        return jsonify({"success": True, "path": pathname})
+    except (ProviderError, SupabaseError) as error:
+        return provider_error_response(as_provider_error(error))
+
+
+@app.post("/api/reference-upload-fallback/complete")
+def reference_upload_complete():
+    try:
+        request.max_content_length = min(request.max_content_length or 32768, 32768)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ProviderError("REFERENCE_UPLOAD_INVALID", "参考图合并请求无效。", 400)
+        pathname, token = _reference_relay_target(data)
+        reference_parts.complete(pathname, token, data.get("relay_ticket"), data.get("sha256"))
         return jsonify({"success": True, "path": pathname})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))
@@ -2427,6 +2489,9 @@ def reference_cleanup():
             set_optional_storage_scope()
         raw_paths = data.get("paths", data.get("reference_storage_paths"))
         paths = [] if raw_paths in (None, "") else validate_reference_storage_paths(raw_paths)
+        relay_paths = validate_reference_storage_paths(data["relay_paths"]) if data.get("relay_paths") else []
+        if not set(relay_paths).issubset(paths):
+            raise ProviderError("REFERENCE_STORAGE_INVALID", "参考图分块与本次清理对象不匹配。", 400)
         if paths:
             if _storage_backend() != "supabase":
                 raise ProviderError(
@@ -2436,7 +2501,8 @@ def reference_cleanup():
                     "线上参考图需要启用 Supabase Storage。",
                     ["检查 Supabase Storage 配置", "稍后重试"],
                 )
-            _supabase_delete(paths)
+            parts = [part for path in set(relay_paths) for part in reference_parts.cleanup_paths(path)]
+            _supabase_delete(paths + parts)
         return jsonify({"success": True, "deleted": len(paths)})
     except (ProviderError, SupabaseError) as error:
         return provider_error_response(as_provider_error(error))

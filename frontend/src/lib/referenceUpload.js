@@ -6,7 +6,8 @@ import { imageTransportDiagnostic } from "./imageGenerationError.js";
 const API_BASE = "/api";
 const SUPPORTED_TYPES = new Set(REFERENCE_FILE_ACCEPT.split(","));
 // Leave headroom for multipart headers within the site's function body limit.
-const MAX_FALLBACK_BYTES = 4 * 1024 * 1024;
+const RELAY_PART_BYTES = 4 * 1024 * 1024;
+const RELAY_URL = `${API_BASE}/reference-upload-fallback`;
 
 function responseError(payload, fallback, response) {
   const error = new Error(fallback);
@@ -59,17 +60,73 @@ async function uploadRequest(url, init, timeoutMs, detail) {
   }
 }
 
+function retryableStatus(status) {
+  return status === 408 || status >= 500;
+}
+
+async function postRelayPart(url, headers, body, timeoutMs, detail) {
+  const send = () => uploadRequest(url, { method: "POST", credentials: "same-origin", headers, body }, timeoutMs, detail);
+  // Both writing a numbered part and completing its signed upload are idempotent.
+  // Retry that operation once if no definitive acknowledgement arrived.
+  let result;
+  try {
+    result = await send();
+  } catch (error) {
+    if (error.phase !== "reference_upload") throw error;
+  }
+  return !result || retryableStatus(result.response.status) ? send() : result;
+}
+
+async function referenceDigest(blob) {
+  if (!globalThis.crypto?.subtle) {
+    throw Object.assign(new Error("请通过 HTTPS 或 localhost 打开网站，以便校验分块上传的参考图。"), {
+      code: "REFERENCE_UPLOAD_FAILED", phase: "reference_upload",
+    });
+  }
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    throw Object.assign(new Error("浏览器无法校验参考图，请刷新页面后重试。"), {
+      code: "REFERENCE_UPLOAD_FAILED", phase: "reference_upload",
+    });
+  }
+}
+
+async function uploadReferenceParts(signed, token, blob, headers, sha256) {
+  const detail = "网站备用线路未完成参考图上传，请稍后重试。";
+  const ticket = { path: signed.path, token, relay_ticket: signed.relay_ticket };
+  const partCount = Math.ceil(blob.size / RELAY_PART_BYTES);
+  for (let index = 0; index < partCount; index++) {
+    const start = index * RELAY_PART_BYTES;
+    const bytes = blob.slice(start, start + RELAY_PART_BYTES, "application/octet-stream");
+    const form = new FormData();
+    for (const [name, value] of Object.entries(ticket)) form.append(name, value);
+    form.append("part_index", String(index));
+    form.append("file", bytes, "part.bin");
+    const { response, payload } = await postRelayPart(RELAY_URL, headers, form, 90000, detail);
+    if (!response.ok || payload?.success !== true || payload.path !== signed.path || payload.part_index !== index) {
+      throw responseError(payload, detail, response);
+    }
+  }
+  const { response, payload } = await postRelayPart(`${RELAY_URL}/complete`,
+    { ...headers, "Content-Type": "application/json" }, JSON.stringify({ ...ticket, sha256 }), 150000, detail);
+  if (!response.ok || payload?.success !== true || payload.path !== signed.path) {
+    throw responseError(payload, detail, response);
+  }
+}
+
 async function uploadSignedReference(signed, entry, headers) {
   const directForm = new FormData();
   directForm.append("cacheControl", "3600");
   directForm.append("", entry.blob, entry.filename);
-  const canRelay = entry.blob.size <= MAX_FALLBACK_BYTES;
+  const partCount = Math.max(1, Math.ceil(entry.blob.size / RELAY_PART_BYTES));
   let directResponse;
   let directFailure;
   try {
     const direct = await uploadRequest(signed.signed_url, {
       method: "PUT", headers: { "x-upsert": "false" }, credentials: "omit", body: directForm,
-    }, canRelay ? 30000 : null, "浏览器未收到参考图直传结果。");
+    }, partCount * 30000, "浏览器未收到参考图直传结果。");
     directResponse = direct.response;
   } catch (error) {
     directFailure = error;
@@ -77,26 +134,31 @@ async function uploadSignedReference(signed, entry, headers) {
   if (directResponse?.ok) return;
   if (directResponse) {
     directFailure = responseError(null, "参考图直传未成功。", directResponse);
-    if (directResponse.status < 500 && directResponse.status !== 408) throw directFailure;
-  }
-  if (!canRelay) {
-    directFailure.detail = "参考图直传未完成。可压缩至 4 MiB 以内以使用备用上传，或切换网络后重试。";
-    throw directFailure;
+    if (!retryableStatus(directResponse.status)) throw directFailure;
   }
   // Reuse the original signed path. Only the website gets session credentials.
   let token = signed.token;
   if (!token) {
     try { token = new URL(signed.signed_url).searchParams.get("token"); } catch { /* Malformed or expired ticket. */ }
   }
-  if (!token) {
+  if (!token || (partCount > 1 && !signed.relay_ticket)) {
     directFailure.detail = "参考图直传未完成，上传凭证缺失。请刷新页面后重试。";
     throw directFailure;
+  }
+  if (partCount > 1) {
+    const sha256 = await referenceDigest(entry.blob);
+    try {
+      return await uploadReferenceParts(signed, token, entry.blob, headers, sha256);
+    } catch (error) {
+      error.relayPath = signed.path;
+      throw error;
+    }
   }
   const form = new FormData();
   form.append("path", signed.path);
   form.append("token", token);
   form.append("file", entry.blob, entry.filename);
-  const { response, payload } = await uploadRequest(`${API_BASE}/reference-upload-fallback`, {
+  const { response, payload } = await uploadRequest(RELAY_URL, {
     method: "POST", credentials: "same-origin", headers, body: form,
   }, 90000, "网站备用上传未能确认结果，请稍后重新上传参考图。");
   if (!response.ok || payload?.success !== true || payload?.path !== signed.path) {
@@ -115,7 +177,7 @@ function normalizeEntry(entry, index) {
   return { blob, contentType, filename, preservePixels: Boolean(entry?.preservePixels) };
 }
 
-export async function cleanupReferencePaths(paths, headers = {}) {
+export async function cleanupReferencePaths(paths, headers = {}, relayPaths = []) {
   const normalized = Array.isArray(paths) ? paths.filter(Boolean) : [];
   if (!normalized.length) return;
   try {
@@ -123,7 +185,7 @@ export async function cleanupReferencePaths(paths, headers = {}) {
       method: "POST",
       headers: { ...referenceHeaders(headers), "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ paths: normalized }),
+      body: JSON.stringify({ paths: normalized, ...(relayPaths.length ? { relay_paths: relayPaths } : {}) }),
     }, 5000, "参考图清理请求未完成。");
   } catch {
     // The server also removes paths after generation; cleanup is best effort here.
@@ -160,7 +222,7 @@ export async function uploadReferenceBlobs(entries, { headers = {}, onProgress }
     return signedPaths;
   } catch (error) {
     // Even a lost response may have stored the in-flight object.
-    await cleanupReferencePaths(signedPaths, headers);
+    await cleanupReferencePaths(signedPaths, headers, error.relayPath ? [error.relayPath] : []);
     throw error;
   }
 }
