@@ -75,11 +75,9 @@ begin
  assert r->>'code'='TAVERN_INPUT_INVALID', 'NULL input rejected';
  r:=public.begin_tavern_request_with_input(owner_id,rid,repeat('a',64),'deepseek-v4.1-flash','chat',1,'');
  assert r->>'code'='TAVERN_INPUT_INVALID', 'empty input rejected';
- r:=public.begin_tavern_request_with_input(owner_id,rid,repeat('a',64),'deepseek-v4.1-flash','chat',1,repeat('字',65537));
- assert r->>'code'='TAVERN_INPUT_INVALID', 'oversized input rejected';
  rid:='c2000000-0000-4000-8000-000000000009';
- r:=public.begin_tavern_request_with_input(owner_id,rid,repeat('a',64),'deepseek-v4.1-flash','chat',1,repeat('字',65536));
- assert r->>'leader'='true', 'maximum valid Unicode input accepted';
+ r:=public.begin_tavern_request_with_input(owner_id,rid,repeat('a',64),'deepseek-v4.1-flash','chat',1,repeat('字',200000));
+ assert r->>'leader'='true', 'long Unicode input accepted';
  r:=public.apply_tavern_request(owner_id,rid,'rejected',null,null,'SYNTHETIC_REJECTED');
 
  for v in select value from jsonb_array_elements(public.admin_tavern_overview(admin_id,7)->'requests') loop
@@ -107,8 +105,8 @@ begin
    where request_id='c2000000-0000-4000-8000-000000000004'), 'legacy rows stay empty';
  assert not exists(select 1 from public.tavern_requests
    where request_id='c2000000-0000-4000-8000-000000000008'), 'invalid input leaves no request';
- assert (select char_length(input_text)=65536 from public.tavern_requests
-   where request_id='c2000000-0000-4000-8000-000000000009'), 'max input is not truncated';
+ assert (select input_text=repeat('字',200000) and input_expires_at=created_at+interval '72 hours' from public.tavern_requests
+   where request_id='c2000000-0000-4000-8000-000000000009'), 'long input retains its full text and normal expiry';
  assert (select relrowsecurity from pg_class where oid='public.tavern_requests'::regclass), 'RLS stays enabled';
  assert not has_table_privilege('anon','public.tavern_requests','SELECT'), 'anonymous cannot read the table';
  assert not has_table_privilege('authenticated','public.tavern_requests','SELECT'), 'signed-in clients cannot read the table';

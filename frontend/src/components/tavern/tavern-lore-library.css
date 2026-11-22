@@ -1,0 +1,29 @@
+.tv-lore-intro { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.tv-lore-intro p, .tv-lore-delete-copy { margin: 0; color: var(--tv-d-secondary); font-size: 14px; line-height: 1.75; }
+.tv-lore-intro .tv-button { flex: 0 0 auto; }
+.tv-lore-library .tv-field { margin-bottom: 24px; }
+.tv-library-books-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.tv-library-books-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.tv-library-books-head > span { color: var(--tv-d-muted); font-size: 12px; }
+.tv-lore-hint { margin-top: 5px; }
+.tv-library-books, .tv-library-empty { margin: 12px 0 0; border: 1px solid var(--tv-d-border-subtle); border-radius: 10px; background: var(--tv-d-deep); }
+.tv-library-empty { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 25px 12px; color: var(--tv-d-muted); font-size: 13px; }
+.tv-library-books { padding: 0 12px; list-style: none; }
+.tv-library-books li { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 5px; }
+.tv-library-books li + li { border-top: 1px solid var(--tv-d-border-subtle); }
+.tv-lore-book { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 52px; padding: 9px 1px; }
+label.tv-lore-book { cursor: pointer; }
+.tv-lore-book > svg, .tv-lore-book > input { flex: 0 0 auto; }
+.tv-lore-book > svg { color: #91b7f1; }
+.tv-lore-book > input { width: 18px; height: 18px; margin: 0; accent-color: var(--tv-d-blue); }
+.tv-lore-book-info { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.tv-lore-book-info strong { color: var(--tv-d-text); font-size: 14px; font-weight: 550; }
+.tv-lore-book-info small { color: var(--tv-d-muted); font-size: 12px; line-height: 1.6; }
+.tv-lore-delete-copy { overflow-wrap: anywhere; }
+.tv-import-book-bindings, .tv-context-book-bindings { min-width: 0; margin: 16px 0; padding: 12px; border: 1px solid var(--tv-d-border-subtle); border-radius: 8px; }
+.tv-import-book-bindings legend, .tv-context-book-bindings strong { color: var(--tv-d-text); font-size: 14px; }
+.tv-import-book-bindings label { padding: 5px 0; overflow-wrap: anywhere; }
+.tv-context-book-bindings p { margin: 5px 0 10px; color: var(--tv-d-secondary); font-size: 13px; overflow-wrap: anywhere; }
+@media (max-width: 500px) {
+  .tv-lore-intro { align-items: stretch; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+}

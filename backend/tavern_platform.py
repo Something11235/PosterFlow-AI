@@ -235,7 +235,7 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
     _rate(server, "tavern-platform-user", user.id)
     reserved = reserve_tavern_credits(body)
     if reserved is None:
-        raise TavernPlatformError("TAVERN_CONTEXT_LIMIT", "上下文超出平台预留费用上限。", 400)
+        raise TavernPlatformError("TAVERN_RESERVATION_INVALID", "无法为本次对话预留足额积分。", 400)
     try:
         store = TavernStore()
     except SupabaseError:
@@ -279,7 +279,8 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
         # SQL quote/hold checks decide whether actual counts can settle; no
         # guessed tokens, extra debit, model retry or invented reply is allowed.
         has_actual_usage = quote_tavern_credits(settings["model"], usage) is not None
-        event = "completed" if has_actual_usage else "unknown" if uncertain else "rejected" if code == "TAVERN_REQUEST_REJECTED" else "not_submitted"
+        rejected = code in {"TAVERN_REQUEST_REJECTED", "TAVERN_MODEL_CONTEXT_EXCEEDED", "TAVERN_PROVIDER_REQUEST_TOO_LARGE"}
+        event = "completed" if has_actual_usage else "unknown" if uncertain else "rejected" if rejected else "not_submitted"
         try:
             applied = store.apply(user.id, request_id, event, **({"usage": usage, "content": None} if has_actual_usage else {}), error_code=code)
             billing = billing_fields(applied["request"])

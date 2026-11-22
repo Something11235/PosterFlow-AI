@@ -14,6 +14,38 @@ const mask = { name: "mask.png", blob: new Blob(["mask pixels"], { type: "image/
 const signed = () => Response.json({ signed_url: directUrl, path, token: "fixture", relay_ticket: "relay-fixture" });
 afterEach(() => mock.restoreAll());
 
+test("reference connection failures include recovery advice without relabeling a rejected file", async () => {
+  const hint = "请更换网络环境或开启代理后刷新页面重试，或等待一段时间后再试。";
+  for (const [status, code, showHint] of [[503, "REFERENCE_UPLOAD_UNAVAILABLE", true], [413, "REFERENCE_IMAGE_TOO_LARGE", false], [429, "REFERENCE_UPLOAD_RATE_LIMITED", false]]) {
+    const fetch = mock.method(globalThis, "fetch", async () => Response.json({ code, error: "无法准备参考图" }, { status }));
+    await assert.rejects(uploadReferenceBlobs([mask]), error => {
+      assert.equal(error.detail.includes(hint), showHint);
+      return error.code === code;
+    });
+    fetch.mock.restore();
+  }
+});
+
+test("an unreadable local file after a failed direct connection retains both recovery steps", async () => {
+  const blob = new Blob([new Uint8Array(partBytes + 1)], { type: "image/png" });
+  mock.method(blob, "arrayBuffer", async () => { throw new Error("unreadable file"); });
+  mock.method(blob, "slice", () => { throw new Error("unreadable file"); });
+  const calls = [];
+  mock.method(globalThis, "fetch", async url => {
+    calls.push(url);
+    if (url === signUrl) return signed();
+    if (url === directUrl) throw new TypeError("Failed to fetch");
+    assert.equal(url, cleanupUrl);
+    return Response.json({ success: true });
+  });
+  await assert.rejects(uploadReferenceBlobs([{ name:"example.png", blob, preservePixels:true }]), error => {
+    assert.match(error.detail, /重新选择该文件/);
+    assert.match(error.detail, /更换网络环境或开启代理后刷新页面重试/);
+    return error.code === "REFERENCE_UPLOAD_FAILED";
+  });
+  assert.deepEqual(calls, [signUrl, directUrl, cleanupUrl]);
+});
+
 test("a lost Storage connection uploads the same mask and ticket through the site exactly once", async () => {
   const calls = [];
   mock.method(globalThis, "fetch", async (url, init) => {
@@ -213,4 +245,70 @@ test("a relay acknowledging a different path cannot advance the request", async 
   });
   await assert.rejects(uploadReferenceBlobs([mask]), { phase: "reference_upload", diagnostic: "RESPONSE_INVALID" });
   assert.deepEqual(calls, [signUrl, directUrl, relayUrl, cleanupUrl]);
+});
+
+test("whole-file progress stays indeterminate until the receipt and retains the file-count callback", async () => {
+  const events = [], counts = [];
+  const files = [mask, { ...mask, name: "reference.png" }];
+  let directAttempts = 0;
+  mock.method(globalThis, "fetch", async url => {
+    if (url === signUrl) return signed();
+    if (url === directUrl) {
+      const current = events.at(-1);
+      assert.equal(current.stage, "direct");
+      assert.equal(current.fraction, null);
+      assert.equal(current.loadedBytes, 0);
+      if (++directAttempts === 1) return new Response(null, { status: 200 });
+      throw TypeError("Network disconnected");
+    }
+    assert.equal(url, relayUrl);
+    assert.equal(events.at(-1).stage, "relay");
+    assert.equal(events.at(-1).fraction, null);
+    return Response.json({ success: true, path });
+  });
+  await uploadReferenceBlobs(files, {
+    onProgress: (...args) => counts.push(args),
+    onUploadProgress: event => {
+      events.push(event);
+      if (event.stage === "file-complete") throw Error("Renderer unavailable");
+    },
+  });
+  assert.deepEqual(counts, [[0, 2], [1, 2], [2, 2]]);
+  assert.deepEqual(events.filter(e => e.current === 1).map(e => e.stage), ["validating","preparing","signing","direct","file-complete"]);
+  assert.deepEqual(events.filter(e => e.current === 2).map(e => e.stage), ["validating","preparing","signing","direct","relay","file-complete","complete"]);
+  assert.ok(events.every(e => e.total === 2 && e.filename === files[e.current - 1].name && e.totalBytes === mask.blob.size));
+  assert.equal(events.at(-1).loadedBytes, mask.blob.size);
+  assert.equal(events.at(-1).fraction, 1);
+});
+
+test("chunk progress reflects acknowledged bytes once across retries and stays incomplete on final failure", async () => {
+  const file = { ...mask, blob: new Blob([Buffer.alloc(partBytes + 173)], { type: "image/png" }) };
+  const events = [];
+  let attempts = 0;
+  mock.method(globalThis, "fetch", async (url, init) => {
+    if (url === signUrl) return signed();
+    if (url === directUrl) throw TypeError("Direct unavailable");
+    if (url === relayUrl) {
+      const index = Number(init.body.get("part_index"));
+      const event = events.at(-1);
+      assert.equal(event.stage, "chunk");
+      assert.equal(event.part, index + 1);
+      assert.equal(event.parts, 2);
+      assert.equal(event.loadedBytes, index * partBytes);
+      assert.equal(event.fraction, event.loadedBytes / file.blob.size);
+      if (index === 0 && ++attempts === 1) throw TypeError("Part receipt lost");
+      return Response.json({ success: true, path, part_index: index });
+    }
+    if (url === completeUrl) {
+      assert.equal(events.at(-1).stage, "confirming");
+      assert.equal(events.at(-1).fraction, null);
+      assert.equal(events.at(-1).loadedBytes, file.blob.size);
+      return Response.json({ success: false }, { status: 422 });
+    }
+    assert.equal(url, cleanupUrl);
+    return Response.json({});
+  });
+  await assert.rejects(uploadReferenceBlobs([file], { onUploadProgress: e => events.push(e) }), { phase: "reference_upload" });
+  assert.deepEqual(events.map(e => e.stage), ["validating","preparing","signing","direct","hashing","chunk","chunk","chunk","confirming"]);
+  assert.ok(events.every(e => e.fraction !== 1));
 });

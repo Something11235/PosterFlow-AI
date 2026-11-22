@@ -111,10 +111,10 @@ export function videoReferenceInput(items,imageMode,model=VIDEO_MODEL,parameters
   return refs.map(r=>({...r.asset_url?{asset_url:r.asset_url}:{receipt:r.receipt},...(r.role?{role:r.role}:{})}));
 }
 
-export function videoQuote(values,references=[],source) {
-  if(values.model===FLUX3)return flux3Quote(values,references,source);
-  if(values.model===WAN30)return wan30Quote(values,references);
-  if(isMinimaxH3(values.model))return minimaxH3Quote(values,references);
+export function videoQuote(values,references=[],source,{verified=true}={}) {
+  if(values.model===FLUX3)return flux3Quote(values,references,source,verified);
+  if(values.model===WAN30)return wan30Quote(values,references,verified);
+  if(isMinimaxH3(values.model))return minimaxH3Quote(values,references,verified);
   if(values.model===OMNI_FLASH)return omniFlashQuote(values);
   if(isSeedance20(values.model))return seedance20Quote(values,references);
   if(isSeedance25(values.model))return seedance25Quote(values,references,source);
@@ -195,15 +195,37 @@ export function validateVideoReferenceDuration(seconds,model=VIDEO_MODEL) {
   if (!Number.isFinite(seconds) || seconds<2 || seconds>maximum) throw new Error(`${isMinimaxH3(model)?'H3':isSeedance25(model)?'2.5':isSeedance20(model)?'2.0 / Fast':'Mini'} 参考视频或音频每段须为 2–${maximum} 秒；当前 ${Number.isFinite(seconds)?Number(seconds.toFixed(3)):'未知'} 秒，请调整后重新添加。`);
 }
 
-function videoMediaDuration(file,kind,signal) {
-  return new Promise((resolve,reject)=>{
-    const media=document.createElement(kind==='video'?'video':'audio'),url=URL.createObjectURL(file);
-    let timer,settled=false;
-    const done=(error)=>{if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);media.onloadedmetadata=null;media.onerror=null;const seconds=media.duration;media.removeAttribute('src');media.load();URL.revokeObjectURL(url);if(error)reject(error);else resolve(seconds);};
-    const abort=()=>done(new DOMException('素材读取已取消','AbortError'));
-    media.preload='metadata';media.onloadedmetadata=()=>done();media.onerror=()=>done(new Error('无法读取音频或视频时长，请使用有效素材。'));
-    signal?.addEventListener('abort',abort,{once:true});timer=setTimeout(()=>done(new Error('读取素材时长超时，请重新添加。')),15000);
-    if(signal?.aborted){abort();return;}media.src=url;
+export function videoMediaDuration(source, kind, signal) {
+  return new Promise((resolve, reject) => {
+    const local = source instanceof Blob;
+    const media = document.createElement(kind === 'video' ? 'video' : 'audio');
+    const url = local ? new URL(URL.createObjectURL(source)) : new URL(source);
+    if (!local && (url.protocol !== 'https:' || url.username || url.password)) {
+      throw new Error('媒体链接须为有效的 HTTPS 地址。');
+    }
+    let settled = false;
+    const abort = () => finish(new DOMException('素材读取已取消', 'AbortError'));
+    const timer = setTimeout(() => finish(new Error('读取素材时长超时，请重新添加。')), 15000);
+    function finish(error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      const seconds = media.duration;
+      media.removeAttribute('src');
+      media.load();
+      if (local) URL.revokeObjectURL(url.href);
+      if (error) reject(error);
+      else resolve(seconds);
+    }
+    media.preload = 'metadata';
+    media.onloadedmetadata = () => finish();
+    media.onerror = () => finish(new Error('无法读取音频或视频时长，请使用有效素材。'));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    else media.src = url.href;
   });
 }
 

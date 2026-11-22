@@ -1,10 +1,11 @@
 import { displayCredits } from "../../lib/credits";
 import React, {useEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
-import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video } from "lucide-react";
+import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video, Workflow } from "lucide-react";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
+  { id: "canvas", label: "创作画布", icon: Workflow },
   { id: "image", label: "图像创作", icon: Image },
   { id: "music", label: "音乐创作", icon: Music2 },
   { id: "video", label: "视频创作", icon: Video },
@@ -14,7 +15,7 @@ const NAV = [
 const TAVERN_RESOURCES = [
   { label: "Chub 热门广场", href: "https://chub.ai/home?segment=trending&page=1" },
   { label: "Chub 世界书", href: "https://chub.ai/lorebooks?excludetopics=&first=20&page=1&namespace=*&search=&include_forks=true&nsfw=false&nsfw_only=false&require_custom_prompt=false&require_example_dialogues=false&require_images=false&require_expressions=false&nsfl=false&asc=false&min_ai_rating=0&min_tokens=50&max_tokens=100000&chub=true&require_lore=false&exclude_mine=true&require_lore_embedded=false&require_lore_linked=false&language=&sort=trending&min_tags=2&topics=&special_mode=&name_like=&only_mine=&inclusive_or=false&recommended_verified=false&require_alternate_greetings=false&max_days_ago=&min_users_chatted=" },
-  { label: "JanitorAI", href: "https://janitorai.com/zh/" },
+  { label: "JanitorAI", href: "https://jani.com/" },
   { label: "AI Character Cards", href: "https://aicharactercards.com/" },
   { label: "Pygmalion", href: "https://pygmalion.chat/explore" },
 ];
@@ -31,6 +32,8 @@ function TavernResources({ detailsRef }) {
 
 export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const compactMobile = area === "home" || area === "canvas";
   const tavernResources = useRef(null);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
   const accountName = account?.profile?.username || session?.user?.email || "登录 / 注册";
@@ -40,10 +43,10 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
     requestAnimationFrame(() => tavernResources.current?.querySelector("summary")?.focus());
   }
   return (
-    <aside className={`studio-nav${collapsed?' is-collapsed':''}`}>
+    <aside className={`studio-nav${collapsed?' is-collapsed':''}${compactMobile ? ' has-compact-tools' : ''}${mobileToolsOpen ? ' tools-open' : ''}`}>
       <div className="studio-brand"><span className="studio-brand-mark"><Aperture size={26} strokeWidth={1.4} /></span><div><strong>PosterFlow<span>AI</span></strong><small>THE CREATIVE STUDIO</small></div></div>
       <button type="button" className="studio-nav-toggle" onClick={()=>setCollapsed(value=>!value)} aria-label={collapsed?'展开侧栏':'折叠侧栏'} title={collapsed?'展开侧栏':'折叠侧栏'} aria-expanded={!collapsed} aria-controls="studio-primary-navigation studio-secondary-navigation">{collapsed?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
-      <div className="studio-mobile-account"><button type="button" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><UserRound size={19} /></button>{session && account?.is_admin && <button type="button" onClick={onOpenMetrics} aria-label="管理员控制台"><ChartNoAxesCombined size={19} /></button>}</div>
+      <div className="studio-mobile-account">{compactMobile && <button type="button" onClick={() => setMobileToolsOpen(open => !open)} aria-label="资料与工具" title="资料与工具" aria-expanded={mobileToolsOpen} aria-controls="studio-secondary-navigation"><Menu size={19} /></button>}<button type="button" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><UserRound size={19} /></button>{session && account?.is_admin && <button type="button" onClick={onOpenMetrics} aria-label="管理员控制台"><ChartNoAxesCombined size={19} /></button>}</div>
       <p className="studio-nav-caption">工作空间 <span>01 —</span></p>
       <nav id="studio-primary-navigation" className="studio-primary-nav" aria-label="创作工作区">
         {NAV.map(item => <button type="button" key={item.id} title={collapsed?item.label:undefined} aria-label={item.label} aria-current={area === item.id ? "page" : undefined} onClick={() => onAreaChange(item.id)}><item.icon size={18} strokeWidth={1.7} /><span>{item.label}</span>{item.hint && <small>{item.hint}</small>}{area === item.id && <span className="studio-nav-dot" />}</button>)}

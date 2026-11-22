@@ -22,7 +22,7 @@ import './video.css';
 function Field({label,children,hint}) { return <label className="studio-field"><span>{label}</span>{React.cloneElement(children,{'aria-label':label})}{hint && <small>{hint}</small>}</label>; }
 function Check({label,value,onChange}) { return <label className="music-check"><input type="checkbox" checked={value} onChange={e=>onChange(e.target.checked)} />{label}</label>; }
 
-export default function VideoWorkspace({active,identity,authHeaders,session,account,onLogin,onAccountRefresh,values,onChange,onTaskActivity}) {
+export default function VideoWorkspace({active,identity,authHeaders,session,account,onLogin,onAccountRefresh,values,onChange,onTaskActivity,onConnectionChange}) {
   const [mode,setMode]=useState('platform'),[key,setKey]=useState(''),[config,setConfig]=useState(null);
   const [keyInput,setKeyInput]=useState(''),[endpoint,setEndpoint]=useState(''),[queryTemplate,setQueryTemplate]=useState('');
   const [endpointInput,setEndpointInput]=useState(endpoint),[queryInput,setQueryInput]=useState(''),[configNotice,setConfigNotice]=useState('');
@@ -34,6 +34,9 @@ export default function VideoWorkspace({active,identity,authHeaders,session,acco
   const filesRef=useRef(null),pending=useRef(new Map()),uploads=useRef(new Map()),queryRef=useRef(null),lastQueried=useRef(new Map());
   const scope=`${identity}:${mode}:${key}:${endpoint}:${queryTemplate}`,scopeRef=useRef(scope),jobsRef=useRef(jobs);jobsRef.current=jobs;
   const connection=useMemo(()=>({mode,key,endpoint,queryTemplate,authHeaders}),[mode,key,endpoint,queryTemplate,authHeaders]);
+  useEffect(() => {
+    onConnectionChange?.({ mode, key, endpoint, queryTemplate, model: values.model });
+  }, [mode, key, endpoint, queryTemplate, values.model, onConnectionChange]);
   const options={...connection,model:values.model};
   const newer=isSeedance25(values.model),flash=values.model===SEEDANCE25_FLASH,flux=values.model===FLUX3;
   const final=(values.model===SEEDANCE25 || flux) && values.workflow==='final';

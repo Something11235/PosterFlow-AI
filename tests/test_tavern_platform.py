@@ -77,6 +77,19 @@ class TavernPlatformTests(unittest.TestCase):
                 self.assertFalse(self.client.get("/api/tavern/config").json["platform_configured"])
         self.submit.assert_not_called()
 
+    def test_long_request_reserves_against_full_utf8_content(self):
+        messages = [{"role": "system", "content": "长设定" * 70000}]
+        messages.extend({"role": "assistant", "content": "往事"} for _ in range(80))
+        messages.append({"role": "user", "content": "本轮" * 90000})
+        response = self.post({**self.body, "messages": messages})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.submit.call_count, 1)
+        outgoing = self.submit.call_args.args[2]
+        self.assertEqual(outgoing["messages"], messages)
+        held = self.store.begin.call_args.args[-1]
+        self.assertEqual(held, reserve_tavern_credits(outgoing))
+        self.assertGreater(Decimal(held), Decimal("7"))
+
     def test_paid_call_uses_server_key_and_reserves_before_single_submission(self):
         sequence = Mock()
         sequence.attach_mock(self.store.begin, "begin")
@@ -191,6 +204,8 @@ class TavernPlatformTests(unittest.TestCase):
 
     def test_definite_rejection_refunds_but_unknown_holds_without_retry(self):
         for uncertain, code, expected in ((False, "TAVERN_REQUEST_REJECTED", "rejected"),
+                                          (False, "TAVERN_MODEL_CONTEXT_EXCEEDED", "rejected"),
+                                          (False, "TAVERN_PROVIDER_REQUEST_TOO_LARGE", "rejected"),
                                           (False, "TAVERN_CONNECTION_FAILED", "not_submitted"),
                                           (True, "TAVERN_RESULT_UNKNOWN", "unknown")):
             with self.subTest(uncertain=uncertain, code=code):
@@ -202,7 +217,7 @@ class TavernPlatformTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(self.store.apply.call_args.args[2], expected)
                 self.assertEqual(response.json["charged_credits"], None if uncertain else "0.0000")
-        self.assertEqual(self.submit.call_count, 3)
+        self.assertEqual(self.submit.call_count, 5)
 
     def test_missing_usage_and_settlement_failure_keep_successful_reply_but_no_fake_charge(self):
         missing = {"status": "missing", **{name: None for name in platform.USAGE_FIELDS}}
@@ -443,14 +458,14 @@ class TavernReservationTests(unittest.TestCase):
         with patch.object(platform, "SupabaseGateway") as gateway:
             gateway.return_value.rpc.return_value = {"ok": True, "leader": False}
             store = platform.TavernStore()
-            body = tavern.build_chat_request({"messages": [{"role": "user", "content": "中" * 65536}]})
+            body = tavern.build_chat_request({"messages": [{"role": "user", "content": "中" * 200000}]})
             first = store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
             first_payload = deepcopy(gateway.return_value.rpc.call_args.args[1])
             second = store.begin(OWNER, REQUEST, "chat", body, tavern.DEFAULT_ENDPOINT, "0.1000")
             self.assertFalse(first["leader"])
             self.assertFalse(second["leader"])
             self.assertEqual(gateway.return_value.rpc.call_args.args[1], first_payload)
-            self.assertEqual(first_payload["p_input_text"], "中" * 65536)
+            self.assertEqual(first_payload["p_input_text"], "中" * 200000)
             self.assertNotIn("p_input_expires_at", first_payload)
 
     def test_nul_input_is_replaced_only_in_retained_copy(self):

@@ -17,15 +17,22 @@ test('assist drafts for the user using full story context, without mutating mess
   assert.deepEqual(session, before);
 });
 
-test('assist preserves a draft as quoted data and enforces total context before any request', () => {
+test('assist quotes the complete reference and draft and includes every historical turn regardless of legacy caps', () => {
   const role = BUILTIN_CHARACTERS[0], session = createTavernSession(role);
   const draft = '我想先休息一下，不想去冒险。';
   const messages = buildTavernAssistMessages(role, session, draft);
   assert.ok(messages.at(-1).content.includes(JSON.stringify(draft)));
   assert.match(messages.at(-1).content, /保留原意/);
-  assert.ok(messages.reduce((sum, item) => sum + item.content.length, 0) <= session.contextChars);
   assert.throws(() => buildTavernAssistMessages(role, session, 'x'.repeat(6001)), /6000/);
-  assert.throws(() => buildTavernAssistMessages(role, { ...session, persona: '设'.repeat(3000), memory: '忆'.repeat(3000), contextChars: 4000 }), /上下文|容量|超过/);
+  const small = { ...session, persona: '设'.repeat(3000), memory: '忆'.repeat(3000), contextChars: 4000 };
+  const personality = '\\'.repeat(100000);
+  small.messages = Array.from({ length: 251 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: '消息 ' + index }));
+  const fullDraft = '字'.repeat(6000);
+  const result = buildTavernAssistMessages({ ...role, personality }, small, fullDraft);
+  const reference = JSON.parse(result[1].content.split('\n').slice(1).join('\n'));
+  for (const field of [personality, small.persona, small.memory]) assert.ok(reference.includes(field));
+  assert.deepEqual(result.slice(2, -1), small.messages);
+  assert.ok(result.at(-1).content.includes(JSON.stringify(fullDraft)));
 });
 
 test('assist usage persists independently from story messages', () => {

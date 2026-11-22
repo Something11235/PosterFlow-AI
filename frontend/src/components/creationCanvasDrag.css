@@ -1,0 +1,22 @@
+.cc-board:not(.cc-list-view) .cc-node {
+  isolation: isolate;
+  cursor: grab;
+}
+
+.cc-board[data-moving-node] .cc-selected,
+.cc-board[data-moving-node] .cc-selected .cc-node-header {
+  cursor: grabbing;
+}
+
+.cc-board .cc-node-header:focus-visible {
+  outline: 2px solid var(--cc-node-color);
+  outline-offset: -3px;
+}
+
+.cc-board .cc-node :is(button, select, label) {
+  cursor: pointer;
+}
+
+.cc-board .cc-node :is(input, textarea) {
+  cursor: text;
+}

@@ -1,7 +1,8 @@
 import { normalizeTavernAppearance, normalizeTavernBackgrounds } from './tavernAppearance.js';
 import { normalizeTavernUserAvatar } from './tavernUserAvatar.js';
 import { normalizeTavernImageTemplates } from './tavernImageTemplates.js';
-import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, TAVERN_CONTEXT_CHARS, isValidTavernContextChars, normalizeCharacter, normalizeLoreEntries, tavernStateBytes } from './tavern.js';
+import { BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, defaultTavernPersona, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES, hasControlCharacters, normalizeCharacter, normalizeLoreEntries, renderCharacterMacros, tavernStateBytes } from './tavern.js';
+import legacyOpenings from './tavernCards/legacyEnglishOpenings.json' with { type: 'json' };
 import { normalizeTavernUsageRecords } from './tavernUsage.js';
 import { normalizeTavernMessage, validateTavernMessageIds } from './tavernConversation.js';
 
@@ -11,7 +12,6 @@ const MAX_BYTES = 20 * 1024 * 1024;
 const builtinIds = new Set([...BUILTIN_CHARACTERS, ...RETIRED_TAVERN_CHARACTERS].map(character => character.id));
 const blank = () => ({ characters: [], sessions: [], favorites: [] });
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const hasControlCharacters = value => Array.from(value).some(char => char.charCodeAt(0) < 32 && ![9, 10, 13].includes(char.charCodeAt(0)));
 
 function safeText(value, maximum, label, fallback = '') {
   if (value === undefined) return fallback;
@@ -34,6 +34,19 @@ function unique(items, label) {
   return items;
 }
 
+function normalizeLoreLibrary(books, characters) {
+  if (!Array.isArray(books)) throw new Error('世界书库格式无效。');
+  return unique(books.map(book => {
+    if (!plain(book) || !Array.isArray(book.characterIds) || !Array.isArray(book.entries)) throw new Error('世界书资料格式无效。');
+    return {
+      id: identifier(book.id),
+      name: safeText(book.name, 120, '世界书名称').trim() || '导入的世界书',
+      entries: normalizeLoreEntries(book.entries),
+      characterIds: [...new Set(book.characterIds.map(identifier))].filter(id => characters.has(id)),
+    };
+  }), '世界书');
+}
+
 function summary(value) {
   if (value === null || value === undefined) return null;
   if (!plain(value)) throw new Error('自动记忆格式无效。');
@@ -42,12 +55,38 @@ function summary(value) {
   return { text: content, throughMessageId: identifier(value.throughMessageId), createdAt: time(value.createdAt) };
 }
 
+// The session and messages have already been copied by the storage whitelist.
+function localizeBuiltinSession(session, character, version) {
+  if (!Object.hasOwn(legacyOpenings, character.id)) return session;
+  if (version !== undefined && version !== 1) throw new Error('角色语言版本无效，请更新页面后重试。');
+  session.builtinTextVersion = 1;
+  if (version === 1) return session;
+  const old = legacyOpenings[character.id];
+  if (session.scenario === old.scenario) session.scenario = character.scenario;
+  const first = session.messages[0];
+  if (first?.role === 'assistant' && !first.alternatives) {
+    const index = old.greetings.findIndex(greeting => renderCharacterMacros(greeting, old.name) === first.content);
+    if (index >= 0) {
+      const localized = index === 0 ? character.firstMessage : character.alternateGreetings[index - 1];
+      if (localized !== undefined) first.content = renderCharacterMacros(localized, character.name);
+    }
+  }
+  const defaultTitle = `与${old.name}的对话`;
+  const titleSuffix = session.title.slice(defaultTitle.length);
+  const userTitle = session.messages.find(message => message.role === 'user')?.content.slice(0, 24);
+  if (!session.titleEdited && userTitle !== defaultTitle && session.title.startsWith(defaultTitle)
+      && (!titleSuffix || (session.sourceSessionId && /^(?: · 分支)+$/.test(titleSuffix)))) {
+    session.title = `与${character.name}的对话${titleSuffix}`;
+  }
+  return session;
+}
+
 // Whitelist every persisted field, including nested messages; credentials/config are never stored.
 function normalizeState(state, allowMigrationGrowth = false) {
   if (!plain(state) || !Array.isArray(state.characters) || !Array.isArray(state.sessions) || !Array.isArray(state.favorites)) throw new Error('酒馆本地数据格式无效。');
   if (state.characters.length > 30) throw new Error('最多保存 30 个个人角色，请先删除部分角色。');
   if (state.sessions.length > 30) throw new Error('最多保存 30 个对话，请先删除部分对话。');
-  if (state.favorites.length > 34) throw new Error('收藏数量超过限制。');
+  if (state.favorites.length > 30 + builtinIds.size) throw new Error('收藏数量超过限制。');
   const characters = unique(state.characters.map(character => {
     const normalized = normalizeCharacter(character);
     if (builtinIds.has(normalized.id)) throw new Error('内置角色请另存为个人角色。');
@@ -56,7 +95,6 @@ function normalizeState(state, allowMigrationGrowth = false) {
   const known = new Map([...BUILTIN_CHARACTERS, ...RETIRED_TAVERN_CHARACTERS, ...characters].map(character => [character.id, character]));
   const sessions = unique(state.sessions.map(session => {
     if (!plain(session) || !Array.isArray(session.messages)) throw new Error('对话数据格式无效。');
-    if (session.messages.length > 200) throw new Error('每个对话最多保留 200 条消息，请开启新对话。');
     const characterId = identifier(session.characterId);
     if (!known.has(characterId)) throw new Error('对话所用角色不存在，请先删除关联对话。');
     if (session.personaPresetVersion !== undefined && session.personaPresetVersion !== 1) throw new Error('用户人设预设版本无效，请更新页面后重试。');
@@ -70,33 +108,31 @@ function normalizeState(state, allowMigrationGrowth = false) {
       ? session.usageRecords === undefined ? session.messages.filter((message, index) => index !== 0 && message?.role === 'assistant').length : 0
       : session.legacyReplyCount;
     if (!Number.isSafeInteger(legacyReplyCount) || legacyReplyCount < 0) throw new Error('历史未统计回复数量无效。');
-    const contextChars = session.contextChars === undefined ? TAVERN_CONTEXT_CHARS : session.contextChars;
-    if (!isValidTavernContextChars(contextChars)) throw new Error('上下文长度选项无效。');
     const autoMemory = session.autoMemory === undefined ? false : session.autoMemory;
     if (typeof autoMemory !== 'boolean') throw new Error('自动记忆开关无效。');
     const summaryHistory = session.summaryHistory === undefined ? [] : session.summaryHistory;
     if (!Array.isArray(summaryHistory) || summaryHistory.length > 5) throw new Error('自动记忆最多保留 5 个历史版本。');
     if (session.sourceSessionId !== undefined) identifier(session.sourceSessionId);
-    return {
+    return localizeBuiltinSession({
       id: identifier(session.id), characterId,
       title: safeText(session.title, 160, '对话标题', '新对话'),
       ...(session.pinned === true ? { pinned: true } : {}),
       ...(session.titleEdited === true ? { titleEdited: true } : {}),
       createdAt: time(session.createdAt), updatedAt: time(session.updatedAt),
-      persona: session.personaPresetVersion === undefined && !persona.trim() ? DEFAULT_TAVERN_PERSONA : persona,
+      persona: session.personaPresetVersion === undefined && !persona.trim() ? defaultTavernPersona(characterId) : persona,
       personaPresetVersion: 1,
       memory: useContextDefaults && !memory.trim() ? DEFAULT_TAVERN_MEMORY : memory,
       loreEntries: useContextDefaults && loreEntries.length === 0 ? normalizeLoreEntries(DEFAULT_TAVERN_LORE_ENTRIES) : loreEntries,
       contextPresetVersion: 1,
-      scenario: safeText(session.scenario, 3000, '故事起点', known.get(characterId).scenario),
-      contextChars, autoMemory, summary: summary(session.summary), summaryHistory: summaryHistory.map(item => {
+      scenario: safeText(session.scenario, Infinity, '故事起点', known.get(characterId).scenario),
+      autoMemory, summary: summary(session.summary), summaryHistory: summaryHistory.map(item => {
         if (item === undefined) throw new Error('自动记忆历史版本格式无效。');
         return summary(item);
       }),
       ...(session.sourceSessionId !== undefined ? { sourceSessionId: session.sourceSessionId } : {}),
       usageRecords, legacyReplyCount,
       messages: validateTavernMessageIds(session.messages.map(normalizeTavernMessage)),
-    };
+    }, known.get(characterId), session.builtinTextVersion);
   }), '对话');
   const favorites = [...new Set(state.favorites.map(identifier))].filter(value => known.has(value));
   let appearance = state.appearance === undefined ? undefined : normalizeTavernAppearance(state.appearance);
@@ -108,13 +144,15 @@ function normalizeState(state, allowMigrationGrowth = false) {
   }
   if (appearance?.preset === 'library' && !backgrounds?.some(item => item.id === appearance.backgroundId)) throw new Error('所选背景不存在，请重新选择。');
   const normalized = { characters, sessions, favorites, ...(appearance ? { appearance } : {}), ...(backgrounds ? { backgrounds } : {}),
+    ...(state.lorebooks === undefined ? {} : { lorebooks: normalizeLoreLibrary(state.lorebooks, known) }),
     ...(state.userAvatar === undefined ? {} : { userAvatar: normalizeTavernUserAvatar(state.userAvatar) }),
     ...(state.imageTemplates === undefined ? {} : { imageTemplates: normalizeTavernImageTemplates(state.imageTemplates) }) };
   if (tavernStateBytes(normalized) > MAX_BYTES) {
     // Only loading an originally compliant legacy record may cross the quota as
     // known migrations add fields. Editing and saving must still fit the quota.
-    const pendingMigration = state.sessions.some(session => ['personaPresetVersion', 'contextPresetVersion', 'scenario', 'usageRecords', 'legacyReplyCount', 'contextChars', 'autoMemory', 'summary', 'summaryHistory']
-      .some(field => session[field] === undefined) || session.usageRecords?.some(record => record.kind === undefined))
+    const pendingMigration = state.sessions.some(session => ['personaPresetVersion', 'contextPresetVersion', 'scenario', 'usageRecords', 'legacyReplyCount', 'autoMemory', 'summary', 'summaryHistory']
+      .some(field => session[field] === undefined) || session.usageRecords?.some(record => record.kind === undefined)
+      || (Object.hasOwn(legacyOpenings, session.characterId) && session.builtinTextVersion === undefined))
       || migratingBackground || state.characters.some(character => ['creatorNotes', 'creator', 'characterVersion', 'systemPrompt',
         'postHistoryInstructions', 'alternateGreetings', 'depthPrompt'].some(field => character[field] === undefined));
     if (!allowMigrationGrowth || !pendingMigration || tavernStateBytes(state) > MAX_BYTES) {

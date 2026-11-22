@@ -54,11 +54,11 @@ export default function AuthModal({ open, initialMode = "signIn", initialInvitat
     const live = () => version === scope.current;
     try {
       if (mode === "signIn") {
-        const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (!live()) return;
         if (authError) throw authError;
         onNotice?.("登录成功");
-        onClose();
+        onClose(data?.session?.user?.id);
       } else if (mode === "signUp") {
         const controller = new AbortController(); validation.current = controller;
         let referralCode;
@@ -76,7 +76,7 @@ export default function AuthModal({ open, initialMode = "signIn", initialInvitat
         else onNotice?.("注册成功");
         setInvitationCode("");
         onRegistered?.();
-        onClose();
+        onClose(data?.session?.user?.id);
       } else if (mode === "forgot") {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
           redirectTo: `${window.location.origin}/api/auth/reset-password`,
@@ -111,7 +111,7 @@ export default function AuthModal({ open, initialMode = "signIn", initialInvitat
             <h2 id="auth-modal-title" className="mt-1 text-lg font-semibold text-text-primary">{title}</h2>
             <p className="mt-1 text-sm leading-6 text-text-muted">登录后可使用平台积分生图，完成邮箱验证后可获得注册赠送积分。</p>
           </div>
-          <button type="button" onClick={onClose} className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-muted hover:bg-bg-elevated hover:text-text-primary" aria-label="关闭登录窗口">
+          <button type="button" onClick={() => onClose()} className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-muted hover:bg-bg-elevated hover:text-text-primary" aria-label="关闭登录窗口">
             <X size={18} />
           </button>
         </div>

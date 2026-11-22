@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, ChevronRight, Image, Layers3, MessagesSquare, Music2, Play, Search, Video } from "lucide-react";
 import StudioArt from "./StudioArt";
+import CreationCanvasFeature from "./CreationCanvasFeature";
 import ModelBadge from "../ModelBadge";
 import CreativeMaterials from "./CreativeMaterials";
 import VideoWorkspace from "./VideoWorkspace";
@@ -14,8 +15,9 @@ import { defaultMusic, MODEL_CATALOG, STUDIO_AREAS } from "../../lib/studioCatal
 const ICONS = { image: Image, video: Video, music: Music2, tavern: MessagesSquare };
 const HOME_AREAS = [...STUDIO_AREAS, { id: "tavern", en: "AI TAVERN", label: "AI 酒馆", description: "角色对话 · 角色卡导入 · 世界书", status: "全新空间" }];
 const TavernWorkspace = lazy(() => import("../tavern/TavernWorkspace"));
-const PAGE_TITLES = { home: "创作总览", video: "视频创作", music: "音乐创作", materials: "创作素材", models: "模型一览", tavern: "AI 酒馆" };
-export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
+const CreationCanvasWorkspace = lazy(() => import("../CreationCanvasWorkspace"));
+const PAGE_TITLES = { home: "创作总览", canvas: "AI 创作画布", video: "视频创作", music: "音乐创作", materials: "创作素材", models: "模型一览", tavern: "AI 酒馆" };
+export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, canvasGenerationContext, authReady, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
   const [bgmIntent,setBgmIntent]=useState(null);
   const [bgmImport,setBgmImport]=useState(null);
   const [idea, setIdea] = useState("");
@@ -24,6 +26,7 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
   const [ideaArea, setIdeaArea] = useState("image");
   const [music, setMusic] = useState(defaultMusic);
   const [video, setVideo] = useState(defaultSeedance25);
+  const [videoConnection, setVideoConnection] = useState(null);
   useEffect(() => { if (videoHistoryRestore?.identity === identity) setVideo(restoreVideoHistory(videoHistoryRestore.entry)); }, [videoHistoryRestore, identity]);
   useEffect(() => {
     if (musicHistoryRestore?.identity === identity) setMusic(restoreMusicHistory(musicHistoryRestore.entry));
@@ -55,20 +58,21 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
     onAreaChange(kind);
   }
   return <div className="studio-workspace" data-studio-area={area}>
-    {area !== "tavern" && <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
+    {area !== "tavern" && area !== "canvas" && <header className={`studio-topbar${area === "home" ? " has-github-support" : ""}`}>
       <div><span className="studio-breadcrumb">{['materials','models'].includes(area)?'资料与工具':'工作空间'}</span><ChevronRight size={13} /><strong>{PAGE_TITLES[area]}</strong></div>
       {area === "home" && <a className="studio-github-support" href="https://github.com/Something11235/PosterFlow-AI" target="_blank" rel="noopener noreferrer"><span>AI全功能生成工作台已完全开源至GitHub，如果帮到了你，请点一颗小小的Star，这对我们意义重大</span><ArrowUpRight size={16} aria-hidden="true" /></a>}
       <div><button type="button" className="studio-top-drafts" onClick={() => navigate("materials")}><Layers3 size={15} />创作素材</button></div>
     </header>}
     <div ref={scrollRef} className="studio-scroll">
       {area === "home" && <div className="studio-page studio-home">
-        <section className="studio-intro">
+        <section className="studio-intro studio-intro-with-canvas">
           <div><p className="studio-eyebrow">YOUR NEXT IDEA STARTS HERE <span>↗</span></p><h1>让想象，<span>拥有更多表达。</span></h1><p className="studio-intro-copy">{username ? `${username}，欢迎回来。` : "欢迎来到你的创作空间。"}从一段文字出发，探索图像、音乐、视频与角色故事。</p></div>
           <a className="studio-promo-video" href="https://www.bilibili.com/video/BV1iDWk6rE3d/" target="_blank" rel="noopener noreferrer" aria-label="观看宣传视频：前往哔哩哔哩，在新标签页打开">
             <span className="studio-promo-kicker">BILIBILI <span>官方宣传片</span></span>
             <span className="studio-promo-main"><span className="studio-promo-play" aria-hidden="true"><Play size={19} fill="currentColor" strokeWidth={1.5} /></span><span><strong>观看宣传视频</strong><small>认识你的 AI 创作工作台</small></span></span>
             <span className="studio-promo-footer"><span>图像 · 音乐 · 视频 · AI 酒馆</span><ArrowUpRight size={17} aria-hidden="true" /></span>
           </a>
+          <CreationCanvasFeature onOpen={() => navigate("canvas")} />
         </section>
         <section className="studio-media-grid has-tavern" aria-label="选择创作类型">{HOME_AREAS.map((item, index) => { const Icon = ICONS[item.id]; return <button type="button" key={item.id} className={`studio-media-card studio-tone-${item.id}`} onClick={() => start(item.id, "")}><div className="studio-card-top"><span>0{index + 1} / {item.en}</span><span className={item.id === "image" ? "studio-card-live" : ""}>{item.status}</span></div><div className="studio-card-art"><>{item.id === "tavern" ? <span className="studio-tavern-card-portraits" aria-hidden="true"><img src="/ai-companions/claude-01.jpg" alt="" /><img src="/ai-companions/deepseek-01-clean.png" alt="" /><img src="/ai-companions/gemini-01.jpg" alt="" /></span> : <StudioArt kind={item.id} />}</><span className="studio-art-caption">{item.id === "tavern" ? "CHARACTERS & STORIES / 角色与故事" : "CONCEPT ART / 示意设计"}</span></div><div className="studio-card-bottom"><div><h2><Icon size={18} strokeWidth={1.7} />{item.label}</h2><p>{item.description}</p></div><span className="studio-card-arrow"><ArrowUpRight size={20} /></span></div></button>; })}</section>
         <section className="studio-idea-box" aria-labelledby="studio-idea-heading"><div className="studio-section-heading"><div><span className="studio-section-number">01</span><h2 id="studio-idea-heading">从一个想法开始</h2></div><span>把脑海里的那一幕，写下来。</span></div><div className="studio-idea-input"><textarea aria-label="你的创作灵感" placeholder="如果现在能创造任何东西，你想做什么？" value={idea} onChange={event => setIdea(event.target.value)} rows={2} /><div className="studio-idea-bottom"><div className="studio-idea-tabs">{STUDIO_AREAS.map(item => { const Icon = ICONS[item.id]; return <button type="button" key={item.id} aria-pressed={ideaArea === item.id} onClick={() => setIdeaArea(item.id)}><Icon size={14} />{item.short}</button>; })}</div><button type="button" className="studio-primary" onClick={() => start(ideaArea, idea)}>进入创作<ArrowRight size={16} /></button></div></div></section>
@@ -76,9 +80,12 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
         <footer className="studio-footer"><span>POSTERFLOW — A SPACE FOR YOUR IDEAS.</span><span>图像 · 音乐 · 视频 · AI 酒馆</span></footer>
       </div>}
 
+      {area === "canvas" && (authReady ? <Suspense fallback={<div className="studio-page" role="status">正在打开画布…</div>}>
+        <CreationCanvasWorkspace key={identity} ownerId={identity} generationContext={{ ...canvasGenerationContext, videoConnection }} onOpenAccount={onLogin} onBalanceChange={onAccountRefresh} />
+      </Suspense> : <div className="studio-page" role="status">正在读取账户…</div>)}
       <MusicWorkspace bgmIntent={bgmIntent} onUseTavernBgm={useTavernBgm} active={area === "music"} identity={identity} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={music} onChange={setMusic} onTaskActivity={onTaskActivity} />
 
-      <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} />
+      <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} onConnectionChange={setVideoConnection} />
 
       {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartMusic={startTavernMusic} bgmImport={bgmImport} onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
 

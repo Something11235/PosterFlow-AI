@@ -20,6 +20,7 @@ import { accountAfterImageRefund, imageRefundError } from './lib/imageRefund';
 import { imageGenerationFetch, imageTaskPendingState, readImageTask, readLegacyImageTask, listImageTasks, usesBuyToken } from "./lib/apimartImages";
 import ImageModal from "./components/ImageModal";
 import AuthModal from "./components/AuthModal";
+import { confirmGuestCanvasLogin, forgetGuestCanvasLogin } from "./lib/creationCanvasLogin";
 import AccountPanel from "./components/AccountPanel";
 import AnnouncementBanner from "./components/AnnouncementBanner";
 import AdminMetricsPanel from "./components/AdminMetricsPanel";
@@ -158,9 +159,28 @@ const MODE_META = {
   },
 };
 
+function readStudioArea() {
+  const area = new URLSearchParams(window.location.search).get("area");
+  return ["canvas", "image", "music", "video", "tavern", "materials", "models"].includes(area) ? area : "home";
+}
+
 export default function App() {
   const [classicWorkspace] = useState(() => new URLSearchParams(window.location.search).get("workspace") === "classic");
-  const [studioArea, setStudioArea] = useState(() => new URLSearchParams(window.location.search).get("area") === "tavern" ? "tavern" : "home");
+  const [studioArea, updateStudioArea] = useState(readStudioArea);
+  const setStudioArea = useCallback(next => {
+    if (readStudioArea() !== next) {
+      const url = new URL(window.location.href);
+      if (next === "home") url.searchParams.delete("area");
+      else url.searchParams.set("area", next);
+      window.history.pushState(window.history.state, "", url.pathname + url.search + url.hash);
+    }
+    updateStudioArea(next);
+  }, []);
+  useEffect(() => {
+    const restoreArea = () => updateStudioArea(readStudioArea());
+    window.addEventListener("popstate", restoreArea);
+    return () => window.removeEventListener("popstate", restoreArea);
+  }, []);
   const [tavernBackgroundTarget, setTavernBackgroundTarget] = useState(null);
   const [tavernBackgroundImports, setTavernBackgroundImports] = useState([]);
   const [mode, setMode] = useState("create");
@@ -177,6 +197,7 @@ export default function App() {
   const [referenceFiles, setReferenceFiles] = useState([]);
   const referenceFilesRef = useRef([]);
   const [referenceFeedback, setReferenceFeedback] = useState(null);
+  const [referenceUploads, setReferenceUploads] = useState([]);
 
   const [images, setImages] = useState([]);
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -216,6 +237,7 @@ export default function App() {
   const isGenerating = Boolean(selectedImageTask?.active);
   useEffect(() => {
     selectedTaskRef.current = "";
+    setReferenceUploads([]);
     setImages([]); setCurrentPrompt(""); setError(null); setSelectedImages(new Set());
     setTavernBackgroundTarget(null); setTavernBackgroundImports([]);
     setAccountError("");
@@ -445,6 +467,10 @@ export default function App() {
     () => ({ ...authHeaders, "X-Billing-Mode": billingMode }),
     [authHeaders, billingMode],
   );
+  const canvasGenerationContext = useMemo(() => ({
+    authHeaders, providerHeaders, referenceUploadHeaders, billingMode,
+    imageModel: activeImageModel, authenticated: Boolean(session),
+  }), [authHeaders, providerHeaders, referenceUploadHeaders, billingMode, activeImageModel, session]);
 
   const requireGenerationAccess = useCallback(() => {
     if (billingMode === "platform" && !session) {
@@ -487,7 +513,7 @@ export default function App() {
     setStudioArea("image");
     setMode("canvas");
     setNotice(`正在送入画布：${uniqueFilenames.length} 张图片`);
-  }, []);
+  }, [setStudioArea]);
 
   const handleCanvasGenerated = useCallback(({ image, prompt: generatedPrompt }) => {
     selectedTaskRef.current = "";
@@ -558,7 +584,7 @@ export default function App() {
       setNotice(background ? '已填入剧情背景提示词；确认模型与价格后生成，成功图片自动存入酒馆背景库。' : '中文画面提示词已填入；确认模型、参考图与价格后再生成。');
     }
     setStudioArea('image');
-  }, []);
+  }, [setStudioArea]);
 
   const importCompanion = useCallback(async (id, target) => {
     const owner = sessionRef.current?.user?.id || "guest";
@@ -580,7 +606,7 @@ export default function App() {
       setPendingCanvasImport({ id: crypto.randomUUID(), files: [file] });
       setStudioArea("image");setMode("canvas");setNotice("正在把 AI娘图片加入无限画布…");
     } else throw new Error("请选择参考图或无限画布。");
-  }, []);
+  }, [setStudioArea]);
 
   const runImageTask = useCallback(async (taskPrompt, previousImage = null) => {
     if (!taskPrompt.trim() || Array.from(taskPrompt.trim()).length > 6000) {
@@ -605,7 +631,9 @@ export default function App() {
       setNotice("已有 3 个生图任务正在运行，完成一个后可继续提交。"); return;
     }
     selectedTaskRef.current = requestId;
-    setError(null); setNotice("任务已开始，可修改提示词继续提交，或切换到音乐创作。");
+    setError(null);
+    setReferenceUploads(items => items.filter(item => !item.failed));
+    setNotice(!previousImage && !referenceSpec.disabled && referenceFiles.length ? "正在准备参考图，上传完成后自动提交生图。" : "任务已开始，可修改提示词继续提交，或切换到音乐创作。");
     setImages([]); setSelectedImages(new Set()); setCurrentPrompt(taskPrompt.trim());
     const live = () => imageTaskStoreRef.current === store && (sessionRef.current?.user?.id || 'guest') === store.identity;
     const selected = () => live() && selectedTaskRef.current === requestId;
@@ -622,7 +650,16 @@ export default function App() {
       if (selected()) { setImages(data.images || []); setCurrentPrompt(data.prompt || taskPrompt); setError(null); }
       if (live() && backgroundTarget && data.images?.length) queueTavernBackgrounds(data.images.map(image => image.filename), backgroundTarget.name, requestId, backgroundTarget.identity);
     };
-    let paths = [], started = false, uploadingReferences = false;
+    let paths = [], started = false, uploadingReferences = false, lastUpload = null;
+    const updateUpload = progress => {
+      lastUpload = { ...progress, requestId, identity: store.identity };
+      const snapshot = lastUpload;
+      if (live()) setReferenceUploads(items => items.some(item => item.requestId === requestId)
+        ? items.map(item => item.requestId === requestId ? snapshot : item) : [...items, snapshot]);
+    };
+    const clearUpload = () => {
+      if (live()) setReferenceUploads(items => items.filter(item => item.requestId !== requestId));
+    };
     try {
       const body = { prompt: taskPrompt.trim(), request_id: requestId,
         ...(previousImage ? { previous_image: previousImage, ...(apimartSpec?.value.startsWith('gpt-image-2.6-') ? {count} : {}) } : { count }),
@@ -633,8 +670,10 @@ export default function App() {
         ...(apimartSpec?.outputFormats ? {output_format: imageOutputFormat} : {}) };
       if (!previousImage && !referenceSpec.disabled && referenceFiles.length) {
         uploadingReferences = true;
-        paths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders });
+        paths = await uploadReferenceFiles(referenceFiles, { headers: referenceUploadHeaders, onUploadProgress: updateUpload });
         uploadingReferences = false;
+        clearUpload();
+        if (selected()) setNotice("参考图已上传，正在提交生图。");
         body.reference_storage_paths = paths;
       }
       // A removed file/config change affects only the next task; this closure
@@ -671,6 +710,13 @@ export default function App() {
       }
       else {
         const failure = imageClientFailure(reason, { started, uploadingReferences, billingMode });
+        if (uploadingReferences && lastUpload) {
+          const where = `第 ${lastUpload.current} / ${lastUpload.total} 张（${lastUpload.filename}）`;
+          const advice = failure.detail || "请重新选择这张图片后重试。";
+          failure.detail = `${where} · ${lastUpload.label}时遇到问题。${advice}`;
+          updateUpload({ ...lastUpload, label: lastUpload.label.replace(/^正在/, "") + "时遇到问题", advice, failed: true });
+          if (selected()) setNotice(`第 ${lastUpload.current} 张参考图未上传成功，本次生图请求尚未提交。`);
+        }
         store.finish(requestId, { error: failure, pending: started });
         showFailure(failure);
       }
@@ -690,7 +736,7 @@ export default function App() {
     setImages(task.images || []); setCurrentPrompt(task.prompt); setError(task.error || null);
     setSelectedImages(new Set()); setMode('create'); setStudioArea("image"); setImageTasksOpen(false);
     setImageTaskFocus(value=>value+1);
-  }, []);
+  }, [setStudioArea]);
 
   useEffect(()=>{
     if(!imageTaskFocus)return;
@@ -1160,6 +1206,7 @@ export default function App() {
                 onReferenceRemove={handleReferenceRemove}
                 onReferenceClear={handleReferenceClear}
                 referenceFeedback={referenceFeedback}
+                referenceUploads={referenceUploads.filter(item => item.identity === imageTaskStore.identity && (!item.failed || item.requestId === selectedTaskRef.current))}
                 mode={mode}
                 onCopyPrompt={handleCopyPrompt}
                 providerConfigured={providerConfigured}
@@ -1229,7 +1276,9 @@ export default function App() {
           </div>
           {!classicWorkspace && <div className={`studio-workspace-host ${studioArea === "image" ? "studio-is-hidden" : ""}`}>
             <Suspense fallback={<div className="flex flex-1 items-center justify-center p-16 text-text-muted">正在打开创作空间…</div>}>
-              <StudioWorkspace key={session?.user?.id || "guest"} area={studioArea} onAreaChange={setStudioArea} username={account?.profile?.username} identity={session?.user?.id || "guest"} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={() => setAuthOpen(true)} onAccountRefresh={refreshAccount} onTaskActivity={setMusicActiveCount} onVideoTaskActivity={setVideoActiveCount} musicHistoryRestore={musicHistoryRestore} videoHistoryRestore={videoHistoryRestore} onImportCompanion={importCompanion} presetLibrary={<PresetLibrary activePresetId={activePreset?.id} onApplyPreset={preset => { handleApplyPreset(preset); setMode("create"); setStudioArea("image"); }} />} onStartImage={handleStartImage} backgroundImport={tavernBackgroundImports[0]} onBackgroundImportHandled={handleBackgroundImportHandled} />
+              <StudioWorkspace key={session?.user?.id || "guest"} area={studioArea} onAreaChange={setStudioArea}
+                canvasGenerationContext={canvasGenerationContext} authReady={authReady}
+                username={account?.profile?.username} identity={session?.user?.id || "guest"} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={() => setAuthOpen(true)} onAccountRefresh={refreshAccount} onTaskActivity={setMusicActiveCount} onVideoTaskActivity={setVideoActiveCount} musicHistoryRestore={musicHistoryRestore} videoHistoryRestore={videoHistoryRestore} onImportCompanion={importCompanion} presetLibrary={<PresetLibrary activePresetId={activePreset?.id} onApplyPreset={preset => { handleApplyPreset(preset); setMode("create"); setStudioArea("image"); }} />} onStartImage={handleStartImage} backgroundImport={tavernBackgroundImports[0]} onBackgroundImportHandled={handleBackgroundImportHandled} />
             </Suspense>
           </div>}
         </main>
@@ -1266,7 +1315,12 @@ export default function App() {
         onClose={() => setShowProviderSettings(false)}
       />
 
-      <AuthModal open={authOpen} initialMode={authMode} initialInvitationCode={invitationCode} onRegistered={clearInvitation} onClose={() => { setAuthOpen(false); setAuthMode("signIn"); }} onNotice={setNotice} />
+      <AuthModal open={authOpen} initialMode={authMode} initialInvitationCode={invitationCode} onRegistered={clearInvitation} onClose={signedInOwner => {
+        if (signedInOwner) confirmGuestCanvasLogin(signedInOwner);
+        else forgetGuestCanvasLogin();
+        setAuthOpen(false);
+        setAuthMode("signIn");
+      }} onNotice={setNotice} />
       <CommunityQrModal open={communityOpen} onClose={() => setCommunityOpen(false)} />
       <AccountPanel open={accountOpen} account={account} loading={accountLoading} onClose={() => setAccountOpen(false)} onSignOut={handleSignOut} onDelete={handleDeleteAccount} onOpenRecharge={() => { setAccountOpen(false); setRechargeOpen(true); }} onOpenReferrals={() => { setAccountOpen(false); setReferralsOpen(true); }} />
       <AdminMetricsPanel open={metricsOpen} authHeaders={authHeaders} onClose={() => setMetricsOpen(false)} />

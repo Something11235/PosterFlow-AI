@@ -1,0 +1,21 @@
+.tv-character-intro { width: min(620px, calc(100vw - 32px)); }
+.tv-character-intro .tv-dialog-body { padding-top: 20px; }
+.tv-intro-identity { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 21px; padding-bottom: 20px; border-bottom: 1px solid var(--tv-d-border-subtle); }
+.tv-intro-portrait { display: grid; place-items: center; width: 100%; aspect-ratio: 3 / 4; overflow: hidden; border: 1px solid var(--tv-d-border-subtle); border-radius: 9px; background: var(--tv-d-surface); color: #91a7c4; }
+.tv-intro-portrait img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center 30%; }
+.tv-intro-byline { min-width: 0; overflow-wrap: anywhere; }
+.tv-intro-byline h3 { margin: 0; font: 500 clamp(23px, 4.2vw, 31px)/1.23 Georgia, "Songti SC", SimSun, serif; color: var(--tv-d-text); }
+.tv-intro-byline > p { margin: 8px 0 0; color: var(--tv-d-secondary); font-size: 13px; line-height: 1.55; }
+.tv-intro-credits { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; margin-top: 10px; color: var(--tv-d-muted); font-size: 12px; line-height: 1.7; }
+.tv-intro-credits a { display: inline-flex; align-items: center; gap: 3px; padding-block: 3px; color: #a5c8ff; text-underline-offset: 3px; }
+.tv-intro-section { margin: 19px 0 0; }
+.tv-intro-section h4 { margin: 0 0 6px; color: var(--tv-d-text); font-size: 14px; font-weight: 600; line-height: 1.5; }
+.tv-intro-section p { margin: 0; color: var(--tv-d-secondary); font-size: 14px; line-height: 1.85; overflow-wrap: anywhere; }
+.tv-intro-start { padding-left: 13px; border-left: 2px solid #527ab4; }
+@media (max-width: 500px) {
+  .tv-character-intro { width: calc(100vw - 20px); }
+  .tv-intro-identity { grid-template-columns: 70px minmax(0, 1fr); gap: 13px; padding-bottom: 15px; }
+  .tv-intro-byline h3 { font-size: 22px; }
+  .tv-intro-credits { margin-top: 6px; }
+  .tv-intro-section { margin-top: 16px; }
+}

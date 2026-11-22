@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from urllib.parse import quote, unquote, urlsplit
 
 from flask import Blueprint, Response, jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 try:
     from backend.music_provider import safe_media_url
@@ -32,7 +33,7 @@ DEFAULT_MODEL = "deepseek-v4.1-flash"
 DEFAULT_ENDPOINT = "https://api.buytoken.work/v1/chat/completions"
 REQUEST_SECONDS = 120
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-MAX_CONTENT_CHARS = 65536
+MAX_RESPONSE_CHARS = 65536
 MAX_SAFE_TOKENS = 2 ** 53 - 1
 IMPORT_JSON_BYTES = 1024 * 1024
 IMPORT_PNG_BYTES = 8 * 1024 * 1024
@@ -136,32 +137,29 @@ def build_chat_request(data):
     if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model):
         raise TavernError("TAVERN_INVALID_MODEL", "请填写有效的对话模型标识。")
     messages = data.get("messages")
-    if not isinstance(messages, list) or not 1 <= len(messages) <= 64:
-        raise TavernError("TAVERN_CONTEXT_LIMIT", "每次对话须包含 1–64 条消息，请缩短历史上下文。")
-    clean, total = [], 0
+    if not isinstance(messages, list) or not messages:
+        raise TavernError("TAVERN_INVALID_INPUT", "请至少发送一条消息。")
     for index, message in enumerate(messages):
         if not isinstance(message, dict) or set(message) != {"role", "content"}:
             raise TavernError("TAVERN_INVALID_INPUT", "消息须仅包含角色和文字内容。")
         role, content = message["role"], message["content"]
         if role not in ("system", "user", "assistant") or role == "system" and index != 0:
             raise TavernError("TAVERN_INVALID_INPUT", "消息角色或排列无效。")
-        if not isinstance(content, str) or not content.strip() or len(content) > MAX_CONTENT_CHARS:
-            raise TavernError("TAVERN_CONTEXT_LIMIT", "消息不能为空，单条最多 65536 个字符。")
+        if not isinstance(content, str) or not content.strip():
+            raise TavernError("TAVERN_INVALID_INPUT", "每条消息都需要非空的文字内容。")
         try:
             content.encode("utf-8")
         except UnicodeError:
             raise TavernError("TAVERN_INVALID_INPUT", "消息包含无效的文字编码。") from None
-        total += len(content)
-        clean.append({"role": role, "content": content})
-    if total > 131072 or clean[-1]["role"] != "user":
-        raise TavernError("TAVERN_CONTEXT_LIMIT", "上下文过长或缺少本轮用户消息，请调整后发送。")
+    if messages[-1]["role"] != "user":
+        raise TavernError("TAVERN_INVALID_INPUT", "最后一条消息必须是本轮用户输入。")
     temperature = data.get("temperature", 0.8)
     if type(temperature) not in (int, float) or not 0 <= temperature <= 2 or not math.isfinite(temperature):
         raise TavernError("TAVERN_INVALID_INPUT", "温度须在 0–2 之间。")
     maximum = data.get("max_tokens", 1024)
     if type(maximum) is not int or not 64 <= maximum <= 4096:
         raise TavernError("TAVERN_INVALID_INPUT", "回复上限须为 64–4096 的整数。")
-    return {"model": model, "messages": clean, "temperature": temperature,
+    return {"model": model, "messages": messages, "temperature": temperature,
             "max_tokens": maximum, "stream": False}
 
 
@@ -213,6 +211,33 @@ def resolve_public_host(host, timeout=8):
         raise TavernError("TAVERN_DNS_UNAVAILABLE", "暂时无法解析对话服务域名，本次尚未提交。", 502) from None
 
 
+def provider_context_error(response):
+    # Error bodies can echo private messages. Inspect a bounded structured
+    # diagnostic locally; never send its text to the caller or logs.
+    limit = 16 * 1024
+    try:
+        raw = response.read(limit + 1)
+        if not raw or len(raw) > limit:
+            return False
+        payload = json.loads(raw)
+    except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error", payload)
+    if not isinstance(error, dict):
+        return False
+    codes = ("context_length_exceeded", "context_window_exceeded", "max_context_length_exceeded",
+             "context_limit_exceeded", "prompt_too_long", "input_too_long")
+    if any(isinstance(error.get(field), str) and error[field].lower() in codes for field in ("code", "type")):
+        return True
+    message = error.get("message")
+    return isinstance(message, str) and bool(re.search(
+        r"maximum context length (?:is|of)|context (?:window|length) (?:is )?exceeded"
+        r"|exceeds? (?:the |this model.s |its )?(?:maximum |model.s )?context (?:window|length)"
+        r"|上下文(?:长度|窗口)?(?:已超出|超出限制|超过限制|过长)", message, re.I))
+
+
 def submit_chat(endpoint, key, body):
     parsed = validate_endpoint(endpoint)
     deadline = time.monotonic() + REQUEST_SECONDS
@@ -255,6 +280,10 @@ def submit_chat(endpoint, key, body):
         if 300 <= response.status < 400:
             raise TavernError("TAVERN_REDIRECT_BLOCKED", "对话服务返回了跳转，已停止本次请求；请核对服务记录后再操作。", 502, True)
         if response.status >= 400:
+            if response.status in (400, 413, 422) and provider_context_error(response):
+                raise TavernError("TAVERN_MODEL_CONTEXT_EXCEEDED", "当前模型的上下文容纳不下这次对话。可压缩剧情记忆，或换用上下文更长的模型。", 400)
+            if response.status == 413:
+                raise TavernError("TAVERN_PROVIDER_REQUEST_TOO_LARGE", "对话服务商拒绝了过大的请求体，请缩短本次发送的内容后再试。", 413)
             rejected = response.status in (400, 401, 403, 404, 422, 429)
             message = "对话服务未接受请求，请检查 Key、模型权限和参数。" if rejected else "对话服务结果暂未确认，请核对服务记录，不要重复发送。"
             raise TavernError("TAVERN_REQUEST_REJECTED" if rejected else "TAVERN_RESULT_UNKNOWN", message, 502, not rejected)
@@ -277,7 +306,7 @@ def submit_chat(endpoint, key, body):
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip() or len(content) > MAX_CONTENT_CHARS:
+        if not isinstance(content, str) or not content.strip() or len(content) > MAX_RESPONSE_CHARS:
             raise TavernError("TAVERN_RESPONSE_INVALID", "对话服务未返回有效文字，请核对服务记录，不要重复发送。", 502, True, usage=usage)
         return {"content": content, "usage": usage}
     except TavernError:
@@ -516,10 +545,10 @@ def create_tavern_blueprint(server):
         if (origin and origin.rstrip("/") not in {request.host_url.rstrip("/"), *server.ALLOWED_ORIGINS}
                 or request.headers.get("Sec-Fetch-Site") == "cross-site"):
             raise TavernError("TAVERN_ORIGIN_FORBIDDEN", "请求来源不受支持。", 403)
-        if request.content_length and request.content_length > 1024 * 1024:
-            raise TavernError("TAVERN_CONTEXT_LIMIT", "对话请求过大，请缩短上下文后发送。", 413)
         try:
             data = request.get_json(silent=True)
+        except RequestEntityTooLarge:
+            raise TavernError("TAVERN_REQUEST_TOO_LARGE", "请求体超过当前服务器的传输上限，请缩短本次发送的内容后再试。", 413) from None
         except (ValueError, RecursionError):
             raise TavernError("TAVERN_INVALID_INPUT", "对话请求格式无效。") from None
         if not isinstance(data, dict):

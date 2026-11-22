@@ -3,13 +3,14 @@ import test from 'node:test';
 import { existsSync } from 'node:fs';
 import {
   BUILTIN_CHARACTERS, RETIRED_TAVERN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFAULT_TAVERN_LORE_ENTRIES,
-  TAVERN_CONTEXT_CHARS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS,
-  TAVERN_CHARACTER_LIMITS, TAVERN_REPLY_LANGUAGE_INSTRUCTION,
+  TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS,
+  TAVERN_REPLY_LANGUAGE_INSTRUCTION,
   normalizeCharacter, normalizeLoreEntries, parseCharacterFile, exportCharacter,
   normalizeLorebook, parseLorebookFile, exportLorebook,
   createTavernSession, activeLoreEntries, buildTavernMessages,
 } from '../src/lib/tavern.js';
 import { normalizeTavernState, loadTavernState, saveTavernState } from '../src/lib/tavernStorage.js';
+import { embedCharacterPng } from '../src/lib/tavernExport.js';
 
 const draft = (extra = {}) => ({ name: '旅人', description: '虚构角色', ...extra });
 const file = value => new Blob([typeof value === 'string' ? value : JSON.stringify(value)], { type: 'application/json' });
@@ -24,6 +25,22 @@ const pngChunk = (type, data) => {
   data.copy(result, 8);
   return result;
 };
+
+test('shared lorebooks preserve their owner-local bindings across reloads and forget removed characters', () => {
+  const base = { characters: [], sessions: [], favorites: [] };
+  assert.equal(normalizeTavernState(base).lorebooks, undefined);
+  const character = normalizeCharacter({ ...draft(), id: 'lore-reader' });
+  const builtin = BUILTIN_CHARACTERS[1];
+  const source = { id: 'library-book', name: '港口志', entries: normalizeLorebook({
+    entries: [{ id: 1, content: '灯塔位于旧港。', keys: ['灯塔'] }],
+  }).entries, characterIds: [builtin.id, character.id, builtin.id], warnings: ['导入临时状态'] };
+  const saved = normalizeTavernState({ ...base, characters: [character], lorebooks: [source] });
+  assert.deepEqual(saved.lorebooks[0].characterIds, [builtin.id, character.id]);
+  assert.equal(saved.lorebooks[0].warnings, undefined);
+  assert.deepEqual(normalizeTavernState(saved), saved);
+  assert.deepEqual(normalizeTavernState({ ...saved, characters: [] }).lorebooks[0].characterIds, [builtin.id]);
+  assert.throws(() => normalizeTavernState({ ...saved, lorebooks: [source, source] }), /编号重复/);
+});
 function pngFixture(entries) {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(1); header.writeUInt32BE(1, 4); header[8] = 8; header[9] = 6;
@@ -32,8 +49,8 @@ function pngFixture(entries) {
     pngChunk('IEND', Buffer.alloc(0))], { type: 'image/png' });
 }
 
-test('Shenshen is the only visible starter and session lore is copied independently', () => {
-  assert.equal(BUILTIN_CHARACTERS.length, 1);
+test('default characters appear in order and keep their own greetings, favorites and sessions', () => {
+  assert.deepEqual(BUILTIN_CHARACTERS.map(card => card.id), ['tavern-lanxing', 'tavern-alisa-alya-kujou', 'tavern-isekai-rpg', 'tavern-world-rpg']);
   assert.equal(BUILTIN_CHARACTERS[0].id, 'tavern-lanxing');
   assert.equal(BUILTIN_CHARACTERS[0].name, '深深');
   assert.equal(BUILTIN_CHARACTERS[0].avatar, '/ai-companions/deepseek-01-clean.png');
@@ -42,13 +59,52 @@ test('Shenshen is the only visible starter and session lore is copied independen
     assert.ok(existsSync(new URL(`../public${character.avatar}`, import.meta.url)));
     const session = createTavernSession(character);
     assert.equal(session.messages[0].role, 'assistant');
-    assert.equal(session.messages[0].content, character.firstMessage);
+    const opening = character.firstMessage.replace(/\{\{(char|user)\}\}/gi, (_, macro) => macro.toLowerCase() === 'char' ? character.name : '你');
+    assert.equal(session.messages[0].content, opening);
     assert.notEqual(session.loreEntries, character.loreEntries);
+    const saved = normalizeTavernState({ characters: [], favorites: [character.id], sessions: [session] });
+    assert.deepEqual(saved.favorites, [character.id]);
+    assert.equal(saved.sessions[0].characterId, character.id);
   }
+  const [, alisa, isekai, world] = BUILTIN_CHARACTERS;
+  assert.equal(world.creator, 'Wren');
+  assert.equal(world.sourcePage.url, 'https://pygmalion.chat/character/6b67ca81-f58e-4a16-bf29-5f36313f29b7');
+  assert.equal(createTavernSession(world).persona, '');
+  assert.equal(alisa.creator, 'absudise3000');
+  assert.equal(isekai.creator, 'cantC');
+  assert.equal(alisa.alternateGreetings.length, 1);
+  const cafeOpening = createTavernSession(alisa, { greetingIndex: 0 }).messages[0].content;
+  assert.equal(cafeOpening, alisa.alternateGreetings[0]);
+  assert.match(cafeOpening, /咖啡馆/);
+  assert.match(cafeOpening, /俄语低语.*[а-яё].*（.+）/iu);
+  assert.equal(isekai.alternateGreetings.length, 0);
   const characterWithLore = { ...BUILTIN_CHARACTERS[0], loreEntries: [{ id: 'test-lore', keys: ['海'], content: '海边的午后' }] };
   const first = createTavernSession(characterWithLore);
   first.loreEntries[0].keys.push('仅当前会话');
   assert.ok(!characterWithLore.loreEntries[0].keys.includes('仅当前会话'));
+});
+
+test('catalog introductions and source links are trusted preset metadata only', async () => {
+  const [, alisa, isekai, world] = BUILTIN_CHARACTERS;
+  assert.equal(world.creator, 'Wren');
+  assert.equal(world.sourcePage.url, 'https://pygmalion.chat/character/6b67ca81-f58e-4a16-bf29-5f36313f29b7');
+  assert.equal(createTavernSession(world).persona, '');
+  for (const role of BUILTIN_CHARACTERS) {
+    for (const part of ['overview', 'startingPoint']) assert.match(role.introduction[part], /[\u4e00-\u9fff]/);
+    const session = createTavernSession(role);
+    const messages = buildTavernMessages(role, session, '继续');
+    assert.ok(!messages.some(message => message.content.includes(role.introduction.overview)));
+    assert.equal(exportCharacter(role).data.introduction, undefined);
+  }
+  assert.deepEqual([alisa.creator, alisa.sourcePage.url], ['absudise3000', 'https://aicharactercards.com/cards/3854']);
+  assert.deepEqual([isekai.creator, isekai.sourcePage.url, isekai.sourcePage.originalCreator],
+    ['cantC', 'https://chub.ai/characters/cantC/isekai-rpg-7c9df45e6ed8', 'isekaianon']);
+  const forged = { ...alisa, introduction: { overview: 'fake', startingPoint: 'fake' }, sourcePage: { platform: 'Fake', url: 'https://example.invalid' } };
+  for (const input of [forged, card(3, forged)]) {
+    const imported = await parseCharacterFile(file(input));
+    assert.equal(imported.sourcePage, undefined);
+    assert.equal(imported.introduction, undefined);
+  }
 });
 
 test('Shenshen preserves the provided persona verbatim in the prompt with no former starship setting', () => {
@@ -110,6 +166,20 @@ test('legacy blank user personas migrate once and remain empty after the user cl
     const reloaded = normalizeTavernState(JSON.parse(JSON.stringify(normalizeTavernState(migrated))));
     assert.equal(reloaded.sessions[0].persona, '');
     assert.equal(reloaded.sessions[0].personaPresetVersion, 1);
+  }
+});
+
+test('Alisa and Isekai start without an assumed player persona and preserve saved choices', () => {
+  for (const card of BUILTIN_CHARACTERS.slice(1)) {
+    const fresh = createTavernSession(card);
+    assert.equal(fresh.persona, '');
+    assert.ok(!buildTavernMessages(card, fresh, '你好')[0].content.includes(DEFAULT_TAVERN_PERSONA));
+    for (const persona of ['', DEFAULT_TAVERN_PERSONA, '  我是过路的旅人。  ']) {
+      for (const personaPresetVersion of [undefined, 1]) {
+        const state = { characters: [], favorites: [], sessions: [{ ...fresh, persona, personaPresetVersion }] };
+        assert.equal(normalizeTavernState(state).sessions[0].persona, persona);
+      }
+    }
   }
 });
 
@@ -194,7 +264,7 @@ test('missing session scenarios migrate from active, retired, and personal chara
   }
 });
 
-test('edited or empty session scenarios replace the card scenario in prompts and remain bounded', () => {
+test('edited or empty session scenarios replace the card scenario in prompts', () => {
   const character = BUILTIN_CHARACTERS[0];
   const session = createTavernSession(character);
   session.scenario = '故事从森林里的观景台开始。';
@@ -206,14 +276,16 @@ test('edited or empty session scenarios replace the card scenario in prompts and
   session.scenario = '景'.repeat(3000 - ending.length) + ending;
   const longPrompt = buildTavernMessages(character, session, '现在开始吧');
   assert.ok(longPrompt[0].content.includes(session.scenario));
-  assert.ok(longPrompt.reduce((total, message) => total + message.content.length, 0) <= TAVERN_CONTEXT_CHARS);
   session.scenario = '';
   const emptyPrompt = buildTavernMessages(character, session, '现在开始吧')[0].content;
   assert.ok(!emptyPrompt.includes('场景：'));
   assert.ok(!emptyPrompt.includes(character.scenario));
   delete session.scenario;
   assert.ok(buildTavernMessages(character, session, '现在开始吧')[0].content.includes(character.scenario));
-  session.scenario = '景'.repeat(3001);
+  session.scenario = '景'.repeat(3560);
+  assert.ok(buildTavernMessages(character, session, '开始')[0].content.includes(session.scenario));
+  assert.equal(normalizeTavernState({ characters: [], sessions: [session], favorites: [] }).sessions[0].scenario, session.scenario);
+  session.scenario = '\0';
   assert.throws(() => buildTavernMessages(character, session, '开始'), /故事起点/);
   assert.throws(() => normalizeTavernState({ characters: [], sessions: [session], favorites: [] }), /故事起点/);
   session.scenario = '';
@@ -246,7 +318,7 @@ test('export produces V2 data that round-trips common editable content', () => {
 });
 
 test('card parser rejects unexpected types, unsupported versions, and oversized fields', () => {
-  for (const bad of [null, [], { name: { toString: () => 'name' } }, draft({ description: [] }), draft({ tags: 'tag' }), draft({ name: 'a'.repeat(81) }), draft({ personality: 'a'.repeat(6001) }), card(4), card(3, { character_book: [] })]) {
+  for (const bad of [null, [], { name: { toString: () => 'name' } }, draft({ description: [] }), draft({ tags: 'tag' }), draft({ name: 'a'.repeat(81) }), draft({ personality: 'a\0b' }), card(4), card(3, { character_book: [] })]) {
     assert.throws(() => normalizeCharacter(bad));
   }
   assert.throws(() => normalizeLoreEntries([{ content: 'x', enabled: 'false' }]), /状态/);
@@ -294,6 +366,49 @@ test('duplicate PNG card metadata selects the first matching block and discloses
   assert.match(parsed.avatar, /^data:image\/png;base64,/);
 });
 
+test('Chub source metadata and an empty depth template do not report active scripts, prompts or lore', async () => {
+  const settings = { role: 'system', depth: 4, prompt: '' };
+  const imported = await parseCharacterFile(pngFixture([['chara', card(2, {
+    character_book: null, extensions: { depth_prompt: settings, chub: { id: 1, related_lorebooks: [], extensions: [] } },
+  })]]));
+  assert.deepEqual(imported.loreEntries, []);
+  assert.deepEqual(exportCharacter(imported).data.extensions.depth_prompt, settings);
+  assert.ok(imported.warnings.some(w => w.includes('Chub')));
+  assert.ok(imported.warnings.every(w => !/脚本|深度提示|世界书/.test(w)));
+});
+
+test('long V3 PNG narratives survive sessions, JSON and PNG re-export; group openings stay out of one-on-one chats', async () => {
+  const entry = ' lore ' + 'L'.repeat(12000) + ' LORE_END ';
+  const source = card(3, {
+    personality: 'P'.repeat(6511) + 'PERSONALITY_END', scenario: 'S'.repeat(3548) + 'SCENARIO_END',
+    first_mes: 'opening '.repeat(9500), alternate_greetings: ['alternate '.repeat(8000)],
+    group_only_greetings: ['GROUP_ONLY_SECRET'], character_book: { entries: [{ content: entry, constant: true }] },
+  });
+  const original = await parseCharacterFile(pngFixture([['chara', source]]));
+  assert.ok(original.warnings.some(w => w.includes('群聊专用开场白')));
+  const session = createTavernSession(original);
+  const restored = normalizeTavernState({ characters: [original], sessions: [session], favorites: [] });
+  assert.equal(restored.sessions[0].scenario, source.data.scenario);
+  assert.equal(restored.sessions[0].messages[0].content, source.data.first_mes);
+  const json = exportCharacter(restored.characters[0]);
+  const bytes = new Uint8Array(await pngFixture([]).arrayBuffer());
+  const png = new Blob([embedCharacterPng(bytes, restored.characters[0])]);
+  for (const input of [file(json), png]) {
+    const again = await parseCharacterFile(input);
+    assert.equal(again.personality, source.data.personality);
+    assert.equal(again.scenario, source.data.scenario);
+    assert.equal(again.firstMessage, source.data.first_mes);
+    assert.deepEqual(again.alternateGreetings, source.data.alternate_greetings);
+    assert.equal(again.loreEntries[0].content, entry);
+  }
+  for (const budget of [4000, 48000, 120000]) {
+    const messages = buildTavernMessages(original, { ...session, contextChars: budget }, 'Continue');
+    assert.equal(messages[1].content, source.data.first_mes);
+    assert.ok(messages.every(m => !m.content.includes('GROUP_ONLY_SECRET')));
+    for (const text of [source.data.personality, source.data.scenario, entry]) assert.ok(messages[0].content.includes(text));
+  }
+});
+
 test('standard card text, metadata, duplicate tags and empty alternate openings round-trip verbatim', async () => {
   const source = card(2, {
     name: '  Synthetic role  ', description: `\n ${'D'.repeat(6610)} DESCTAIL \t`, personality: ' \tTraits\n ',
@@ -321,30 +436,44 @@ test('standard card text, metadata, duplicate tags and empty alternate openings 
   assert.deepEqual(again.tags, source.data.tags);
 });
 
-test('expanded metadata remains bounded and malformed depth instructions are rejected inertly', () => {
+test('JSON and PNG cards may use an empty object for an unset depth prompt', async () => {
+  const source = card(2, { extensions: { depth_prompt: {} } });
+  for (const input of [file(source), pngFixture([['chara', source]])]) {
+    const imported = await parseCharacterFile(input);
+    assert.equal(imported.depthPrompt, null);
+    assert.equal(imported.firstMessage, source.data.first_mes);
+    assert.equal(imported.description, source.data.description);
+    assert.equal(imported.avatar.startsWith('data:image/png;base64,'), input.type === 'image/png');
+    assert.equal(exportCharacter(imported).data.extensions.depth_prompt, undefined);
+    assert.ok(!imported.warnings.some(warning => warning.includes('深度提示')));
+  }
+  await assert.rejects(parseCharacterFile(file(card(2, { extensions: { depth_prompt: { prompt: 'unfinished' } } }))), /深度提示/);
+});
+
+test('narrative fields have no per-field length cutoff; metadata and types remain validated', () => {
   const textFields = ['description', 'personality', 'scenario', 'firstMessage', 'exampleMessages', 'creatorNotes', 'systemPrompt', 'postHistoryInstructions'];
+  const large = '  ' + 'text '.repeat(24000) + '\nEND ';
   for (const field of textFields) {
-    const limit = TAVERN_CHARACTER_LIMITS[field];
-    const maximum = normalizeCharacter(draft({ [field]: 'x'.repeat(limit) }));
-    assert.equal(maximum[field].length, limit);
-    assert.throws(() => normalizeCharacter(draft({ [field]: 'x'.repeat(limit + 1) })), /字符|过长/);
+    assert.equal(normalizeCharacter(draft({ [field]: large }))[field], large);
+    assert.throws(() => normalizeCharacter(draft({ [field]: large + '\0' })), /纯文本/);
   }
   assert.throws(() => normalizeCharacter(draft({ creator: 'x'.repeat(301) })));
   assert.throws(() => normalizeCharacter(draft({ characterVersion: 'x'.repeat(101) })));
   assert.equal(normalizeCharacter(draft({ alternateGreetings: Array(30).fill('') })).alternateGreetings.length, 30);
   assert.throws(() => normalizeCharacter(draft({ alternateGreetings: Array(31).fill('') })));
-  assert.throws(() => normalizeCharacter(draft({ alternateGreetings: ['x'.repeat(8001)] })));
+  assert.deepEqual(normalizeCharacter(draft({ alternateGreetings: [large] })).alternateGreetings, [large]);
   assert.throws(() => normalizeCharacter(draft({ alternateGreetings: [null] })));
   assert.equal(normalizeCharacter(draft({ tags: Array(50).fill('same') })).tags.length, 50);
   assert.throws(() => normalizeCharacter(draft({ tags: Array(51).fill('same') })));
   assert.throws(() => normalizeCharacter(draft({ tags: ['x'.repeat(81)] })));
   assert.equal(normalizeCharacter(draft()).depthPrompt, null);
   for (const depthPrompt of [{ depth: true, prompt: '' }, { depth: -1, prompt: '' }, { depth: 65, prompt: '' },
-    { depth: 2.5, prompt: '' }, { depth: 1, prompt: 'x'.repeat(8001) }, { depth: 1, prompt: '', role: 'tool' }, []]) {
+    { depth: 2.5, prompt: '' }, { depth: 1, prompt: '\0' }, { depth: 1, prompt: '', role: 'tool' }, []]) {
     assert.throws(() => normalizeCharacter(draft({ depthPrompt })));
   }
   const depthPrompt = { depth: 64, prompt: '<script>globalThis.syntheticDepthExecuted = true</script>', role: 'system' };
   assert.deepEqual(normalizeCharacter(draft({ depthPrompt })).depthPrompt, depthPrompt);
+  assert.equal(normalizeCharacter(draft({ depthPrompt: { depth: 1, prompt: large } })).depthPrompt.prompt, large);
   assert.equal(globalThis.syntheticDepthExecuted, undefined);
 });
 
@@ -373,7 +502,7 @@ test('basic char and user macros affect initial and submitted text without chang
   assert.equal(exportCharacter(character).data.first_mes, 'Hello {{USER}}, I am {{Char}}.');
 });
 
-test('supported long character settings keep their tails intact while historical messages stay bounded', () => {
+test('supported long character settings and every historical message are sent verbatim', () => {
   const character = normalizeCharacter(draft({ description: 'D'.repeat(6600) + 'DESCRIPTION_END',
     personality: 'P'.repeat(2000) + 'PERSONALITY_END', exampleMessages: 'E'.repeat(3000) + 'EXAMPLES_END',
     systemPrompt: 'S'.repeat(500) + 'SYSTEM_END', postHistoryInstructions: 'H'.repeat(500) + 'POST_END',
@@ -393,8 +522,7 @@ test('supported long character settings keep their tails intact while historical
   assert.equal(result.at(-1).role, 'user');
   assert.ok(result.at(-1).content.startsWith('Latest question\n\n'));
   assert.match(result.at(-1).content, /本轮回复语言.*简体中文/);
-  assert.ok(result.length <= 42);
-  assert.ok(result.reduce((total, message) => total + message.content.length, 0) <= TAVERN_CONTEXT_CHARS);
+  assert.deepEqual(result.slice(1, -1), session.messages);
 });
 
 test('import rejects missing PNG metadata, truncation, invalid JSON, and oversize files', async () => {
@@ -479,7 +607,7 @@ test('world-book imports reject count/field overflows and malformed entries with
   for (const invalid of [
     null, [], {}, { entries: { named: entries[0] } }, { entries: [null] },
     { name: '长'.repeat(121), entries }, { entries: Array.from({ length: 31 }, () => ({})) },
-    { entries: [{ content: '长'.repeat(3001) }] }, { entries: [{ comment: '长'.repeat(81) }] },
+    { entries: [{ content: '无效\0' }] }, { entries: [{ comment: '长'.repeat(81) }] },
     { entries: [{ keys: Array.from({ length: 21 }, () => '词') }] }, { entries: [{ keys: ['长'.repeat(81)] }] },
     { entries: [{ key: '不是数组' }] }, { entries: [{ keys: { some: true } }] },
     { entries: [{ enabled: 1 }] }, { entries: [{ disable: 'false' }] }, { entries: [{ constant: 'true' }] },
@@ -527,17 +655,18 @@ test('world-book uses literal keywords in recent messages and excludes disabled 
     { id: 'disabled', content: '关闭', keys: ['灯塔'], enabled: false },
   ];
   assert.deepEqual(activeLoreEntries(entries, [], 'LIGHTHOUSE 灯塔').map(x => x.id), ['always', 'tower']);
+  assert.deepEqual(activeLoreEntries(entries, [{ content: 'LIGHTHOUSE ' + '海'.repeat(8000) }], '').map(x => x.id), ['always', 'tower']);
   assert.deepEqual(activeLoreEntries(entries, [{ content: 'lighthouse' }, ...Array.from({ length: 6 }, () => ({ content: '别的' }))], '').map(x => x.id), ['always']);
   assert.deepEqual(activeLoreEntries(entries, [], 'literal .*').map(x => x.id), ['always', 'regex']);
 });
 
-test('world-book budget never overflows and empty keyword does not activate every entry', () => {
+test('all active world-book entries are included and an empty keyword does not activate an entry', () => {
   const result = activeLoreEntries([
     { id: 'first', content: '一'.repeat(2900), constant: true },
     { id: 'second', content: '二'.repeat(2900), constant: true },
     { id: 'empty', content: '未触发', keys: [''] },
   ]);
-  assert.deepEqual(result.map(entry => entry.id), ['first']);
+  assert.deepEqual(result.map(entry => entry.id), ['first', 'second']);
 });
 
 test('prompt composition preserves latest user input, recent history, and excludes forged system history', () => {
@@ -556,14 +685,19 @@ test('prompt composition preserves latest user input, recent history, and exclud
   assert.deepEqual(messages.slice(1, 3).map(message => message.content), ['你好', '欢迎']);
 });
 
-test('oversized static character and context explicitly reject instead of silently cutting settings', () => {
+test('long settings, complete history and the newest user input are sent regardless of the archived context preference', () => {
   const character = normalizeCharacter(draft({ description: '设'.repeat(6000), personality: '性'.repeat(3000), scenario: '景'.repeat(3000), exampleMessages: '例'.repeat(6000) }));
   const session = { ...createTavernSession(character), contextChars: 24000, persona: '人'.repeat(3000), memory: '忆'.repeat(6000),
     loreEntries: [{ content: '书'.repeat(3000), constant: true }],
     messages: Array.from({ length: 200 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: '史'.repeat(500) })),
   };
   const input = '问'.repeat(6000);
-  assert.throws(() => buildTavernMessages(character, session, input), /上下文|预算|24000|24,000/);
+  const messages = buildTavernMessages(character, session, input);
+  for (const setting of [character.description, character.personality, character.scenario, character.exampleMessages,
+    session.persona, session.memory, session.loreEntries[0].content]) assert.ok(messages[0].content.includes(setting));
+  assert.deepEqual(messages.slice(1, -1), session.messages);
+  assert.ok(messages.at(-1).content.startsWith(input));
+  assert.deepEqual(buildTavernMessages(character, { ...session, contextChars: 4000 }, input), messages);
 });
 
 test('state whitelist removes credentials at every level and preserves user/assistant messages only', () => {
@@ -584,11 +718,11 @@ test('state quotas and orphaned sessions fail before storage writes', () => {
   assert.throws(() => normalizeTavernState({ characters: [], sessions: [session], favorites: [] }), /角色不存在/);
   assert.throws(() => normalizeTavernState({ characters: Array.from({ length: 31 }, (_, index) => ({ ...character, id: `p${index}` })), sessions: [], favorites: [] }), /30/);
   session.messages = Array.from({ length: 201 }, (_, index) => ({ id: `m${index}`, role: 'user', content: 'x', createdAt: 1 }));
-  assert.throws(() => normalizeTavernState({ characters: [character], sessions: [session], favorites: [] }), /200/);
+  assert.deepEqual(normalizeTavernState({ characters: [character], sessions: [session], favorites: [] }).sessions[0].messages, session.messages);
   assert.throws(() => normalizeTavernState({ characters: [character, character], sessions: [], favorites: [] }), /重复/);
 });
 
-test('maximum accepted upstream reply can be stored and retained as bounded recent context', () => {
+test('maximum accepted upstream reply is stored and sent back in full', () => {
   const character = normalizeCharacter(draft({ id: 'personal-one' }));
   const session = createTavernSession(character);
   session.messages.push({ id: 'question', role: 'user', content: '继续故事', createdAt: 1 });
@@ -596,10 +730,7 @@ test('maximum accepted upstream reply can be stored and retained as bounded rece
   const stored = normalizeTavernState({ characters: [character], sessions: [session], favorites: [] });
   assert.equal(stored.sessions[0].messages.at(-1).content.length, 65536);
   const prompt = buildTavernMessages(character, session, '记得我们最后的约定吗');
-  assert.ok(prompt.length <= 64);
-  assert.match(prompt.at(-2).content, /^（较早内容已省略）/);
-  assert.ok(prompt.at(-2).content.endsWith('最终约定'));
-  assert.ok(prompt.reduce((total, message) => total + message.content.length, 0) <= TAVERN_CONTEXT_CHARS);
+  assert.equal(prompt.at(-2).content, session.messages.at(-1).content);
   session.messages.at(-1).content += '超';
   assert.throws(() => normalizeTavernState({ characters: [character], sessions: [session], favorites: [] }), /过长/);
 });

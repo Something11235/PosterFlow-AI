@@ -28,8 +28,8 @@ export function validateWanReferences(refs,values={},requireContent=true){
   if(requireContent&&!values.prompt?.trim()&&!refs.length&&!values.link_url)throw new Error('请填写提示词，或添加参考素材、文档或网页。');
   return ms;
 }
-export function wan30Quote(values,refs=[]){
-  const body=buildWan30(values),ms=validateWanReferences(refs,body,false);
+export function wan30Quote(values,refs=[],verified=true){
+  const body=buildWan30(values),ms=verified?validateWanReferences(refs,body,false):refs.filter(r=>r.kind==='video').reduce((s,r)=>s+r.duration_ms,0);
   const totalMs=body.duration===-1?30000:body.duration*1000+ms;
   const nanoUsd=BigInt(totalMs)*BigInt({'480p':32880,'720p':65750,'1080p':131500}[body.resolution]);
   const ceil=(a,b)=>(a+b-1n)/b;

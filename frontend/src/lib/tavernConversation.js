@@ -1,13 +1,12 @@
-import { TAVERN_CONTEXT_CHARS, isValidTavernContextChars, TAVERN_MAX_REPLY_CHARS, normalizeLoreEntries } from './tavern.js';
+import { hasControlCharacters, TAVERN_MAX_REPLY_CHARS, normalizeLoreEntries } from './tavern.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeTime = value => Number.isSafeInteger(value) && value >= 0;
 const identifier = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
-const unsafeText = value => Array.from(value).some(char => char.charCodeAt(0) < 32 && ![9, 10, 13].includes(char.charCodeAt(0)));
 const uuid = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 function text(value, maximum, label) {
-  if (typeof value !== 'string' || value.length > maximum || unsafeText(value)) throw new Error(`${label}格式无效或内容过长。`);
+  if (typeof value !== 'string' || value.length > maximum || hasControlCharacters(value)) throw new Error(`${label}格式无效或内容过长。`);
   return value;
 }
 
@@ -25,11 +24,14 @@ function copySummary(value) {
 }
 
 // Shared with storage so variants cannot bypass the message/credential whitelist.
-export function normalizeTavernMessage(message) {
+export function normalizeTavernMessage(message, index) {
   if (!plain(message) || !['user', 'assistant'].includes(message.role)) throw new Error('对话消息角色无效。');
   if (!identifier(message.id) || !safeTime(message.createdAt)) throw new Error('对话消息编号或时间无效。');
-  const result = { id: message.id, role: message.role,
-    content: text(message.content, message.role === 'assistant' ? TAVERN_MAX_REPLY_CHARS : 6000, '对话消息'), createdAt: message.createdAt };
+  const greeting = message.isGreeting === true;
+  if (greeting && (index !== 0 || message.role !== 'assistant' || message.alternatives !== undefined)) throw new Error('角色开场白只能是对话的第一条角色消息。');
+  const maximum = greeting ? Infinity : message.role === 'assistant' ? TAVERN_MAX_REPLY_CHARS : 6000;
+  const result = { id: message.id, role: message.role, content: text(message.content, maximum, '对话消息'),
+    createdAt: message.createdAt, ...(greeting ? { isGreeting: true } : {}) };
   if (message.alternatives !== undefined) {
     if (message.role !== 'assistant' || !Array.isArray(message.alternatives) || message.alternatives.length > 10) throw new Error('仅角色回复可保存版本，每条最多 10 个版本。');
     const alternatives = message.alternatives.map(variant);
@@ -90,19 +92,19 @@ export function branchTavernSession(session, messageId, { content, now = Date.no
   const messages = source.slice(0, index + 1);
   if (content !== undefined) {
     const selected = messages[index];
-    messages[index] = { id: selected.id, role: selected.role, createdAt: selected.createdAt,
-      content: text(content, selected.role === 'assistant' ? TAVERN_MAX_REPLY_CHARS : 6000, '分支消息') };
+    const { alternatives: _alternatives, ...edited } = selected;
+    messages[index] = normalizeTavernMessage({ ...edited, content }, index);
   }
   const title = text(session.title ?? '新对话', 160, '对话标题');
-  const contextChars = session.contextChars === undefined ? TAVERN_CONTEXT_CHARS : session.contextChars;
   const autoMemory = session.autoMemory === undefined ? false : session.autoMemory;
-  if (!isValidTavernContextChars(contextChars) || typeof autoMemory !== 'boolean') throw new Error('分支上下文或记忆设置无效。');
+  if (typeof autoMemory !== 'boolean') throw new Error('分支记忆设置无效。');
   return { id: `session-${uuid()}`, characterId: session.characterId, title: `${title.slice(0, 155)} · 分支`,
+    ...(session.builtinTextVersion === 1 ? { builtinTextVersion: 1 } : {}),
     createdAt: now, updatedAt: now, sourceSessionId: session.id,
     persona: text(session.persona ?? '', 3000, '用户人设'), personaPresetVersion: 1,
-    memory: text(session.memory ?? '', 6000, '对话摘要'), scenario: text(session.scenario ?? '', 3000, '故事起点'),
+    memory: text(session.memory ?? '', 6000, '对话摘要'), scenario: text(session.scenario ?? '', Infinity, '故事起点'),
     loreEntries: normalizeLoreEntries(session.loreEntries ?? []), contextPresetVersion: 1,
-    contextChars, autoMemory,
+    autoMemory,
     summary: null, summaryHistory: [], messages, usageRecords: [],
     legacyReplyCount: messages.filter((message, messageIndex) => messageIndex !== 0 && message.role === 'assistant').length };
 }

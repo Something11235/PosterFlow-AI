@@ -17,7 +17,7 @@ import BackupImageDownload from "./BackupImageDownload";
 import GalleryImagePreview from "./GalleryImagePreview";
 import { isPendingImageTaskError } from "../lib/imageTaskRecovery";
 import { imageRefundError } from "../lib/imageRefund";
-import { imageAuthNeedsRefresh, imageAuthRefreshHint, imageDiagnosticText, imageFailureTitle } from "../lib/imageGenerationError";
+import { imageAuthNeedsRefresh, imageAuthRefreshHint, imageDiagnosticText, imageFailureTitle, referenceNetworkInterrupted, referenceNetworkRetryHint } from "../lib/imageGenerationError";
 
 export default function Gallery({
   images,
@@ -404,6 +404,9 @@ function ErrorState({ error, billingMode, onRetry, onQueryTask, autoRecovery, re
   else if (errorInfo?.diagnostic_phase === 'preparation') detail = '生图请求尚未提交，请检查输入后重试。';
   else if (timedOut) detail = errorInfo.detail || "图片生成服务响应超时，可能是服务繁忙或上游处理耗时过长。已有任务请先查询原任务。";
   else detail = errorInfo?.detail;
+  if ((referencePreparation || referenceUploadFailed) && !pending && referenceNetworkInterrupted(errorInfo?.diagnostic) && !detail?.includes(referenceNetworkRetryHint)) {
+    detail = [detail, referenceNetworkRetryHint].filter(Boolean).join(' ');
+  }
   if (detail === statusTitle || /^(?:失败)?一般为以下原因/.test(detail || '')) detail = null;
   const diagnosticPhase = {query:'查询原任务时',reference:'上传参考图时',preparation:'准备生图请求时'}[errorInfo?.diagnostic_phase] || '提交生图请求时';
   const upstream = platform && errorInfo?.upstream_error ? Object.fromEntries(

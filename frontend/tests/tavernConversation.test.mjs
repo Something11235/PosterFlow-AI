@@ -73,7 +73,8 @@ test('branch creates an independent prefix, resets auto summaries and request le
   assert.deepEqual(branch.usageRecords, []);
   assert.equal(branch.summary, null);
   assert.deepEqual(branch.summaryHistory, []);
-  for (const key of ['persona', 'memory', 'scenario', 'contextChars', 'autoMemory']) assert.deepEqual(branch[key], original[key]);
+  for (const key of ['persona', 'memory', 'scenario', 'autoMemory']) assert.deepEqual(branch[key], original[key]);
+  assert.equal(Object.hasOwn(branch, 'contextChars'), false);
   assert.deepEqual(branch.loreEntries, original.loreEntries);
   branch.loreEntries[0].content = 'Independent world';
   branch.messages[0].content = 'Independent opening';
@@ -99,6 +100,23 @@ test('editing a branch point changes only that copied body and clears only its a
   assert.throws(() => branchTavernSession(original, 'a-new', { content: 'x'.repeat(TAVERN_MAX_REPLY_CHARS + 1) }), /过长/);
   assert.throws(() => branchTavernSession(original, 'not-a-message'), /找不到/);
   assert.throws(() => branchTavernSession(original, 'q-1', { now: true }), /时间/);
+});
+
+test('card openings and scenarios survive saving and branching at their original length', () => {
+  const opening = 'opening '.repeat(12000), scenario = 'scene '.repeat(20000);
+  const card = { ...BUILTIN_CHARACTERS[0], id: 'long-card', firstMessage: opening, scenario };
+  const original = createTavernSession(card);
+  const fork = branchTavernSession(original, original.messages[0].id, { content: opening + ' edited' });
+  const stored = normalizeTavernState({ characters: [card], sessions: [original, fork], favorites: [] });
+  assert.equal(stored.sessions[0].messages[0].content, opening);
+  assert.equal(stored.sessions[1].messages[0].content, opening + ' edited');
+  assert.equal(stored.sessions[1].messages[0].isGreeting, true);
+  assert.equal(stored.sessions[1].scenario, scenario);
+  const check = messages => normalizeTavernState({ ...stored, sessions: [{ ...original, messages }] });
+  assert.throws(() => check([question('q'), { ...original.messages[0] }]), /第一条/);
+  assert.throws(() => check([{ ...original.messages[0], role: 'user' }]), /第一条/);
+  assert.throws(() => check([{ ...original.messages[0], isGreeting: false }]), /过长/);
+  assert.throws(() => check([{ ...original.messages[0], content: 'body\u0001' }]), /无效/);
 });
 
 test('conversation helpers do not copy credentials from source sessions, messages or variants', () => {

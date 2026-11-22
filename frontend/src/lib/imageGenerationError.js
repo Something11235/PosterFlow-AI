@@ -33,6 +33,10 @@ export function imageDiagnosticText(diagnostic) {
 }
 
 export const imageAuthRefreshHint = '请先刷新页面以更新登录状态。如果刷新后仍提示需要登录，再重新登录。';
+export const referenceNetworkRetryHint = '请更换网络环境或开启代理后刷新页面重试，或等待一段时间后再试。';
+export function referenceNetworkInterrupted(diagnostic) {
+  return ['BROWSER_OFFLINE', 'CONNECTION_INTERRUPTED', 'WAIT_INTERRUPTED', 'HTTP_408', 'HTTP_502', 'HTTP_503', 'HTTP_504'].includes(diagnostic);
+}
 export function imageAuthNeedsRefresh(code) {
   return ['AUTH_REQUIRED','AUTH_SESSION_EXPIRED','AUTH_TOKEN_INVALID'].includes(code);
 }

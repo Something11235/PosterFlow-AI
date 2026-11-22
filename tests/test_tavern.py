@@ -72,8 +72,8 @@ class TavernTests(unittest.TestCase):
             ({**self.body, "messages": [{"role": "tool", "content": "bad"}]}, self.headers, 400),
             ({**self.body, "messages": [{"role": "user", "content": "x", "tool_calls": []}]}, self.headers, 400),
             ({**self.body, "messages": [{"role": "assistant", "content": "x"}]}, self.headers, 400),
-            ({**self.body, "messages": [{"role": "user", "content": "x"}] * 65}, self.headers, 400),
-            ({**self.body, "messages": [{"role": "user", "content": "x" * 65537}]}, self.headers, 400),
+            ({**self.body, "messages": [{"role": "user", "content": " \n "}]}, self.headers, 400),
+            ({**self.body, "messages": [{"role": "user", "content": 123}]}, self.headers, 400),
             ({**self.body, "max_tokens": True}, self.headers, 400),
             ({**self.body, "max_tokens": 4097}, self.headers, 400),
             ({**self.body, "temperature": -1}, self.headers, 400),
@@ -86,6 +86,20 @@ class TavernTests(unittest.TestCase):
                 with self.subTest(body=str(body)[:100], headers=list(headers)):
                     self.assertEqual(self.client.post("/api/tavern/chat", json=body, headers=headers).status_code, expected)
             submit.assert_not_called()
+
+    def test_context_larger_than_all_previous_limits_reaches_provider_unchanged(self):
+        messages = [{"role": "user" if i % 2 == 0 else "assistant", "content": str(i)} for i in range(150)]
+        messages.append({"role": "user", "content": "长上下文" * 100000 + "末尾"})
+        raw = json.dumps({**self.body, "messages": messages}, ensure_ascii=False).encode("utf-8")
+        self.assertGreater(len(raw), 1024 * 1024)
+        with patch.object(tavern, "submit_chat", return_value={"content": "收到", "usage": {}}) as submit:
+            response = self.client.post("/api/tavern/chat", data=raw, content_type="application/json", headers=self.headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(submit.call_args.args[2]["messages"], messages)
+            self.app.config["MAX_CONTENT_LENGTH"] = len(raw) - 1
+            response = self.client.post("/api/tavern/chat", data=raw, content_type="application/json", headers=self.headers)
+            self.assertEqual((response.status_code, response.json["code"]), (413, "TAVERN_REQUEST_TOO_LARGE"))
+            self.assertEqual(submit.call_count, 1)
 
     def test_rate_limit_rejection_does_not_send(self):
         self.server.enforce_rate_limit.side_effect = ProviderError()
@@ -116,6 +130,7 @@ class TavernTests(unittest.TestCase):
         response.getheader.return_value = ""
         response.isclosed.side_effect = [False, True]
         response.read1.return_value = body
+        response.read.return_value = body
         connection = Mock()
         connection.getresponse.return_value = response
         return connection
@@ -162,6 +177,22 @@ class TavernTests(unittest.TestCase):
             self.assertEqual(connection.request.call_count, 1)
             connection.close.assert_called_once()
 
+    def test_model_context_and_transport_limits_are_reported_without_echoing_private_input(self):
+        cases = [
+            (400, {"error": {"code": "context_length_exceeded", "message": "SENSITIVE"}},
+             "TAVERN_MODEL_CONTEXT_EXCEEDED"),
+            (422, {"error": {"type": "invalid_request_error", "message": "This model's maximum context length is 8192 tokens. SENSITIVE"}},
+             "TAVERN_MODEL_CONTEXT_EXCEEDED"),
+            (413, {"error": {"message": "payload too large SENSITIVE"}}, "TAVERN_PROVIDER_REQUEST_TOO_LARGE"),
+            (400, {"error": {"message": "invalid API key SENSITIVE"}}, "TAVERN_REQUEST_REJECTED"),
+        ]
+        for status, payload, code in cases:
+            with self.subTest(code=code), self.assertRaises(tavern.TavernError) as caught:
+                self.call_transport(self.transport(status=status, payload=payload))
+            self.assertEqual(caught.exception.code, code)
+            self.assertFalse(caught.exception.uncertain)
+            self.assertNotIn("SENSITIVE", caught.exception.message)
+
     def test_explicit_rejection_is_distinct_from_unknown(self):
         with self.assertRaises(tavern.TavernError) as caught:
             self.call_transport(self.transport(status=401))
@@ -171,7 +202,7 @@ class TavernTests(unittest.TestCase):
     def test_invalid_reply_preserves_actual_usage_without_exposing_private_response(self):
         raw_usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
                      "completion_tokens_details": {"reasoning_tokens": 10}, "private": "never-expose"}
-        for content in [None, "", "  ", [], "x" * (tavern.MAX_CONTENT_CHARS + 1)]:
+        for content in [None, "", "  ", [], "x" * (tavern.MAX_RESPONSE_CHARS + 1)]:
             with self.subTest(content_type=type(content).__name__):
                 connection = self.transport(payload={"choices": [{"message": {
                     "content": content, "reasoning_content": "private reasoning"}, "finish_reason": "length"}],

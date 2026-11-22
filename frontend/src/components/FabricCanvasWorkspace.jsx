@@ -17,6 +17,7 @@ import {
 } from "fabric";
 import { apimartImageModel } from "../lib/provider";
 import { cleanupReferencePaths, uploadReferenceBlobs } from "../lib/referenceUpload";
+import ReferenceUploadProgress from "./ReferenceUploadProgress";
 import { imageDiagnosticText } from "../lib/imageGenerationError";
 import {
   ArrowUpRight,
@@ -1518,23 +1519,22 @@ export default function FabricCanvasWorkspace({
         }));
         if (annotationReference) referenceEntries.push({ blob: annotationReference, name: "canvas-annotation.png" });
         setStatus({ type: "loading", message: "正在上传画布参考图" });
+        const onUploadProgress = upload => setStatus({ type: "loading", message: upload.label, upload });
         temporaryReferencePaths = await uploadReferenceBlobs(referenceEntries, {
           headers: referenceUploadHeaders,
-          onProgress: (current, total) => setStatus({
-            type: "loading",
-            message: `正在上传画布参考图（${current}/${total}）`,
-          }),
+          onUploadProgress,
         });
         const imageReferencePaths = [...temporaryReferencePaths];
         let maskStoragePath = null;
         if (maskBlob) {
           const maskPaths = await uploadReferenceBlobs(
             [{ blob: maskBlob, name: "canvas-mask.png", preservePixels: true }],
-            { headers: referenceUploadHeaders },
+            { headers: referenceUploadHeaders, onUploadProgress },
           );
           maskStoragePath = maskPaths[0] || null;
           if (maskStoragePath) temporaryReferencePaths.push(maskStoragePath);
         }
+        setStatus({ type: "loading", message: "素材已上传，正在提交重绘" });
         const annotationList = currentSelection.annotationTexts
           .map((textValue, index) => String(index + 1) + ". " + textValue)
           .join("\n");
@@ -1919,8 +1919,7 @@ export default function FabricCanvasWorkspace({
         )}
 
         <div className="pointer-events-none absolute bottom-3 right-3 z-20 flex min-h-9 items-center gap-2 rounded-md border border-border-subtle bg-bg-secondary/92 px-3 text-xs text-text-muted shadow-lg backdrop-blur">
-          {statusIcon}
-          <span>{status.message}</span>
+          {status.upload ? <div className="max-w-64 pb-2"><ReferenceUploadProgress progress={status.upload} /></div> : <>{statusIcon}<span>{status.message}</span></>}
         </div>
       </div>
     </section>

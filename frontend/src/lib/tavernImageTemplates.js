@@ -37,7 +37,7 @@ export function buildTavernImagePrompt(id,character,session,{templates={},messag
   if(id==='custom' && !subject.trim()) throw new Error('先写下你想画的主题。');
   const clean=(value,limit) => typeof value==='string' ? value.replaceAll('\0','').trim().slice(0,limit) : '';
   const messages=Array.isArray(session.messages) ? session.messages : [];
-  const world=activeLoreEntries(session.loreEntries ?? character.loreEntries ?? [],messages);
+  const world=activeLoreEntries(session.loreEntries ?? character.loreEntries ?? [],messages,[subject, typeof message==='string' ? message.slice(-4000) : ''].join('\n'),character);
   const sources={ character:[character.description,character.personality].filter(Boolean).join('\n'), persona:session.persona,
     scenario:session.scenario ?? character.scenario, recent:messages.slice(-4).map(item => clean(item.content,350)).join('\n'),
     memory:session.summary?.text || session.memory, world:world.slice(0,4).map(item => `${clean(item.name,50)}：${clean(item.content,250)}`).join('\n'),

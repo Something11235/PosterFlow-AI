@@ -5,8 +5,75 @@ import { BUILTIN_CHARACTERS, DEFAULT_TAVERN_PERSONA, DEFAULT_TAVERN_MEMORY, DEFA
   normalizeCharacter, buildTavernMessages } from '../src/lib/tavern.js';
 import { loadTavernState, normalizeTavernState, saveTavernState } from '../src/lib/tavernStorage.js';
 import { createReplyVariant } from '../src/lib/tavernConversation.js';
+import legacyOpenings from '../src/lib/tavernCards/legacyEnglishOpenings.json' with { type: 'json' };
 
 const QUOTA = 20 * 1024 * 1024;
+
+test('only the untouched English preset text is localized, once, without changing messages or accounting', async t => {
+  const sessions = [];
+  const expectations = [];
+  const fill = (template, name) => template.replace(/\{\{(char|user)\}\}/gi, (_, macro) => macro.toLowerCase() === 'char' ? name : '你');
+  for (const card of BUILTIN_CHARACTERS.filter(c => Object.hasOwn(legacyOpenings, c.id))) {
+    const old = legacyOpenings[card.id];
+    old.greetings.forEach((greeting, index) => {
+      const session = createTavernSession(card, { greetingIndex: index - 1 });
+      const expectedOpening = session.messages[0].content;
+      delete session.builtinTextVersion;
+      session.title = `与${old.name}的对话`;
+      session.scenario = old.scenario;
+      session.messages[0].content = fill(greeting, old.name);
+      session.messages.push({ id: 'actual-user', role: 'user', content: 'My own words', createdAt: 1 },
+        { id: 'actual-reply', role: 'assistant', content: fill(greeting, old.name), createdAt: 2 });
+      const requestId = 'c5de1fe1-8e6b-4bbc-959a-4e869da2e93a';
+      session.usageRecords = [{ id: requestId, messageId: 'actual-reply', createdAt: 2, model: 'a-model',
+        billingMode: 'platform', outcome: 'completed', kind: 'chat',
+        usage: { status: 'confirmed', input_tokens: 10, output_tokens: 2, total_tokens: 12, cache_read_tokens: 0, cache_miss_tokens: 10, reasoning_tokens: 0 },
+        billing: { request_id: requestId, status: 'settled', reserved_credits: '0.1000', charged_credits: '0.0022' } }];
+      sessions.push(session);
+      expectations.push({ scenario: card.scenario, title: `与${card.name}的对话`, opening: expectedOpening });
+      const edited = structuredClone(session);
+      edited.id += '-fork';
+      edited.sourceSessionId = session.id;
+      edited.titleEdited = true;
+      edited.scenario += '\nA custom sentence.';
+      edited.messages[0].content += '\nMy branch opening.';
+      sessions.push(edited);
+      expectations.push({ scenario: edited.scenario, title: edited.title, opening: edited.messages[0].content });
+      const fork = structuredClone(session);
+      fork.id += '-default-fork';
+      fork.sourceSessionId = session.id;
+      fork.title += ' · 分支';
+      sessions.push(fork);
+      expectations.push({ scenario: card.scenario, title: `与${card.name}的对话 · 分支`, opening: expectedOpening });
+      if (session.title.length <= 24) {
+        const namedByFirstMessage = structuredClone(session);
+        namedByFirstMessage.id += '-user-title';
+        namedByFirstMessage.messages[1].content = namedByFirstMessage.title;
+        sessions.push(namedByFirstMessage);
+        expectations.push({ scenario: card.scenario, title: namedByFirstMessage.title, opening: expectedOpening });
+      }
+    });
+  }
+  const original = { characters: [], sessions, favorites: [] };
+  const store = mockStore(t, new Map([['localized-owner', structuredClone(original)]]));
+  const upgraded = await loadTavernState('localized-owner');
+  upgraded.sessions.forEach((session, index) => {
+    const old = sessions[index], expected = expectations[index];
+    assert.equal(session.id, old.id);
+    assert.equal(session.builtinTextVersion, 1);
+    assert.equal(session.title, expected.title);
+    assert.equal(session.scenario, expected.scenario);
+    assert.deepEqual(session.messages[0], { ...old.messages[0], content: expected.opening });
+    assert.deepEqual(session.messages.slice(1), old.messages.slice(1));
+    assert.deepEqual(session.usageRecords, old.usageRecords);
+  });
+  await saveTavernState('localized-owner', upgraded);
+  assert.deepEqual(store.rows.get('localized-owner'), upgraded);
+  assert.deepEqual(await loadTavernState('localized-owner'), upgraded);
+  const editedLater = structuredClone(upgraded);
+  editedLater.sessions[0].scenario = sessions[0].scenario;
+  assert.deepEqual(normalizeTavernState(editedLater), editedLater);
+});
 
 function mockStore(t, rows = new Map()) {
   let writes = 0;
@@ -124,7 +191,7 @@ test('conversation context, summary snapshots and reply variants save and reload
   session.usageRecords = [{ id: 'summary-request', messageId: null, createdAt: 2, model: 'test-model', billingMode: 'own_key', outcome: 'completed', kind: 'summary', usage: null }];
   await saveTavernState('conversation-owner', { characters: [], sessions: [session], favorites: [] });
   const restored = (await loadTavernState('conversation-owner')).sessions[0];
-  assert.equal(restored.contextChars, 96000);
+  assert.equal(Object.hasOwn(restored, 'contextChars'), false);
   assert.equal(restored.autoMemory, true);
   assert.equal(restored.sourceSessionId, session.sourceSessionId);
   assert.equal(restored.summary.text, session.summary.text);
@@ -139,7 +206,7 @@ test('conversation context, summary snapshots and reply variants save and reload
   for (const field of ['contextChars', 'autoMemory', 'summary', 'summaryHistory']) delete old[field];
   delete old.usageRecords[0].kind;
   const migrated = normalizeTavernState({ characters: [], sessions: [old], favorites: [] }).sessions[0];
-  assert.equal(migrated.contextChars, 48000);
+  assert.equal(Object.hasOwn(migrated, 'contextChars'), false);
   assert.equal(migrated.autoMemory, false);
   assert.equal(migrated.summary, null);
   assert.deepEqual(migrated.summaryHistory, []);
@@ -149,8 +216,9 @@ test('conversation context, summary snapshots and reply variants save and reload
 test('summary and context schema rejects malformed boundaries, oversized history and unsupported modes', () => {
   const base = createTavernSession(BUILTIN_CHARACTERS[0]);
   const normalize = patch => normalizeTavernState({ characters: [], sessions: [{ ...base, ...patch }], favorites: [] });
-  for (const contextChars of [null, true, '24000', 0, 3999, 120001, 5000.5]) assert.throws(() => normalize({ contextChars }), /上下文/);
-  for (const contextChars of [4000, 12000, 23999, 24000, 48000, 77777, 96000, 120000]) assert.equal(normalize({ contextChars }).sessions[0].contextChars, contextChars);
+  for (const contextChars of [null, '24000', 4000, 48000, 120000, 120001]) {
+    assert.equal(Object.hasOwn(normalize({ contextChars }).sessions[0], 'contextChars'), false);
+  }
   for (const autoMemory of [null, 0, 1, 'true']) assert.throws(() => normalize({ autoMemory }), /开关/);
   const valid = { text: 'x', throughMessageId: 'safe-boundary', createdAt: 1 };
   for (const summary of [[], '', { ...valid, text: '' }, { ...valid, text: ' \n ' }, { ...valid, text: 'x'.repeat(6001) },
@@ -198,7 +266,7 @@ test('new conversation defaults and legacy usage kinds can grow a compliant arch
   const store = mockStore(t, new Map([['legacy-conversation-owner', state]]));
   const loaded = await loadTavernState('legacy-conversation-owner');
   assert.ok(tavernStateBytes(loaded) > QUOTA);
-  assert.equal(loaded.sessions[0].contextChars, 48000);
+  assert.equal(Object.hasOwn(loaded.sessions[0], 'contextChars'), false);
   assert.equal(loaded.sessions[0].autoMemory, false);
   assert.equal(loaded.sessions[0].summary, null);
   assert.equal(loaded.sessions[0].usageRecords[0].kind, 'chat');
@@ -296,8 +364,8 @@ test('renamed and pinned stories survive reload without changing messages or oth
   assert.equal(saved.sessions[0].title, first.title);
   assert.equal(saved.sessions[0].titleEdited, true);
   assert.equal(saved.sessions[0].pinned, true);
-  assert.equal(saved.sessions[0].contextChars, 24000);
-  assert.equal(saved.sessions[1].contextChars, 48000);
+  assert.equal(Object.hasOwn(saved.sessions[0], 'contextChars'), false);
+  assert.equal(Object.hasOwn(saved.sessions[1], 'contextChars'), false);
   assert.deepEqual(saved.sessions[0].messages, first.messages);
   assert.equal((await loadTavernState('another-owner')).sessions.length, 0);
 });

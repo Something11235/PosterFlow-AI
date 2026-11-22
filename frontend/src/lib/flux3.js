@@ -20,8 +20,8 @@ export function validateFluxReferences(refs,values={},requireContent=true){
   for(const r of refs){if(r.asset_url||r.role)throw new Error('FLUX 按图片列表顺序确定关键帧，请清除其他模型的图片角色。');if(!Number.isInteger(r.size)||r.size<1||r.size>(r.kind==='image'?16:50)*1024*1024)throw new Error('本站限制图片 16 MB、视频 50 MB。');if(!Number.isInteger(r.width)||!Number.isInteger(r.height)||Math.min(r.width,r.height)<1||r.width*r.height>32000000)throw new Error('素材无法识别或超过本站 3200 万像素限制。');if(r.kind==='video'&&(!r.id?.toLowerCase().endsWith('.mp4')||!Number.isInteger(r.duration_ms)||r.duration_ms<1||r.duration_ms>30000))throw new Error('续写素材须为 MP4；本站暂限 30 秒、50 MB。');}
   if(requireContent&&!values.draft_request_id&&!values.prompt?.trim())throw new Error('FLUX 文生、图生及视频续写均需要提示词。');
 }
-export function flux3Quote(values,refs=[],source){
-  const body=buildFlux3(values);validateFluxReferences(refs,body,false);
+export function flux3Quote(values,refs=[],source,verified=true){
+  const body=buildFlux3(values);if(verified)validateFluxReferences(refs,body,false);
   if(body.draft_request_id&&(!source||source.model!==FLUX3||!source.is_draft||source.status!=='completed'||!['settled','not_applicable'].includes(source.billing_status)))throw new Error('请选择本人已完成并结算的 FLUX 草稿。');
   const seconds=body.draft_request_id?source.requested_duration:body.duration;
   const continuation=body.draft_request_id?source.pricing_profile?.continuation===true:refs.some(r=>r.kind==='video');

@@ -5,6 +5,7 @@ import { MAX_REFERENCE_IMAGES } from "../lib/provider";
 import { REFERENCE_FILE_ACCEPT, referenceFileKey } from "../lib/referenceSelection";
 
 import ImageModelSelect from "./ImageModelSelect";
+import ReferenceUploadProgress from "./ReferenceUploadProgress";
 
 const PROMPT_CHARACTER_LIMIT = 6000;
 
@@ -40,7 +41,7 @@ export default function PromptEditor({
   onReferenceAdd,
   onReferenceRemove,
   onReferenceClear,
-  referenceFeedback,
+  referenceFeedback, referenceUploads = [],
   mode,
   onCopyPrompt,
   providerConfigured,
@@ -131,6 +132,7 @@ export default function PromptEditor({
             <span className="flex items-center gap-2 text-sm font-medium text-text-secondary"><Paperclip size={16} />参考素材</span>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted"><span className="tabular-nums">{referencesDisabled ? "当前模型仅支持文生图" : `${files.length}/${referenceLimit} 张`}</span><span>单张最多 16 MB</span></div>
           </div>
+          {referenceUploads.map(item => <ReferenceUploadProgress key={item.requestId} progress={item} />)}
           {files.length > 0 && <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {files.map((file, index) => <div key={referenceFileKey(file)} className="relative min-w-0 rounded-md border border-border-subtle bg-bg-primary/60 p-1.5">
               <button type="button" disabled={referencesDisabled} onClick={() => insertMention(index)} aria-label={`插入 @图${index + 1}：${file.name}`} className="block w-full min-w-0 rounded text-left transition hover:bg-bg-elevated disabled:opacity-40">

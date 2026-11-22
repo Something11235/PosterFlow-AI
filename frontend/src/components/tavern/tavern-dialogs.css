@@ -75,19 +75,21 @@
 .tv-import-character-stats > div { min-width: 0; }
 .tv-import-character-stats dt { color: #91a9cc; font-size: 10px; line-height: 1.6; }
 .tv-import-character-stats dd { margin: 4px 0 0; color: #c4d7f4; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-.tv-greeting-options { display: grid; gap: 9px; max-height: 260px; margin: 0; padding: 0 3px 3px; overflow-y: auto; border: 0; scrollbar-width: thin; }
+.tv-dialog.tv-greeting-dialog { max-height: min(900px, calc(100% - 24px), calc(100dvh - 24px)); }
+.tv-greeting-options { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
 .tv-greeting-options legend { margin-bottom: 11px; }
-.tv-greeting-options > label { display: flex; align-items: flex-start; gap: 10px; min-width: 0; min-height: 60px; padding: 13px 14px; border: 1px solid var(--tv-d-border-subtle); border-radius: 8px; background: var(--tv-d-deep); cursor: pointer; }
-.tv-greeting-options > label.is-selected { border-color: #4f8cff8c; background: #4f8cff11; }
-.tv-greeting-options > label:focus-within { outline: 2px solid #91b6ff; outline-offset: -2px; }
+.tv-greeting-list { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: 9px; max-height: clamp(140px, 32dvh, 285px); padding: 0 2px 2px; overflow-y: auto; scrollbar-width: thin; }
+.tv-greeting-list > label { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px; min-height: 60px; padding: 12px 14px; border: 1px solid var(--tv-d-border-subtle); border-radius: 8px; background: var(--tv-d-deep); cursor: pointer; }
+.tv-greeting-list > label.is-selected { border-color: #4f8cff8c; background: #4f8cff11; }
+.tv-greeting-list > label:focus-within { outline: 2px solid #91b6ff; outline-offset: -2px; }
 .tv-greeting-options input { width: 16px; height: 16px; flex: 0 0 auto; margin: 2px 0 0; accent-color: #4f8cff; }
 .tv-greeting-options label > span { display: grid; gap: 5px; min-width: 0; }
 .tv-greeting-options strong { color: #cadbf4; font-size: 12px; font-weight: 500; }
-.tv-greeting-options small { color: #91a8c8; font-size: 11px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tv-greeting-options small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; max-height: 3.4em; overflow: hidden; color: #a6b9d3; font-size: 12px; line-height: 1.7; white-space: normal; overflow-wrap: anywhere; }
 .tv-greeting-preview { margin-top: 20px; padding-top: 17px; border-top: 1px solid var(--tv-d-border-subtle); }
 .tv-greeting-preview h3 { margin: 0 0 10px; color: #bed2f0; font-size: 13px; font-weight: 500; }
-.tv-greeting-preview > div { max-height: 240px; padding: 14px; overflow-y: auto; border: 1px solid #304868; border-radius: 8px; background: #0b1421; color: #c1d1e8; font-size: 13px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; }
-.tv-auto-memory, .tv-context-capacity { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--tv-d-border-subtle); }
+.tv-greeting-preview > div { max-height: clamp(130px, 30dvh, 240px); padding: 14px; overflow-y: auto; border: 1px solid #304868; border-radius: 8px; background: #0b1421; color: #c1d1e8; font-size: 13px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; }
+.tv-auto-memory { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--tv-d-border-subtle); }
 .tv-auto-memory h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #c2d5f3; font-size: 14px; font-weight: 500; }
 .tv-auto-memory h3 > svg { color: #8cb5f9; }
 .tv-auto-summary-text { min-height: 82px; max-height: 260px; margin: 15px 0; padding: 13px; overflow-y: auto; border: 1px solid #304868; border-radius: 8px; background: #0b1421; color: #bfd0e9; font-size: 12px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; }
@@ -98,7 +100,6 @@
 .tv-summary-editor-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
 .tv-context .tv-summary-editor-actions > button { padding-right: 10px; padding-left: 10px; font-size: 12px; }
 .tv-context .tv-summary-edit-trigger { width: 100%; margin: 0 0 13px; }
-.tv-context-capacity .tavern-context-meter { padding: 13px 12px; margin-top: 15px; border: 1px solid #304868; border-radius: 8px; }
 .tv-auto-summary-text:focus-visible, .tv-greeting-preview > div:focus-visible { outline: 2px solid #91b6ff; outline-offset: 2px; }
 .tv-form-error { margin: 16px 0 0; padding: 12px 14px; border: 1px solid #f0646440; border-radius: 8px; color: #ffaaa7; background: #f064640c; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .tv-discard { margin-top: 16px; padding: 14px; border: 1px solid #d6a84f55; background: #d6a84f0b; border-radius: 9px; }

@@ -1,9 +1,9 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, ChevronDown, Cpu, Download, Eye, EyeOff, Feather, FileUp, KeyRound, Link2, Loader2, Pencil, Plus, Save, Settings2, Sparkles, Trash2, Upload, UserRound, X } from 'lucide-react';
-import { exportLorebook, isValidTavernContextChars, normalizeCharacter, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
+import { exportLorebook, normalizeCharacter, renderCharacterMacros, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
+import { visibleTavernMessage } from '../../lib/tavernStatusBlocks.js';
 import { requestTavernImport } from '../../lib/tavernClient.js';
-import { TavernContextMeter } from './TavernConversationTools.jsx';
 import TavernExportActions from './TavernExportActions';
 import TavernUserAvatar from './TavernUserAvatar';
 import './tavern-dialogs.css';
@@ -107,25 +107,25 @@ export function CharacterEditor({ character, onSave, onClose }) {
           </div>
         </div>
         <p className="tv-field-hint tv-avatar-hint">头像支持 PNG、JPG、WebP，最多 2 MB。</p>
-        <Field label="角色设定" hint="描述身份、经历和重要细节，让角色拥有自己的故事。"><textarea rows={4} maxLength={TAVERN_CHARACTER_LIMITS.description} value={draft.description} onChange={event => update({ description: event.target.value })} placeholder="她是谁？来自哪里？又为什么在这里遇见你？" disabled={busy} /></Field>
-        <Field label="开场白" hint="开始一段新对话时，角色说出的第一句话。"><textarea rows={3} maxLength={TAVERN_CHARACTER_LIMITS.firstMessage} value={draft.firstMessage} onChange={event => update({ firstMessage: event.target.value })} placeholder="“晚上好，旅人。你也是循着那颗蓝色的星来到这里的吗？”" disabled={busy} /></Field>
+        <Field label="角色设定" hint="描述身份、经历和重要细节，让角色拥有自己的故事。"><textarea rows={4} value={draft.description} onChange={event => update({ description: event.target.value })} placeholder="她是谁？来自哪里？又为什么在这里遇见你？" disabled={busy} /></Field>
+        <Field label="开场白" hint="开始一段新对话时，角色说出的第一句话。"><textarea rows={3} value={draft.firstMessage} onChange={event => update({ firstMessage: event.target.value })} placeholder="“晚上好，旅人。你也是循着那颗蓝色的星来到这里的吗？”" disabled={busy} /></Field>
         <details className="tv-disclosure"><summary><Settings2 size={16} /><span>细化角色与故事</span><ChevronDown size={16} /></summary><div className="tv-disclosure-body">
-          <Field label="性格与说话方式"><textarea rows={3} maxLength={TAVERN_CHARACTER_LIMITS.personality} value={draft.personality} onChange={event => update({ personality: event.target.value })} placeholder="温和而好奇，偶尔用星星打比方，回答简短自然。" disabled={busy} /></Field>
-          <Field label="初始场景"><textarea rows={3} maxLength={TAVERN_CHARACTER_LIMITS.scenario} value={draft.scenario} onChange={event => update({ scenario: event.target.value })} placeholder="午夜的观星台。你带着一张没有标记的星图来访。" disabled={busy} /></Field>
-          <Field label="示例对话" hint="填写你与角色的示例对话，帮助角色把握语气与表达。"><textarea rows={4} maxLength={TAVERN_CHARACTER_LIMITS.exampleMessages} value={draft.exampleMessages} onChange={event => update({ exampleMessages: event.target.value })} placeholder={'你：你每天都会来这里吗？\n角色：只要天还没有完全亮。'} disabled={busy} /></Field>
+          <Field label="性格与说话方式"><textarea rows={3} value={draft.personality} onChange={event => update({ personality: event.target.value })} placeholder="温和而好奇，偶尔用星星打比方，回答简短自然。" disabled={busy} /></Field>
+          <Field label="初始场景"><textarea rows={3} value={draft.scenario} onChange={event => update({ scenario: event.target.value })} placeholder="午夜的观星台。你带着一张没有标记的星图来访。" disabled={busy} /></Field>
+          <Field label="示例对话" hint="填写你与角色的示例对话，帮助角色把握语气与表达。"><textarea rows={4} value={draft.exampleMessages} onChange={event => update({ exampleMessages: event.target.value })} placeholder={'你：你每天都会来这里吗？\n角色：只要天还没有完全亮。'} disabled={busy} /></Field>
           <Field label="标签" hint={`用逗号分隔，最多 ${TAVERN_CHARACTER_LIMITS.tags} 个标签，每个最多 ${TAVERN_CHARACTER_LIMITS.tagLength} 个字符。`}><input maxLength={TAVERN_CHARACTER_LIMITS.tags * (TAVERN_CHARACTER_LIMITS.tagLength + 1)} value={tags} onChange={event => { setTags(event.target.value); tagsEdited.current = true; dirty.current = true; setError(''); setDiscard(false); }} placeholder="幻想，日常，冒险" disabled={busy} /></Field>
         </div></details>
         <details className="tv-disclosure tv-character-author"><summary><BookOpen size={16} /><span>作者与使用备注</span><ChevronDown size={16} /></summary><div className="tv-disclosure-body">
           <div className="tv-two-fields"><Field label="作者"><input name="character-creator" maxLength={300} value={draft.creator} onChange={event => update({ creator: event.target.value })} placeholder="角色卡作者或来源署名" disabled={busy} /></Field><Field label="角色版本"><input name="character-version" maxLength={100} value={draft.characterVersion} onChange={event => update({ characterVersion: event.target.value })} placeholder="例如 1.0" disabled={busy} /></Field></div>
-          <Field label="作者备注" hint="保留作者的原始说明，仅以纯文本查看和保存，不加载其中的图片；不会作为对话提示发送。"><textarea name="character-creator-notes" rows={7} maxLength={TAVERN_CHARACTER_LIMITS.creatorNotes} value={draft.creatorNotes} onChange={event => update({ creatorNotes: event.target.value })} placeholder="作者提供的背景说明、使用建议或其他备注。" disabled={busy} /></Field>
+          <Field label="作者备注" hint="保留作者的原始说明，仅以纯文本查看和保存，不加载其中的图片；不会作为对话提示发送。"><textarea name="character-creator-notes" rows={7} value={draft.creatorNotes} onChange={event => update({ creatorNotes: event.target.value })} placeholder="作者提供的背景说明、使用建议或其他备注。" disabled={busy} /></Field>
         </div></details>
         <details className="tv-disclosure tv-character-prompts"><summary><Settings2 size={16} /><span>角色高级提示</span><ChevronDown size={16} /></summary><div className="tv-disclosure-body">
-          <Field label="系统角色提示" hint="用于补充角色扮演与表达要求。"><textarea name="character-system-prompt" rows={5} maxLength={TAVERN_CHARACTER_LIMITS.systemPrompt} value={draft.systemPrompt} onChange={event => update({ systemPrompt: event.target.value })} placeholder="例如：用细腻的环境描写推进场景，给用户保留行动选择。" disabled={busy} /></Field>
-          <Field label="后置角色提示" hint="补充后续回复需要遵循的角色要求。"><textarea name="character-post-history" rows={5} maxLength={TAVERN_CHARACTER_LIMITS.postHistoryInstructions} value={draft.postHistoryInstructions} onChange={event => update({ postHistoryInstructions: event.target.value })} placeholder="例如：回应当前场景，每次推进少量情节。" disabled={busy} /></Field>
+          <Field label="系统角色提示" hint="用于补充角色扮演与表达要求。"><textarea name="character-system-prompt" rows={5} value={draft.systemPrompt} onChange={event => update({ systemPrompt: event.target.value })} placeholder="例如：用细腻的环境描写推进场景，给用户保留行动选择。" disabled={busy} /></Field>
+          <Field label="后置角色提示" hint="补充后续回复需要遵循的角色要求。"><textarea name="character-post-history" rows={5} value={draft.postHistoryInstructions} onChange={event => update({ postHistoryInstructions: event.target.value })} placeholder="例如：回应当前场景，每次推进少量情节。" disabled={busy} /></Field>
         </div></details>
         <details className="tv-disclosure tv-character-greetings"><summary><Feather size={16} /><span>备用开场</span><ChevronDown size={16} /></summary><div className="tv-disclosure-body">
           <p className="tv-field-hint tv-alternate-intro">按原顺序保存，空项也会保留。备用开场不会替换上方的默认开场白。</p>
-          <div className="tv-alternate-greetings">{draft.alternateGreetings.map((greeting, index) => <div key={index} className="tv-alternate-entry"><Field label={`备用开场 ${index + 1}`}><textarea name={`character-alternate-${index + 1}`} rows={4} maxLength={TAVERN_CHARACTER_LIMITS.firstMessage} value={greeting} onChange={event => update({ alternateGreetings: draft.alternateGreetings.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} placeholder="可保留为空，或填写另一段故事开场。" disabled={busy} /></Field><div className="tv-alternate-entry-tools"><span>{greeting.length} / {TAVERN_CHARACTER_LIMITS.firstMessage}</span><button type="button" className="tv-icon-button" aria-label={`删除备用开场 ${index + 1}`} onClick={() => update({ alternateGreetings: draft.alternateGreetings.filter((_, itemIndex) => itemIndex !== index) })} disabled={busy}><Trash2 size={16} /></button></div></div>)}</div>
+          <div className="tv-alternate-greetings">{draft.alternateGreetings.map((greeting, index) => <div key={index} className="tv-alternate-entry"><Field label={`备用开场 ${index + 1}`}><textarea name={`character-alternate-${index + 1}`} rows={4} value={greeting} onChange={event => update({ alternateGreetings: draft.alternateGreetings.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} placeholder="可保留为空，或填写另一段故事开场。" disabled={busy} /></Field><div className="tv-alternate-entry-tools"><span>{greeting.length} 字符</span><button type="button" className="tv-icon-button" aria-label={`删除备用开场 ${index + 1}`} onClick={() => update({ alternateGreetings: draft.alternateGreetings.filter((_, itemIndex) => itemIndex !== index) })} disabled={busy}><Trash2 size={16} /></button></div></div>)}</div>
           <div className="tv-alternate-actions"><span>{draft.alternateGreetings.length} / {TAVERN_CHARACTER_LIMITS.alternateGreetings} 条</span><button type="button" className="tv-button tv-button-secondary" disabled={busy || draft.alternateGreetings.length >= TAVERN_CHARACTER_LIMITS.alternateGreetings} onClick={() => update({ alternateGreetings: [...draft.alternateGreetings, ''] })}><Plus size={16} />添加备用开场</button></div>
         </div></details>
         {error && <p className="tv-form-error" role="alert">{error}</p>}
@@ -139,7 +139,12 @@ export function CharacterEditor({ character, onSave, onClose }) {
 
 export function TavernGreetingPicker({ character, onSelect, onClose }) {
   const options = [{ index: -1, label: '默认开场', content: character.firstMessage || '' },
-    ...(character.alternateGreetings || []).map((content, index) => ({ index, label: `备用开场 ${index + 1}`, content })).filter(item => item.content.trim())];
+    ...(character.alternateGreetings || []).map((content, index) => ({ index, label: `备用开场 ${index + 1}`, content })).filter(item => item.content.trim())]
+    .map(option => {
+      const content = visibleTavernMessage(renderCharacterMacros(option.content, character.name));
+      const summary = content.replace(/\s+/gu, ' ').trim();
+      return { ...option, content, excerpt: summary.length > 75 ? `${summary.slice(0, 75)}…` : summary };
+    });
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -155,10 +160,18 @@ export function TavernGreetingPicker({ character, onSelect, onClose }) {
     catch (reason) { setError(reason?.message || '未能开始新对话，请重试。'); }
     finally { saving.current = false; setBusy(false); }
   };
-  return <TavernDialog title="选择故事的开场" eyebrow="A NEW BEGINNING" icon={Feather} onClose={dismiss} className="tv-greeting-dialog"><form className="tv-dialog-form" onSubmit={submit}><div className="tv-dialog-body">
-    <p className="tv-context-intro">为与{character.name}的新对话选择一个开场。内容保留角色卡原文，不会自动翻译。</p>
-    <fieldset className="tv-greeting-options" disabled={busy}><legend className="tv-field-label">选择开场</legend>{options.map(item => <label key={item.index} className={selected.index === item.index ? 'is-selected' : ''}><input type="radio" name={groupName} value={item.index} checked={selected.index === item.index} onChange={() => { setSelectedIndex(item.index); setError(''); }} data-initial-focus={item.index === -1 ? true : undefined} /><span><strong>{item.label}</strong><small>{item.content ? `${item.content.slice(0, 75)}${item.content.length > 75 ? '…' : ''}` : '空白开场'}</small></span></label>)}</fieldset>
-    <section className="tv-greeting-preview" aria-label="所选开场预览"><h3>{selected.label}</h3><div tabIndex={0}>{selected.content || '这个开场没有预置消息。'}</div></section>
+  return <TavernDialog title="选择故事的开场" eyebrow={character.name} icon={Feather} onClose={dismiss} className="tv-greeting-dialog"><form className="tv-dialog-form" onSubmit={submit}><div className="tv-dialog-body">
+    <fieldset className="tv-greeting-options" disabled={busy}>
+      <legend className="tv-field-label">选择开场</legend>
+      <div className="tv-greeting-list">
+        {options.map(item => <label key={item.index} className={selected.index === item.index ? 'is-selected' : ''}>
+          <input type="radio" name={groupName} value={item.index} checked={selected.index === item.index}
+            onChange={() => { setSelectedIndex(item.index); setError(''); }} data-initial-focus={item.index === -1 ? true : undefined} />
+          <span><strong>{item.label}</strong><small>{item.excerpt || '空白开场'}</small></span>
+        </label>)}
+      </div>
+    </fieldset>
+    <section className="tv-greeting-preview" aria-label="所选开场预览"><h3>{selected.label}</h3><div key={selected.index} tabIndex={0}>{selected.content || '这个开场没有预置消息。'}</div></section>
     {error && <p className="tv-form-error" role="alert">{error}</p>}
   </div><footer className="tv-dialog-footer"><button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={dismiss}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}>{busy ? <Loader2 size={16} className="tv-spin" /> : <Check size={16} />}{busy ? '正在创建…' : '以此开场开始'}</button></footer></form></TavernDialog>;
 }
@@ -168,13 +181,13 @@ export function TavernBranchDialog({ message, onConfirm, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const saving = useRef(false);
-  const limit = message.role === 'assistant' ? TAVERN_MAX_REPLY_CHARS : 6000;
+  const limit = message.isGreeting ? undefined : message.role === 'assistant' ? TAVERN_MAX_REPLY_CHARS : 6000;
   const dismiss = () => { if (!saving.current) onClose(); };
   const submit = async event => {
     event.preventDefault();
     if (saving.current) return;
     if (!content.trim()) { setError('请填写分支消息内容。'); return; }
-    if (content.length > limit) { setError(`这条消息最多 ${limit} 个字符，请精简后保存。`); return; }
+    if (limit !== undefined && content.length > limit) { setError(`这条消息最多 ${limit} 个字符，请精简后保存。`); return; }
     saving.current = true; setBusy(true); setError('');
     try { await onConfirm(content); }
     catch (reason) { setError(reason?.message || '分支未能保存，请重试。'); }
@@ -182,7 +195,7 @@ export function TavernBranchDialog({ message, onConfirm, onClose }) {
   };
   return <TavernDialog title="编辑消息，创建分支" eyebrow="STORY BRANCH" icon={Pencil} onClose={dismiss}><form className="tv-dialog-form" onSubmit={submit}><div className="tv-dialog-body">
     <p className="tv-context-intro">将从这条消息创建一段新对话。源对话的历史保持不变，新分支从修改后的消息继续。</p>
-    <Field label="分支消息" hint={`最多 ${limit.toLocaleString('zh-CN')} 个字符。`}><textarea name="tavern-branch-content" data-initial-focus rows={12} maxLength={limit} value={content} onChange={event => { setContent(event.target.value); setError(''); }} disabled={busy} /></Field>
+    <Field label="分支消息" hint={limit === undefined ? undefined : `最多 ${limit.toLocaleString('zh-CN')} 个字符。`}><textarea name="tavern-branch-content" data-initial-focus rows={12} maxLength={limit} value={content} onChange={event => { setContent(event.target.value); setError(''); }} disabled={busy} /></Field>
     {error && <p className="tv-form-error" role="alert">{error}</p>}
   </div><footer className="tv-dialog-footer"><button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={dismiss}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}>{busy ? <Loader2 size={16} className="tv-spin" /> : <Check size={16} />}{busy ? '正在保存…' : '保存为新分支'}</button></footer></form></TavernDialog>;
 }
@@ -196,7 +209,6 @@ export function TavernStorySettings({ session, onSave, onClose }) {
   const submit = async event => {
     event.preventDefault();
     if (saving.current) return;
-    if (scenario.length > 3000) { setError('初始场景最多 3000 个字符，请精简后保存。'); return; }
     saving.current = true; setBusy(true); setError('');
     try { await onSave(scenario); }
     catch (reason) { setError(reason?.message || '故事起点未能保存，请重试。'); }
@@ -205,10 +217,10 @@ export function TavernStorySettings({ session, onSave, onClose }) {
   return <TavernDialog title="故事起点" eyebrow="STORY SETTING" icon={Feather} onClose={dismiss}>
     <form className="tv-dialog-form" onSubmit={submit}>
       <div className="tv-dialog-body"><p className="tv-context-intro">记录故事开始时的地点、氛围和正在发生的事。保存仅影响当前对话的后续回复，不改已发送消息。</p>
-        <Field label="初始场景" hint="最多 3000 个字符，可清空保存。"><textarea data-initial-focus maxLength={3000} rows={9} value={scenario} onChange={event => { setScenario(event.target.value); setError(''); }} placeholder="例如：午夜的观星台。你和角色正坐在窗边，桌上铺着一张尚未完成的星图。" disabled={busy} /></Field>
+        <Field label="初始场景"><textarea data-initial-focus rows={9} value={scenario} onChange={event => { setScenario(event.target.value); setError(''); }} placeholder="例如：午夜的观星台。你和角色正坐在窗边，桌上铺着一张尚未完成的星图。" disabled={busy} /></Field>
         {error && <p className="tv-form-error" role="alert">{error}</p>}
       </div>
-      <footer className="tv-dialog-footer"><span>{scenario.length} / 3000</span><button type="button" className="tv-button tv-button-secondary" onClick={dismiss} disabled={busy}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}>{busy ? <Loader2 size={16} className="tv-spin" /> : <Check size={16} />}{busy ? '保存中…' : '保存起点'}</button></footer>
+      <footer className="tv-dialog-footer"><span>{scenario.length} 字符</span><button type="button" className="tv-button tv-button-secondary" onClick={dismiss} disabled={busy}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}>{busy ? <Loader2 size={16} className="tv-spin" /> : <Check size={16} />}{busy ? '保存中…' : '保存起点'}</button></footer>
     </form>
   </TavernDialog>;
 }
@@ -282,13 +294,14 @@ export function TavernSettings({ value, service, onSave, onClose }) {
   </TavernDialog>;
 }
 
-export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
+export function TavernImportDialog({ kind = 'character', availableBooks = [], onOpenLibrary, onImport, onClose }) {
   const isLore = kind === 'lorebook';
   const noun = isLore ? '世界书' : '角色卡';
   const [source, setSource] = useState('file');
   const [file, setFile] = useState(null);
   const [url, setUrl] = useState('');
   const [preview, setPreview] = useState(null);
+  const [selectedBooks, setSelectedBooks] = useState([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -298,7 +311,7 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
   const urlRef = useRef(null);
   useEffect(() => { alive.current = true; return () => { alive.current = false; job.current?.abort(); }; }, []);
   useEffect(() => { if (preview) previewRef.current?.focus(); }, [preview]);
-  const resetPreview = () => { setPreview(null); setError(''); setStatus(''); };
+  const resetPreview = () => { setPreview(null); setSelectedBooks([]); setError(''); setStatus(''); };
   const cancelRead = () => {
     job.current?.abort(); job.current = null;
     setBusy(''); setStatus('已取消读取，可以重新选择文件或链接。');
@@ -334,7 +347,7 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
     if (!preview) { await readSource(); return; }
     const request = new AbortController(); job.current = request;
     setBusy('saving'); setError('');
-    try { await onImport(preview); }
+    try { await onImport(preview, selectedBooks); }
     catch (reason) { if (alive.current) setError(reason.message || '导入失败，请重试。'); }
     finally { if (job.current === request) { job.current = null; if (alive.current) setBusy(''); } }
   };
@@ -349,9 +362,19 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
         {source === 'file' ? <Field label={`${noun}文件`} hint={isLore ? '支持独立世界书 JSON，或内嵌世界书的角色 PNG。JSON 最大 1 MB，PNG 最大 8 MB。' : '支持角色 JSON，或包含角色资料的 PNG 卡片。JSON 最大 1 MB，PNG 最大 8 MB；普通图片无法作为角色卡导入。'}><input data-initial-focus type="file" accept=".json,.png,application/json,image/png" disabled={Boolean(busy)} onChange={event => { setFile(event.target.files?.[0] || null); resetPreview(); }} /></Field> : <Field label="公开下载链接" hint="支持公开 JSON / PNG 下载直链，或 Chub 角色 / 世界书详情页。不支持主页、搜索列表及需要登录的资源；无需填写 API Key。"><input ref={urlRef} type="url" maxLength={4096} value={url} disabled={Boolean(busy)} onChange={event => { setUrl(event.target.value); resetPreview(); }} placeholder={isLore ? 'https://chub.ai/lorebooks/作者/名称' : 'https://chub.ai/characters/作者/名称'} autoComplete="off" spellCheck={false} /></Field>}
         <div className="tv-import-compatibility"><BookOpen size={16} /><p>{isLore ? '导入名称、关键词、设定内容及启用状态。支持常驻条目；高级触发规则、脚本与插件行为不在本次兼容范围。' : '导入角色设定、开场白、示例对话及内嵌世界书。支持 Character Card V2 / V3 的基础字段；脚本与插件不会执行。'}</p></div>
         {!isLore && <p className="tv-import-language">后续 AI 回复默认使用简体中文；导入的设定与开场白保留原文，可在编辑角色中修改。</p>}
+        {!isLore && !preview && onOpenLibrary && <button type="button" className="tv-button tv-button-secondary" disabled={Boolean(busy)} onClick={onOpenLibrary}><BookOpen size={15} />导入独立世界书</button>}
         {preview && <section className="tv-import-preview" ref={previewRef} tabIndex={-1} aria-label="待导入内容预览"><div className="tv-import-preview-heading">{!isLore && preview.avatar ? <img src={preview.avatar} alt="待导入角色头像" /> : <span className="tv-import-preview-icon">{isLore ? <BookOpen size={23} /> : <UserRound size={23} />}</span>}<div><span>待导入{noun}</span><h3>{preview.name}</h3><p>{isLore ? `${importedEntries.length} 条世界书设定` : `1 位角色 · ${importedEntries.length} 条内嵌世界书设定`}</p></div></div>
           {!isLore && <dl className="tv-import-character-stats" aria-label="已识别角色资料"><div><dt>人物设定</dt><dd>{(preview.description?.length || 0).toLocaleString('zh-CN')} 字符</dd></div><div><dt>标签</dt><dd>{preview.tags?.length || 0} 个</dd></div><div><dt>备用开场</dt><dd>{(preview.alternateGreetings || []).filter(item => item.trim()).length} 条非空</dd></div><div><dt>世界书</dt><dd>{importedEntries.length} 条</dd></div><div><dt>作者备注</dt><dd>{preview.creatorNotes?.trim() ? '有' : '无'}</dd></div></dl>}
           {!isLore && preview.description && <p className="tv-import-description">{preview.description}</p>}
+          {!isLore && availableBooks.length > 0 && <fieldset className="tv-import-book-bindings">
+            <legend>绑定已有世界书（可选）</legend>
+            {availableBooks.map(book => <label key={book.id} className="tv-check-field">
+              <input type="checkbox" disabled={Boolean(busy)} checked={selectedBooks.includes(book.id)} onChange={event => {
+                const checked = event.target.checked;
+                setSelectedBooks(ids => checked ? [...ids, book.id] : ids.filter(id => id !== book.id));
+              }} />{book.name}
+            </label>)}
+          </fieldset>}
           {importedEntries.length > 0 && <div className="tv-import-entry-list"><span>包含的设定</span><ul>{importedEntries.slice(0, 5).map(item => <li key={item.id}>{item.name || '未命名设定'}{!item.enabled && <small>未启用</small>}</li>)}</ul>{importedEntries.length > 5 && <p>另有 {importedEntries.length - 5} 条，将完整导入。</p>}</div>}
           {warnings.length > 0 && <div className="tv-import-warnings"><strong>兼容提醒</strong><ul>{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
         </section>}
@@ -365,9 +388,7 @@ export function TavernImportDialog({ kind = 'character', onImport, onClose }) {
 
 const EMPTY_LORE = { id: '', name: '', keys: [], content: '', enabled: true, constant: false };
 
-export function TavernContextPanel({ session, userAvatar, onUserAvatarChange, onChange, onClose, busy: externalBusy = false, onSummarize, onRestoreSummary, onEditSummary, onSettingsChange, contextStatus }) {
-  const [contextDraft, setContextDraft] = useState(String(session.contextChars ?? 48000));
-  useEffect(() => setContextDraft(String(session.contextChars ?? 48000)), [session.id, session.contextChars]);
+export function TavernContextPanel({ session, boundBooks = [], onManageBooks, userAvatar, onUserAvatarChange, onChange, onClose, busy: externalBusy = false, onSummarize, onRestoreSummary, onEditSummary, onSettingsChange }) {
   const [tab, setTab] = useState('persona');
   const [persona, setPersona] = useState(session.persona || '');
   const [memory, setMemory] = useState(session.memory || '');
@@ -429,7 +450,7 @@ export function TavernContextPanel({ session, userAvatar, onUserAvatarChange, on
     if (!entry.constant && !parsedKeys.length) { setError('请添加触发关键词，或选择始终带入对话。'); return; }
     if (parsedKeys.length > 20 || parsedKeys.some(value => value.length > 80)) { setError('每条最多 20 个关键词，每个关键词最多 80 字。'); return; }
     if (!entry.id && entries.length >= 30) { setError('每段对话最多保存 30 条世界书设定。'); return; }
-    const next = { ...entry, id: entry.id || crypto.randomUUID(), name: entry.name.trim(), content: entry.content.trim(), keys: [...new Set(parsedKeys)] };
+    const next = { ...entry, id: entry.id || crypto.randomUUID(), name: entry.name.trim(), keys: [...new Set(parsedKeys)] };
     if (await commit({ loreEntries: entry.id ? entries.map(item => item.id === entry.id ? next : item) : [...entries, next] })) setEntry(null);
   };
   const importLore = async () => {
@@ -468,11 +489,15 @@ export function TavernContextPanel({ session, userAvatar, onUserAvatarChange, on
           <div className="tv-auto-memory-actions"><button type="button" className="tv-button tv-button-primary" disabled={busy || summaryEditing || typeof onSummarize !== 'function'} onClick={() => runAction(onSummarize, 'summary', '剧情摘要已更新')}>{action === 'summary' ? <Loader2 size={15} className="tv-spin" /> : <Sparkles size={15} />}立即整理剧情</button><button type="button" className="tv-button tv-button-secondary" disabled={busy || summaryEditing || !session.summaryHistory?.length || typeof onRestoreSummary !== 'function'} onClick={() => runAction(onRestoreSummary, 'restore', '已恢复上一版摘要')}>恢复上一版摘要</button></div>
           <label className="tv-check-field"><input type="checkbox" checked={session.autoMemory === true} disabled={busy || summaryEditing || typeof onSettingsChange !== 'function'} onChange={event => { const autoMemory = event.target.checked; runAction(() => onSettingsChange({ autoMemory }), 'settings', '自动摘要设置已保存'); }} />自动整理剧情</label><p className="tv-field-hint">默认关闭。开启后可在需要时自动发起摘要调用，同样计入 Token 用量。</p>
         </section>
-        <section className="tv-context-capacity" aria-label="上下文设置"><Field label="常用上下文档位" hint="默认48000字符，也可以在下方自定义；这是本站发送预算，不是模型Token上限。"><select name="tavern-context-chars" value={[12000,24000,48000,96000].includes(session.contextChars ?? 48000) ? session.contextChars ?? 48000 : "custom"} disabled={busy || typeof onSettingsChange !== 'function'} onChange={event => { if (event.target.value === "custom") return; const contextChars = Number(event.target.value); runAction(() => onSettingsChange({ contextChars }), 'settings', '上下文容量已保存'); }}><option value="custom">自定义容量</option>{[12000, 24000, 48000, 96000].map(value => <option key={value} value={value}>{value.toLocaleString('zh-CN')} 字符{value === 48000 ? '（默认）' : ''}</option>)}</select></Field><Field label="自定义上下文容量" hint="4000–120000字符；容量越大，每轮可能重发的历史越多，费用相应增加。请勿超过所用模型的实际限制。"><input name="tavern-custom-context" type="number" min="4000" max="120000" step="1" value={contextDraft} disabled={busy} onChange={event => setContextDraft(event.target.value)} /></Field><button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={() => { const contextChars = Number(contextDraft); if (!isValidTavernContextChars(contextChars)) { setError('上下文容量须为4000–120000之间的整数。'); return; } runAction(() => onSettingsChange({ contextChars }), 'settings', '自定义上下文容量已保存'); }}>保存容量</button><TavernContextMeter status={contextStatus} /></section>
       </>}
       {tab === 'lore' && <>
-        <p className="tv-context-intro">为人物、地点和事物补充设定，在相关话题出现时带入对话。</p>
-        {entry ? <form className="tv-lore-editor" onSubmit={saveEntry}><Field label="条目名称"><input data-initial-focus required maxLength={80} value={entry.name} onChange={event => setEntry(current => ({ ...current, name: event.target.value }))} placeholder="例如：北境观星台" disabled={busy} /></Field><Field label="触发关键词" hint="用逗号分隔。"><input maxLength={1200} value={keys} onChange={event => setKeys(event.target.value)} placeholder="北境，观星台，星图" disabled={busy} /></Field><Field label="设定内容"><textarea required maxLength={3000} rows={5} value={entry.content} onChange={event => setEntry(current => ({ ...current, content: event.target.value }))} placeholder="描述这个设定，让角色知道它意味着什么。" disabled={busy} /></Field><label className="tv-check-field"><input type="checkbox" checked={entry.constant} onChange={event => setEntry(current => ({ ...current, constant: event.target.checked }))} disabled={busy} />始终带入对话</label><div className="tv-lore-actions"><button type="button" className="tv-button tv-button-secondary" onClick={() => { setEntry(null); setError(''); }} disabled={busy}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}><Check size={15} />保存条目</button></div></form> : <>
+        {onManageBooks && <div className="tv-context-book-bindings">
+          <strong>角色绑定的世界书</strong>
+          <p>{boundBooks.length ? boundBooks.map(book => book.name).join('、') : '尚未绑定独立世界书'}</p>
+          <button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={onManageBooks}><BookOpen size={15} />管理角色绑定</button>
+        </div>}
+        <p className="tv-context-intro">以下是本段对话的世界书条目，可在相关话题出现时带入对话。</p>
+        {entry ? <form className="tv-lore-editor" onSubmit={saveEntry}><Field label="条目名称"><input data-initial-focus required maxLength={80} value={entry.name} onChange={event => setEntry(current => ({ ...current, name: event.target.value }))} placeholder="例如：北境观星台" disabled={busy} /></Field><Field label="触发关键词" hint="用逗号分隔。"><input maxLength={1200} value={keys} onChange={event => setKeys(event.target.value)} placeholder="北境，观星台，星图" disabled={busy} /></Field><Field label="设定内容"><textarea required rows={5} value={entry.content} onChange={event => setEntry(current => ({ ...current, content: event.target.value }))} placeholder="描述这个设定，让角色知道它意味着什么。" disabled={busy} /></Field><label className="tv-check-field"><input type="checkbox" checked={entry.constant} onChange={event => setEntry(current => ({ ...current, constant: event.target.checked }))} disabled={busy} />始终带入对话</label><div className="tv-lore-actions"><button type="button" className="tv-button tv-button-secondary" onClick={() => { setEntry(null); setError(''); }} disabled={busy}>取消</button><button type="submit" className="tv-button tv-button-primary" disabled={busy}><Check size={15} />保存条目</button></div></form> : <>
           <div className="tv-lore-heading"><span>{entries.length} / 30 条设定</span><button type="button" className="tv-button tv-button-secondary" onClick={() => editEntry(EMPTY_LORE)} disabled={entries.length >= 30 || busy}><Plus size={16} />添加</button></div>
           <div className="tv-lore-file-actions"><button type="button" className="tv-button tv-button-secondary" disabled={busy} onClick={() => { setImportOpen(true); setError(''); }}><Upload size={15} />导入世界书</button><button type="button" className="tv-button tv-button-secondary" disabled={busy || !entries.length} onClick={downloadLore}><Download size={15} />导出世界书</button></div>
           {entries.length ? <ul className="tv-lore-list">{entries.map(item => <li key={item.id} className={item.enabled ? '' : 'is-disabled'}><div className="tv-lore-title"><label className="tv-check-field"><input type="checkbox" checked={item.enabled} disabled={busy} onChange={event => commit({ loreEntries: entries.map(value => value.id === item.id ? { ...value, enabled: event.target.checked } : value) })} /><strong>{item.name}</strong></label><button type="button" className="tv-icon-button" onClick={() => editEntry(item)} aria-label={`编辑${item.name}`} disabled={busy}><Pencil size={15} /></button><button type="button" className="tv-icon-button" onClick={() => setDeleting(item.id)} aria-label={`删除${item.name}`} disabled={busy}><Trash2 size={15} /></button></div><p className="tv-lore-keys">{item.constant ? '始终带入' : item.keys.join(' · ') || '未设置关键词'}</p><p className="tv-lore-preview">{item.content}</p>{deleting === item.id && <div className="tv-lore-delete" role="alert"><span>删除这条设定？</span><button type="button" className="tv-button tv-button-secondary" onClick={() => setDeleting('')} disabled={busy}>取消</button><button type="button" className="tv-button tv-button-danger" onClick={async () => { if (await commit({ loreEntries: entries.filter(value => value.id !== item.id) })) setDeleting(''); }} disabled={busy}>删除</button></div>}</li>)}</ul> : <div className="tv-lore-empty"><BookOpen size={30} strokeWidth={1.2} /><strong>每个世界，都从一个细节开始</strong><p>添加一处地点、一段往事，或一个只有你们知道的秘密。</p></div>}

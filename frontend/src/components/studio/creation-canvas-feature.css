@@ -1,0 +1,65 @@
+@font-face {
+  font-family: "Canvas Noto Serif SC";
+  src: url("/fonts/noto-serif-sc/canvas-title.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+
+.studio-home .studio-intro-with-canvas {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 272px);
+  gap: 22px 28px;
+}
+
+.studio-canvas-feature {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(235px, .78fr) minmax(0, 1.42fr);
+  align-items: center;
+  gap: clamp(10px, 2vw, 32px);
+  padding: 10px clamp(18px, 2.5vw, 40px);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle, #243142);
+  border-radius: 12px;
+  color: #f2f6ff;
+  background-color: var(--color-bg-secondary, #0f1623);
+}
+.studio-canvas-feature-copy h2 { margin: 0; font-family: "Canvas Noto Serif SC", "Noto Serif SC", serif; font-size: clamp(26px, 2.3vw, 35px); line-height: 1.24; font-weight: 600; font-synthesis: none; }
+.studio-canvas-feature-copy p { max-width: 24em; margin: 9px 0 0; color: #b6c8de; font-size: 14px; line-height: 1.65; text-wrap: pretty; }
+.studio-canvas-feature-open { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.studio-canvas-feature-open::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
+.studio-canvas-feature-open:focus-visible { outline: none; }
+.studio-canvas-feature:has(.studio-canvas-feature-open:focus-visible) { outline: 2px solid #86b5ff; outline-offset: 3px; }
+.studio-canvas-feature:hover { border-color: #4b6687; }
+.studio-canvas-feature > .studio-card-arrow { position: absolute; right: 16px; bottom: 16px; display: grid; pointer-events: none; }
+.studio-canvas-ribbon { display: block; width: 100%; height: auto; max-height: 246px; pointer-events: none; }
+.studio-canvas-stage-label { fill: #afbed0; font-family: inherit; font-size: 13px; letter-spacing: .08em; }
+.studio-canvas-glint { transform: translateX(-158px); }
+@keyframes studio-canvas-pass { to { transform: translateX(638px); } }
+@media (prefers-reduced-motion: no-preference) {
+  .studio-canvas-glint:not(.studio-canvas-glint-replay) { animation: studio-canvas-pass 3.9s ease-in-out .12s both; }
+  .studio-canvas-feature:is(:hover, :focus-within) .studio-canvas-glint-replay { animation: studio-canvas-pass 2.7s ease-out both; }
+}
+@media (max-width: 1023px) {
+  .studio-nav.has-compact-tools:not(.tools-open) .studio-secondary-nav { display: none; }
+  .studio-nav.has-compact-tools .studio-primary-nav { display: flex; flex-flow: row nowrap; overflow-x: auto; }
+  .studio-nav.has-compact-tools .studio-primary-nav > button { width: auto; flex: 0 0 auto; }
+}
+@media (max-width: 760px) {
+  .studio-home .studio-intro-with-canvas { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .studio-intro-with-canvas .studio-promo-video { grid-row: 3; }
+  .studio-workspace[data-studio-area="home"] .studio-topbar.has-github-support { row-gap: 5px; padding-block: 7px; }
+  .studio-workspace[data-studio-area="home"] .studio-github-support { min-height: 30px; padding-block: 3px; font-size: 11px; }
+  .studio-home .studio-intro-with-canvas .studio-eyebrow { margin-bottom: 8px; }
+  .studio-canvas-feature { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 20px 18px 13px; }
+  .studio-canvas-feature-copy p { max-width: 28em; margin: 6px 0 0; }
+  .studio-canvas-feature > .studio-card-arrow { right: 12px; bottom: 12px; }
+  .studio-canvas-ribbon { width: calc(100% - 24px); max-height: 165px; }
+  .studio-canvas-stage-label { font-size: 20px; }
+}
+@media (max-width: 359px) {
+  .studio-page.studio-home { padding-top: 14px; }
+  .studio-home .studio-intro-with-canvas { gap: 10px; }
+  .studio-canvas-feature { padding: 14px 12px 8px; }
+}

@@ -186,10 +186,11 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
     });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.success) {
-      const error = new Error(data?.error || "对话结果暂未确认，请核对服务记录，不要重复发送。");
-      error.code = data?.code || "TAVERN_RESULT_UNKNOWN";
+      const tooLarge = response.status === 413;
+      const error = new Error(data?.error || (tooLarge ? "对话内容超过服务可接收的请求大小，请整理较早的剧情或开启新对话。" : "对话结果暂未确认，请核对服务记录，不要重复发送。"));
+      error.code = data?.code || (tooLarge ? "TAVERN_REQUEST_TOO_LARGE" : "TAVERN_RESULT_UNKNOWN");
       error.tavernResponse = true;
-      error.submission_unknown = typeof data?.submission_unknown === 'boolean' ? data.submission_unknown : true;
+      error.submission_unknown = typeof data?.submission_unknown === 'boolean' ? data.submission_unknown : !tooLarge;
       error.usage = normalizeTavernUsage(data?.usage);
       if (mode === 'platform') {
         error.request_id = requestId;

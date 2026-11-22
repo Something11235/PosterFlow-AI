@@ -29,10 +29,10 @@ export function validateH3References(refs,model=MINIMAX_H3) {
   for(const group of [videos,audios])if(group.some(r=>!Number.isInteger(r.duration_ms)||r.duration_ms<2000||r.duration_ms>15000)||group.reduce((s,r)=>s+r.duration_ms,0)>15000)throw new Error('H3 视频和音频每段须为 2–15 秒，两类素材各自合计最多 15 秒。');
   if(videos.some(r=>!Number.isFinite(r.fps)||r.fps<23.976||r.fps>60||!['avc1','avc3','hvc1','hev1'].includes(r.codec)||model!==MINIMAX_H3_MAX&&(!Array.isArray(r.audio_codecs)||(r.audio_codecs || []).some(c=>!['mp4a','.mp3','mp3 ','mp3'].includes(c)))))throw new Error(model===MINIMAX_H3_MAX?'H3 Max 参考视频须为 H.264 / H.265、23.976–60 FPS。':'H3 参考视频须为 H.264 / H.265、23.976–60 FPS，音轨仅支持 AAC / MP3。');
 }
-export function minimaxH3Quote(values,refs=[]) {
+export function minimaxH3Quote(values,refs=[],verified=true) {
   // Integer nanodollars keep half-credit rounding exact, even with millisecond inputs.
   const body=buildMinimaxH3({...values,prompt:values.prompt || '费用预估'});
-  validateH3References(refs,values.model);
+  if(verified)validateH3References(refs,values.model);
   const referenceMs=refs.filter(r=>r.kind==='video').reduce((s,r)=>s+r.duration_ms,0);
   const maximum=body.model===MINIMAX_H3_MAX;
   const extraImages=Math.max(0,refs.filter(r=>r.kind==='image').length-(maximum?2:5));
