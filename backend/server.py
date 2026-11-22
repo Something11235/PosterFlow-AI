@@ -2949,6 +2949,12 @@ except ModuleNotFoundError:
 app.register_blueprint(create_tavern_blueprint(sys.modules[__name__]))
 
 try:
+    from backend.ppt_routes import create_ppt_blueprint
+except ModuleNotFoundError:
+    from ppt_routes import create_ppt_blueprint
+app.register_blueprint(create_ppt_blueprint(sys.modules[__name__]))
+
+try:
     from backend.auth_proxy import create_auth_proxy_blueprint
 except ModuleNotFoundError:
     from auth_proxy import create_auth_proxy_blueprint

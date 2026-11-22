@@ -51,6 +51,8 @@
 
 ## 格式兼容与历史版本
 
+一键 PPT 的设计流程改编自 Hugo He 的 [PPT Master 6.10.0](https://github.com/hugohe3/ppt-master)，仓库内附[上游工作流](backend/ppt_assets/quick-generate.md)和 [MIT 许可证](backend/ppt_assets/LICENSE-ppt-master)。浏览器的 PPTX 导出使用 PptxGenJS（MIT），PDF 文本提取使用 PDF.js（Apache-2.0）。
+
 角色卡、世界书、PNG 元数据及导入接口的兼容说明涉及 SillyTavern、Character Card 等外部项目或规范。兼容格式本身不代表取得任何外部项目代码或角色内容的再许可；如实际复用第三方实现，仍须保留并遵守其原许可。SillyTavern 自身采用 [AGPL-3.0](https://github.com/SillyTavern/SillyTavern/blob/release/LICENSE)。本次定向核查未发现明确逐段复制其实现的证据，但没有对全部代码进行来源追溯或完整相似度审计。
 
 当前画布使用 Fabric.js；历史版本曾使用 tldraw SDK，其第三方许可不因当前项目新增 LICENSE 而被追溯改变。使用或分发历史提交时，应核对该版本实际依赖。

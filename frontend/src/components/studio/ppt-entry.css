@@ -1,0 +1,12 @@
+.studio-ppt-entry {
+  display: flex; gap: 16px; align-items: center; width: 100%; margin: 0 0 20px;
+  padding: 16px 22px; text-align: left; cursor: pointer;
+  background: var(--color-bg-secondary, #111b29); color: var(--color-text-primary, #e6effb);
+  border: 1px solid var(--color-border-default, #2b394c); border-radius: 10px;
+}
+.studio-ppt-entry:hover, .studio-ppt-entry:focus-visible { border-color: #7497dc; }
+.studio-ppt-mark { display: grid; place-items: center; background: #192e42; color: #85d5d1; width: 44px; height: 44px; border-radius: 9px; flex-shrink: 0; }
+.studio-ppt-entry strong, .studio-ppt-entry small { display: block; }
+.studio-ppt-entry strong { font-size: 18px; }
+.studio-ppt-entry small { margin-top: 3px; color: var(--color-text-secondary, #a3b0c3); }
+.studio-ppt-entry > svg { margin-left: auto; flex-shrink: 0; color: #94aac6; }

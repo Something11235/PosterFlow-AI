@@ -1,11 +1,13 @@
 import { displayCredits } from "../../lib/credits";
 import React, {useEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
+import { Presentation } from "lucide-react";
 import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video, Workflow } from "lucide-react";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
   { id: "canvas", label: "创作画布", icon: Workflow },
+  { id: "ppt", label: "一键 PPT", icon: Presentation },
   { id: "image", label: "图像创作", icon: Image },
   { id: "music", label: "音乐创作", icon: Music2 },
   { id: "video", label: "视频创作", icon: Video },
@@ -33,7 +35,7 @@ function TavernResources({ detailsRef }) {
 export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const compactMobile = area === "home" || area === "canvas";
+  const compactMobile = ["home", "canvas", "ppt"].includes(area);
   const tavernResources = useRef(null);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
   const accountName = account?.profile?.username || session?.user?.email || "登录 / 注册";

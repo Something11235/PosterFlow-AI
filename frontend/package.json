@@ -20,6 +20,8 @@
     "fflate": "0.8.3",
     "js-sha256": "1.1.0",
     "lucide-react": "^1.29.0",
+    "pdfjs-dist": "6.5.438",
+    "pptxgenjs": "4.0.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

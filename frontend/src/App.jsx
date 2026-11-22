@@ -162,7 +162,7 @@ const MODE_META = {
 
 function readStudioArea() {
   const area = new URLSearchParams(window.location.search).get("area");
-  return ["canvas", "image", "music", "video", "tavern", "materials", "models"].includes(area) ? area : "home";
+  return ["canvas", "ppt", "image", "music", "video", "tavern", "materials", "models"].includes(area) ? area : "home";
 }
 
 export default function App() {

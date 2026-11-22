@@ -269,7 +269,8 @@ def stream_chat(endpoint, key, body):
     return (yield from provider_reply(endpoint, key, body, deadline))
 
 
-def provider_reply(endpoint, key, body, deadline):
+def provider_reply(endpoint, key, body, deadline, *, usage_reader=None):
+    read_usage = usage_reader or normalize_usage
     parsed = validate_endpoint(endpoint)
     def remaining():
         seconds = deadline - time.monotonic()
@@ -335,12 +336,12 @@ def provider_reply(endpoint, key, body, deadline):
             remaining()
 
         if body["stream"] and response.getheader("Content-Type", "").partition(";")[0].strip().lower() == "text/event-stream":
-            return (yield from completion_deltas(chunks(), normalize_usage, MAX_RESPONSE_CHARS, invalid_reply))
+            return (yield from completion_deltas(chunks(), read_usage, MAX_RESPONSE_CHARS, invalid_reply))
         payload = json.loads(b"".join(chunks()))
         # Usage is independent of a displayable reply. Providers can consume
         # tokens yet return empty content (for example, an exhausted output
         # budget). Preserve only normalized counts, never reasoning or raw JSON.
-        usage = normalize_usage(payload.get("usage")) if isinstance(payload, dict) else None
+        usage = read_usage(payload.get("usage")) if isinstance(payload, dict) else None
         choices = payload.get("choices") if isinstance(payload, dict) else None
         message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
