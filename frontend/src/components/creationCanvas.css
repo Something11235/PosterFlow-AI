@@ -131,6 +131,15 @@
 .cc-menu-heading { min-width: 150px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 3px 5px 10px; border-bottom: 1px solid #344257; font-size: 13px; }
 .cc-menu-heading button { width: auto; padding: 5px; }
 .cc-menu .cc-danger { color: #ffaeae; }
+.cc-backup-link { display: flex; align-items: center; gap: 9px; padding: 8px 10px; color: #d9e3f0; text-decoration: none; font-size: 13px; border-radius: 5px; }
+.cc-backup-link:hover { background: #2b3b51; }
+.cc-export-dialog { position: fixed; inset: 0; margin: auto; max-height: 85dvh; overflow-y: auto; }
+.cc-export-dialog::backdrop { background: #03070dc7; }
+.cc-export-list { max-height: min(45dvh,350px); overflow: auto; margin: 8px 0 16px; }
+.cc-export-list label { display: flex; gap: 10px; align-items: center; padding: 10px 4px; border-bottom: 1px solid #334155; cursor: pointer; }
+.cc-export-list span { flex: 1; overflow-wrap: anywhere; }
+.cc-export-list small { color: #a8b8cd; }
+.cc-menu .cc-export-error, .cc-dialog .cc-export-error { padding: 5px 8px; font-size: 12px; color: #ffb0ad; }
 .cc-help-text { left: 12px; bottom: calc(100% + 4px); max-width: min(320px,90%); padding: 11px 13px; color: #d5e1f0; font-size: 13px; line-height: 1.6; }
 .cc-empty,.cc-loading { display: flex; align-items: center; justify-content: center; gap: 12px; color: #c1cfe0; min-height: 180px; }
 .cc-empty { flex-direction: column; height: 100%; }

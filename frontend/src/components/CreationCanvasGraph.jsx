@@ -19,7 +19,7 @@ function frameView(nodes, width, height) {
   return { x: (width - w * k) / 2 - left * k, y: (height - h * k) / 2 - top * k - 8, k };
 }
 
-export default function CreationCanvasGraph({ project, owner, quote, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onMove, onEdit, onConnect, onError, onModelChange, onParamChange }) {
+export default function CreationCanvasGraph({ project, owner, downloadScope, quote, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onMove, onEdit, onConnect, onError, onModelChange, onParamChange }) {
   const board = useRef(null);
   const stage = useRef(null);
   const viewRef = useRef({ x: 50, y: 85, k: 1 });
@@ -312,7 +312,7 @@ export default function CreationCanvasGraph({ project, owner, quote, onRun, onCa
         {cards}
       </div>}
       {!project.nodes.length && <div className="cc-empty"><Workflow size={28} /><h3>画布里还没有节点</h3><button className="cc-primary" onClick={() => add("prompt")}>添加提示词</button></div>}
-      {currentMenuNode && <CreationCanvasNodeMenu key={currentMenuNode.id} node={currentMenuNode} project={project}
+      {currentMenuNode && <CreationCanvasNodeMenu key={currentMenuNode.id} node={currentMenuNode} project={project} downloadScope={downloadScope}
         anchor={menuAnchor.current} board={board.current} view={view} onClose={closeNodeMenu} onRemove={removeNode}
         onDisconnect={id => void onEdit(p => ({ ...p, edges: p.edges.filter(e => e.id !== id) }))} />}
     </div>

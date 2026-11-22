@@ -1,8 +1,10 @@
 import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Trash2, Unlink, X } from "lucide-react";
+import { canvasNodeDownloads } from "../lib/creationCanvasDownloads";
+import { CanvasDownloadAction } from "./CreationCanvasExport";
 
-export default function CreationCanvasNodeMenu({ node, project, anchor, board, view, onClose, onDisconnect, onRemove }) {
+export default function CreationCanvasNodeMenu({ node, project, downloadScope, anchor, board, view, onClose, onDisconnect, onRemove }) {
   const panel = useRef(null);
 
   useLayoutEffect(() => {
@@ -60,7 +62,7 @@ export default function CreationCanvasNodeMenu({ node, project, anchor, board, v
       closeAndReturn();
       return;
     }
-    const buttons = [...panel.current.querySelectorAll("button:enabled")];
+    const buttons = [...panel.current.querySelectorAll("button:enabled, a[href]")];
     const i = buttons.indexOf(document.activeElement);
     const destinations = { ArrowDown: (i + 1) % buttons.length, ArrowUp: (i - 1 + buttons.length) % buttons.length, Home: 0, End: buttons.length - 1 };
     if (!Object.hasOwn(destinations, event.key)) return;
@@ -70,6 +72,7 @@ export default function CreationCanvasNodeMenu({ node, project, anchor, board, v
   return createPortal(<div ref={panel} className="cc-menu cc-node-menu" role="group" aria-label={`${node.title}节点操作`}
     onKeyDown={onKeyDown} onBlur={e => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget) && e.relatedTarget !== anchor) onClose(); }}>
     <div className="cc-menu-heading"><b>{node.title}</b><button aria-label="关闭节点操作" onClick={closeAndReturn}><X size={15}/></button></div>
+    {canvasNodeDownloads(project, node).map(item => <CanvasDownloadAction key={[item.id, item.assetId, item.key, item.url, node.run?.requestId].join("|")} item={item} scope={downloadScope}/>)}
     {project.edges.filter(e => e.to === node.id || e.from === node.id).map(edge => <button key={edge.id} onClick={() => {
       onDisconnect(edge.id); closeAndReturn();
     }}><Unlink size={13}/><span>断开与{project.nodes.find(n => n.id === (edge.from === node.id ? edge.to : edge.from))?.title}的连接</span></button>)}

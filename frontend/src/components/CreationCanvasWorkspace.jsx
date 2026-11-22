@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Folder, FolderOpen, LoaderCircle, Plus, Save, Workflow, X } from "lucide-react";
+import { Archive, Check, ChevronDown, Folder, FolderOpen, LoaderCircle, Plus, Save, Workflow, X } from "lucide-react";
 import {
   cancelPreparingCanvasRun, claimCanvasRun, connectCanvasNodes, createCanvasProject, extractCanvasTailFrame, finishCanvasRun,
   getCanvasAsset, listCanvasProjects, loadCanvasProject, openOrCreateCanvasProject, putCanvasAsset,
@@ -11,6 +11,7 @@ import {
 } from "../lib/creationCanvasGeneration";
 import { canvasInputInfo, prepareCanvasReference, readCanvasReference, readCanvasVideoDuration } from "../lib/creationCanvasMedia";
 import CreationCanvasGraph from "./CreationCanvasGraph";
+import CreationCanvasExport from "./CreationCanvasExport";
 import { incomingNodes, initialCanvasFields, moveCanvasNode, needsFrameUpdate, newCanvasNode } from "./creationCanvasLayout";
 import "./creationCanvas.css";
 
@@ -46,6 +47,7 @@ export default function CreationCanvasWorkspace({
   const [saveFailed, setSaveFailed] = useState(false);
   const [uploads, setUploads] = useState({});
   const [picker, setPicker] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [entryName, setEntryName] = useState("");
   const [recent, setRecent] = useState([]);
   const queuedWrites = useRef(Promise.resolve());
@@ -357,16 +359,19 @@ export default function CreationCanvasWorkspace({
 
   if (!project) return <section className="cc-loading" aria-live="polite"><Workflow size={22} />{loadError || "正在打开创作画布…"}{loadError && <button onClick={() => { setLoadError(""); setRetry(n => n + 1); }}>重新打开</button>}</section>;
 
+  const downloadScope = { owner, projectId: project.id, imageOptions: { authenticated: generationContext.authenticated, headers: generationContext.authHeaders } };
   return <section className="cc-workspace" aria-label="AI 创作画布">
     <header className="cc-project-bar">
       <div className="cc-heading-icon"><Workflow size={22} /></div>
       <div className="cc-heading"><h1>AI 创作画布</h1><button onClick={showProjects}><Folder size={13} />{project.name}<ChevronDown size={13} /></button></div>
       <div className="cc-project-actions"><span className="cc-saved" role="status">{saving ? <LoaderCircle size={14} /> : saveFailed ? <X size={14}/> : <Check size={14} />}{saving ? "保存中" : saveFailed ? "保存失败" : "已存本机"}</span>
-        <button className="cc-tool-button" onClick={showProjects}><FolderOpen size={16} /><span>我的项目</span></button>
+        <button className="cc-tool-button" aria-label="批量导出" title="批量导出" onClick={() => setExportOpen(true)}><Archive size={16} /><span>批量导出</span></button>
+        <button className="cc-tool-button" aria-label="我的项目" onClick={showProjects}><FolderOpen size={16} /><span>我的项目</span></button>
       </div>
     </header>
     {notice && <div className="cc-notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="关闭提示"><X size={15} /></button></div>}
-    <CreationCanvasGraph key={project.id} project={project} owner={owner} quote={nodeQuote} onRun={runNode} onUpload={addReference}
+    {exportOpen && <CreationCanvasExport key={project.id} project={project} scope={downloadScope} onClose={() => setExportOpen(false)} />}
+    <CreationCanvasGraph key={project.id} project={project} owner={owner} downloadScope={downloadScope} quote={nodeQuote} onRun={runNode} onUpload={addReference}
       onExtract={extractFrame} onNextShot={addNextShot} onError={report} onEdit={edit} onModelChange={changeNodeModel} onParamChange={changeNodeParam}
       onCancel={(id,requestId) => cancelPreparingCanvasRun(owner, project.id, id, requestId).then(receive).catch(report)}
       onMove={(id, dx, dy, view) => edit(p => moveCanvasNode(p, id, dx, dy, view))}
