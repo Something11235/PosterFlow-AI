@@ -2064,13 +2064,59 @@ def public_announcements():
         return jsonify({"success": True, "announcements": []})
 
 
-def parse_announcement_payload(data):
+def popup_announcement_user():
+    authorization = request.headers.get("Authorization")
+    if authorization is not None:
+        scheme, _, token = authorization.strip().partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            raise ProviderError("AUTH_TOKEN_INVALID", "登录凭证无效，请刷新后重试", 401)
+    return optional_authenticated_user(report_cookie_errors=True)
+
+
+def private_announcement_response(result):
+    response = make_response(result)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.vary.update(("Authorization", "Cookie"))
+    return response
+
+
+@app.get("/api/announcements/popups")
+def pending_popup_announcements():
+    try:
+        user = popup_announcement_user()
+        announcements = []
+        if is_supabase_configured():
+            announcements = SupabaseGateway().pending_popup_announcements(user.id if user else None)
+        result = jsonify(success=True, announcements=announcements)
+    except (ProviderError, SupabaseError) as error:
+        result = provider_error_response(as_provider_error(error))
+    return private_announcement_response(result)
+
+
+@app.post("/api/announcements/<uuid:announcement_id>/acknowledge")
+def acknowledge_popup_announcement(announcement_id):
+    try:
+        user = popup_announcement_user()
+        if user is None:
+            raise ProviderError("AUTH_REQUIRED", "请先登录后同步公告已读状态", 401)
+        receipt = SupabaseGateway().acknowledge_popup_announcement(user.id, str(announcement_id))
+        raise_for_rpc_result(receipt)
+        result = jsonify(success=True, ok=True)
+    except (ProviderError, SupabaseError) as error:
+        result = provider_error_response(as_provider_error(error))
+    return private_announcement_response(result)
+
+
+def parse_announcement_payload(data, *, updating=False):
     data = data if isinstance(data, dict) else {}
     title = str(data.get("title", "")).strip()
     content = str(data.get("content", "")).strip()
     announcement_type = str(data.get("announcement_type", "info")).strip().lower()
     status = str(data.get("status", "draft")).strip().lower()
     is_pinned = data.get("is_pinned", False)
+    is_popup = data.get("is_popup", None if updating else False)
+    if "is_popup" in data and not isinstance(is_popup, bool):
+        raise ProviderError("ANNOUNCEMENT_STATUS_INVALID", "公告展示设置无效", 400, "弹窗公告选项必须是布尔值。")
     if not isinstance(is_pinned, bool):
         raise ProviderError("ANNOUNCEMENT_STATUS_INVALID", "公告状态无效", 400, "置顶必须是布尔值。")
     if not title or len(title) > 120:
@@ -2098,7 +2144,7 @@ def parse_announcement_payload(data):
     ends_at = parse_time(data.get("ends_at"))
     if starts_at and ends_at and datetime.fromisoformat(ends_at) <= datetime.fromisoformat(starts_at):
         raise ProviderError("ANNOUNCEMENT_TIME_INVALID", "公告时间无效", 400, "结束时间必须晚于开始时间。")
-    return title, content, announcement_type, status, is_pinned, starts_at, ends_at
+    return title, content, announcement_type, status, is_pinned, starts_at, ends_at, is_popup
 
 
 @app.route("/api/admin/announcements", methods=["GET"])
@@ -2133,7 +2179,7 @@ def update_admin_announcement(announcement_id):
             uuid.UUID(announcement_id)
         except ValueError as exc:
             raise ProviderError("ANNOUNCEMENT_NOT_FOUND", "公告不存在", 404, "公告编号无效。") from exc
-        values = parse_announcement_payload(request.get_json(silent=True) or {})
+        values = parse_announcement_payload(request.get_json(silent=True) or {}, updating=True)
         result = raise_for_rpc_result(gateway.update_announcement(user.id, announcement_id, *values))
         return jsonify({"success": True, **result})
     except (ProviderError, SupabaseError) as error:

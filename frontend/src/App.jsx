@@ -23,6 +23,7 @@ import AuthModal from "./components/AuthModal";
 import { confirmGuestCanvasLogin, forgetGuestCanvasLogin } from "./lib/creationCanvasLogin";
 import AccountPanel from "./components/AccountPanel";
 import AnnouncementBanner from "./components/AnnouncementBanner";
+import PopupAnnouncements from "./components/PopupAnnouncements";
 import AdminMetricsPanel from "./components/AdminMetricsPanel";
 import RechargePanel from "./components/RechargePanel";
 import CommunityQrModal from "./components/CommunityQrModal";
@@ -1069,6 +1070,7 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <AnnouncementBanner />
+          {authReady && <PopupAnnouncements key={session?.user?.id || "guest"} userId={session?.user?.id} authHeaders={authHeaders} />}
           {accountError && <div role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gold/25 bg-gold/5 px-4 py-2 text-xs text-text-secondary"><span>{accountError}</span><button type="button" disabled={accountLoading} onClick={() => void refreshAccount()} className="min-h-10 rounded-md border border-border-default px-3 text-accent disabled:opacity-50">{accountLoading ? "正在同步账户…" : "重试同步账户"}</button></div>}
           {(imageActiveCount > 0 || musicActiveCount > 0 || videoActiveCount > 0) && <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-accent/20 bg-accent/8 px-4 py-2 text-xs text-text-secondary" role="status">
             <Activity size={14} className="text-accent" />任务进行中

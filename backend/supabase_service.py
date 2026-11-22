@@ -426,6 +426,18 @@ class SupabaseGateway:
         result = self.rpc("get_public_announcements", {"p_limit": max(1, min(limit, 20))})
         return result if isinstance(result, list) else []
 
+    def pending_popup_announcements(self, user_id: str | None) -> list[dict[str, Any]]:
+        result = self.rpc("get_pending_popup_announcements", {"p_user_id": user_id})
+        if not isinstance(result, list):
+            raise SupabaseError("SUPABASE_BAD_RESPONSE", "弹窗公告暂时无法加载")
+        return result
+
+    def acknowledge_popup_announcement(self, user_id: str, announcement_id: str) -> dict[str, Any]:
+        result = self.rpc("acknowledge_popup_announcement", {"p_user_id": user_id, "p_announcement_id": announcement_id})
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            raise SupabaseError("SUPABASE_BAD_RESPONSE", "公告已读状态暂时无法确认")
+        return result
+
     def admin_bookkeeping(self, from_date: date, to_date: date) -> dict[str, Any]:
         return self.rpc("get_admin_bookkeeping", {"p_from": from_date.isoformat(), "p_to": to_date.isoformat()})
 
@@ -460,6 +472,7 @@ class SupabaseGateway:
         is_pinned: bool,
         starts_at: str | None,
         ends_at: str | None,
+        is_popup: bool = False,
     ) -> dict[str, Any]:
         return self.rpc(
             "create_announcement",
@@ -472,6 +485,7 @@ class SupabaseGateway:
                 "p_is_pinned": is_pinned,
                 "p_starts_at": starts_at,
                 "p_ends_at": ends_at,
+                "p_is_popup": is_popup,
             },
         )
 
@@ -486,6 +500,7 @@ class SupabaseGateway:
         is_pinned: bool,
         starts_at: str | None,
         ends_at: str | None,
+        is_popup: bool | None = None,
     ) -> dict[str, Any]:
         return self.rpc(
             "update_announcement",
@@ -499,6 +514,7 @@ class SupabaseGateway:
                 "p_is_pinned": is_pinned,
                 "p_starts_at": starts_at,
                 "p_ends_at": ends_at,
+                "p_is_popup": is_popup,
             },
         )
 
