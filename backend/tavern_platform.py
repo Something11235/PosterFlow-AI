@@ -14,10 +14,12 @@ except ModuleNotFoundError:
 try:
     from backend.credits import credit_amount
     from backend.supabase_service import SupabaseError, SupabaseGateway, is_supabase_configured
+    from backend.tavern_stream import run_without_deltas
     from backend.tavern_pricing import PRICING_MODEL, PRICING_VERSION, quote_tavern_credits, reserve_tavern_credits
 except ModuleNotFoundError:
     from credits import credit_amount
     from supabase_service import SupabaseError, SupabaseGateway, is_supabase_configured
+    from tavern_stream import run_without_deltas
     from tavern_pricing import PRICING_MODEL, PRICING_VERSION, quote_tavern_credits, reserve_tavern_credits
 
 
@@ -216,7 +218,7 @@ def _unknown(request_id, reserved=None, status="awaiting_review"):
     return {"request_id": request_id, "status": status, "reserved_credits": reserved, "charged_credits": None}
 
 
-def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoint):
+def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoint, *, stream_submit=None):
     settings = platform_settings(validate_endpoint)
     if not settings:
         raise TavernPlatformError("TAVERN_PLATFORM_UNAVAILABLE", "平台对话服务尚未启用，请使用自带 API Key 模式。", 503)
@@ -267,8 +269,16 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
                                   "该请求已存在，请查询账单；原请求不会再次提交模型。", 409, uncertain, saved["billing"], usage=saved["usage"])
     if record.get("billing_status") != "held" or record.get("status") != "reserved":
         raise TavernPlatformError("TAVERN_DATABASE_UNKNOWN", "账务状态无效，请保留请求编号查询。", 503, True, billing_fields(record))
+    work = _fulfill_chat(store, user, request_id, settings, reserved, body, submit_chat, stream_submit)
+    return work if stream_submit else run_without_deltas(work)
+
+
+def _fulfill_chat(store, user, request_id, settings, reserved, body, submit_chat, stream_submit):
     try:
-        result = submit_chat(settings["endpoint"], settings["key"], body)
+        if stream_submit:
+            result = yield from stream_submit(settings["endpoint"], settings["key"], body)
+        else:
+            result = submit_chat(settings["endpoint"], settings["key"], body)
     except Exception as error:
         # Only the provider's explicit not-submitted/rejected errors may refund.
         explicit = hasattr(error, "uncertain") and hasattr(error, "code")
@@ -302,7 +312,7 @@ def platform_chat(data, server, submit_chat, build_chat_request, validate_endpoi
         # Keep the already received reply; a failed settlement is never a refund.
         billing, balance = _unknown(request_id, reserved), None
     return {"success": True, "content": result["content"], "usage": clean_usage(result["usage"]),
-            "billing": billing, "request_id": request_id, "billing_mode": "platform", "streaming": False,
+            "billing": billing, "request_id": request_id, "billing_mode": "platform", "streaming": result.get("streaming", False),
             "charged_credits": billing["charged_credits"], "credit_balance": balance}
 
 

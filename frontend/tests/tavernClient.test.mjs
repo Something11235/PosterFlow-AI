@@ -159,6 +159,67 @@ test('same in-flight intent cannot submit twice, and completes with structured r
   assert.deepEqual(await first, { content: 'One result', usage });
 });
 
+function tavernStream() {
+  let writer;
+  const stream = new ReadableStream({ start(controller) { writer = controller; } });
+  const encoder = new TextEncoder();
+  return { response: new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8' } }),
+    bytes: part => writer.enqueue(part), line: event => writer.enqueue(encoder.encode(JSON.stringify(event) + '\n')),
+    close: () => writer.close() };
+}
+
+test('chat exposes ordered UTF-8 deltas before the terminal record; only final content and usage are authoritative', async t => {
+  const stream = tavernStream();
+  const fetch = t.mock.method(globalThis, 'fetch', async () => stream.response);
+  const deltas = [];
+  let showFirst;
+  const firstVisible = new Promise(resolve => { showFirst = resolve; });
+  const reply = requestTavernReply({ settings, messages, onDelta(text) { deltas.push(text); showFirst(); } });
+  const fragment = new TextEncoder().encode('\r\n' + JSON.stringify({ type: 'delta', text: '星🌠' }) + '\r\n');
+  for (const byte of fragment) stream.bytes(Uint8Array.of(byte));
+  await firstVisible;
+  assert.deepEqual(deltas, ['星🌠']);
+  stream.line({ type: 'delta', text: '光' });
+  stream.line({ type: 'done', success: true, content: '星🌠光。', usage });
+  assert.deepEqual(await reply, { content: '星🌠光。', usage });
+  assert.deepEqual(deltas, ['星🌠', '光']);
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(fetch.mock.calls[0].arguments[1].headers.get('Accept'), 'application/x-ndjson');
+});
+
+test('an abort, EOF or malformed terminal after partial text is unknown and is never replayed', async t => {
+  let source;
+  const fetch = t.mock.method(globalThis, 'fetch', async () => source.response);
+  for (const ending of ['abort', 'eof', 'invalid']) {
+    source = tavernStream();
+    let notify;
+    const rendered = new Promise(resolve => { notify = resolve; });
+    const controller = new AbortController();
+    const result = requestTavernReply({ settings, messages, onDelta: notify, signal: controller.signal });
+    source.line({ type: 'delta', text: '部分' });
+    assert.equal(await rendered, '部分');
+    if (ending === 'abort') controller.abort();
+    else if (ending === 'invalid') source.line({ type: 'done', success: false, error: 'private' });
+    else source.close();
+    await assert.rejects(result, error => error.code === 'TAVERN_RESULT_UNKNOWN' && error.submission_unknown === true);
+  }
+  assert.equal(fetch.mock.callCount(), 3);
+});
+
+test('a terminal stream error retains matched billing and actual usage after deltas', async t => {
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  const billing = { request_id: requestId, status: 'settled', reserved_credits: '0.1000', charged_credits: '0.0012' };
+  const stream = tavernStream();
+  t.mock.method(globalThis, 'fetch', async () => stream.response);
+  stream.line({ type: 'delta', text: '部分' });
+  stream.line({ type: 'error', success: false, code: 'TAVERN_RESPONSE_INVALID', error: '未完成', billing, usage, submission_unknown: false });
+  const onDelta = t.mock.fn();
+  await assert.rejects(requestTavernReply({ settings: DEFAULT_TAVERN_SETTINGS, requestId, messages, onDelta }),
+    error => error.code === 'TAVERN_RESPONSE_INVALID' && error.submission_unknown === false
+      && error.billing?.request_id === requestId && error.usage.total_tokens === 120);
+  assert.equal(onDelta.mock.callCount(), 1);
+});
+
 test('public import remains credential-free and returns either PNG kind as File', async t => {
   const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(bytes, { headers: { 'Content-Type': 'image/png' } }));

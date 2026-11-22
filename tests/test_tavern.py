@@ -32,7 +32,7 @@ class TavernTests(unittest.TestCase):
     def test_config_and_platform_fail_closed_without_outbound_or_billing(self):
         config = self.client.get("/api/tavern/config")
         self.assertFalse(config.json["platform_configured"])
-        self.assertFalse(config.json["streaming"])
+        self.assertTrue(config.json["streaming"])
         self.assertTrue(config.json["own_key_supported"])
         self.assertFalse(config.json["pricing"]["billing_enabled"])
         self.assertEqual(config.json["pricing"]["precision"], "0.0001")
@@ -62,6 +62,56 @@ class TavernTests(unittest.TestCase):
         self.assertNotIn("billing_mode", outgoing)
         self.assertNotIn(key, response.get_data(as_text=True))
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+
+    def test_streaming_own_key_follows_utf8_event_boundaries_and_only_exposes_reply(self):
+        def event(payload):
+            return ("data: " + json.dumps(payload, ensure_ascii=False) + "\r\n\r\n").encode()
+        source = (b"\xef\xbb\xbf: keepalive\r\n\r\n"
+                  + event({"choices": [{"index": 0, "delta": {"reasoning_content": "private thoughts", "content": "你"}}]})
+                  + event({"choices": [{"index": 0, "delta": {"content": "好"}, "finish_reason": "stop"}]})
+                  + event({"choices": [], "usage": {"prompt_tokens": 22, "completion_tokens": 3}})
+                  + b"data: [DONE]\r\n\r\n")
+        connection = self.transport()
+        upstream = connection.getresponse.return_value
+        upstream.getheader.return_value = "text/event-stream; charset=utf-8"
+        upstream.isclosed.side_effect = None
+        upstream.isclosed.return_value = False
+        upstream.read1.side_effect = [bytes([byte]) for byte in source] + [b""]
+        with patch.object(tavern, "resolve_public_host", return_value=["8.8.8.8"]), patch.object(tavern, "PinnedConnection", return_value=connection):
+            response = self.client.post("/api/tavern/chat", json=self.body,
+                                        headers={**self.headers, "Accept": "application/x-ndjson"}, buffered=False)
+            self.assertEqual(response.mimetype, "application/x-ndjson")
+            reader = iter(response.response)
+            self.assertEqual(next(reader), b"\n")
+            self.assertEqual(json.loads(next(reader)), {"type": "delta", "text": "你"})
+            self.assertLess(upstream.read1.call_count, len(source))
+            self.assertEqual(json.loads(next(reader)), {"type": "delta", "text": "好"})
+            final = json.loads(next(reader))
+            self.assertEqual((final["type"], final["content"], final["usage"]["total_tokens"], final["charged_credits"]), ("done", "你好", 25, 0))
+            response.close()
+        sent = json.loads(connection.request.call_args.kwargs["body"])
+        self.assertTrue(sent["stream"])
+        self.assertEqual(sent["stream_options"], {"include_usage": True})
+        connection.request.assert_called_once()
+        connection.close.assert_called_once()
+
+    def test_stream_only_falls_back_on_explicit_stream_parameter_rejection(self):
+        for status, error, retry in [
+            (400, {"param": "stream_options", "code": "unsupported_parameter"}, True),
+            (422, {"message": "Unsupported parameter: 'stream_options'"}, True),
+            (400, {"message": "Unsupported parameter: streamer"}, False),
+            (429, {"param": "stream_options", "code": "unsupported_parameter"}, False),
+            (502, {"message": "stream is not supported"}, False),
+        ]:
+            with self.subTest(status=status, error=error):
+                first, second = self.transport(status=status, payload={"error": error}), self.transport()
+                with patch.object(tavern, "resolve_public_host", return_value=["8.8.8.8"]), patch.object(tavern, "PinnedConnection", side_effect=[first, second]):
+                    response = self.client.post("/api/tavern/chat", json=self.body, headers={**self.headers, "Accept": "application/x-ndjson"})
+                    self.assertEqual(response.status_code, 200 if retry else 502)
+                    self.assertEqual((first.request.call_count, second.request.call_count), (1, int(retry)))
+                    if retry:
+                        self.assertEqual(response.json["content"], "你好")
+                        self.assertFalse(json.loads(second.request.call_args.kwargs["body"])["stream"])
 
     def test_invalid_origin_key_and_input_never_reach_provider(self):
         cases = [
@@ -229,7 +279,12 @@ class TavernTests(unittest.TestCase):
 
     def test_deadline_stops_slow_body_without_retry(self):
         connection = self.transport()
-        with patch.object(tavern.time, "monotonic", side_effect=[0, 1, 2, 3, 121]), self.assertRaises(tavern.TavernError) as caught:
+        now = [0]
+        def slow_read(_size):
+            now[0] = tavern.REQUEST_SECONDS + 1
+            return b"{}"
+        connection.getresponse.return_value.read1.side_effect = slow_read
+        with patch.object(tavern.time, "monotonic", side_effect=lambda: now[0]), self.assertRaises(tavern.TavernError) as caught:
             self.call_transport(connection)
         self.assertTrue(caught.exception.uncertain)
         self.assertEqual(connection.request.call_count, 1)

@@ -127,11 +127,56 @@ export async function requestTavernImport({ url, kind, signal }) {
   }
 }
 
+async function readTavernStream(response, onDelta, signal) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffer = "";
+  const handleLine = line => {
+    if (!line.trim()) return null; // Heartbeat.
+    const event = JSON.parse(line);
+    if (event?.type === 'delta' && typeof event.text === 'string') {
+      onDelta(event.text);
+      return null;
+    }
+    if ((event?.type === 'done' && event.success === true)
+      || (event?.type === 'error' && event.success === false)) return event;
+    throw new Error('Invalid tavern stream event');
+  };
+  const cancelReader = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener('abort', cancelReader, { once: true });
+  try {
+    while (!signal.aborted) {
+      const { value, done } = await reader.read();
+      if (signal.aborted) break;
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = done ? '' : lines.pop();
+      if (buffer.length > 2 * 1024 * 1024) throw new Error('Invalid tavern stream frame');
+      for (const line of lines) {
+        const final = handleLine(line);
+        if (final) return final;
+      }
+      if (done) break;
+    }
+    throw new Error('Missing tavern stream result');
+  } finally {
+    signal.removeEventListener('abort', cancelReader);
+    cancelReader();
+    reader.releaseLock();
+  }
+}
+
 export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, messages, signal, onDelta, authHeaders = {}, requestId, kind = 'chat' }) {
   const mode = settings.billingMode ?? settings.billing_mode ?? "platform";
   if (!['platform', 'own_key'].includes(mode)) throw notSubmitted('请选择平台积分或自带 API Key 模式。');
   if (mode === 'platform' && (!validRequestId(requestId) || !['chat', 'summary', 'assist'].includes(kind))) throw notSubmitted('本次平台调用缺少有效请求编号，请重新打开对话。');
   const headers = new Headers({ "Content-Type": "application/json" });
+  if (kind === 'chat' && onDelta && typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined') {
+    headers.set('Accept', 'application/x-ndjson');
+  }
+  const notifyDelta = text => {
+    try { onDelta?.(text); } catch { /* A view callback cannot invalidate a provider result. */ }
+  };
   // Forward only site auth to our own backend, never unrelated provider keys.
   const auth = new Headers(authHeaders);
   for (const name of ["Authorization", "X-Client-Id"]) if (auth.has(name)) headers.set(name, auth.get(name));
@@ -184,7 +229,10 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
       method: "POST", headers, signal: controller.signal, credentials: "same-origin", cache: "no-store",
       redirect: "error", referrerPolicy: "no-referrer", body,
     });
-    const data = await response.json().catch(() => null);
+    const streamed = response.ok && response.headers.get('Content-Type')?.split(';')[0].trim() === 'application/x-ndjson';
+    const data = streamed
+      ? await readTavernStream(response, notifyDelta, controller.signal)
+      : await response.json().catch(() => null);
     if (!response.ok || !data?.success) {
       const tooLarge = response.status === 413;
       const error = new Error(data?.error || (tooLarge ? "对话内容超过服务可接收的请求大小，请整理较早的剧情或开启新对话。" : "对话结果暂未确认，请核对服务记录，不要重复发送。"));
@@ -214,8 +262,8 @@ export async function requestTavernReply({ settings = DEFAULT_TAVERN_SETTINGS, m
       }
       throw error;
     }
-    // First version is explicitly non-streaming: notify once with the complete reply.
-    try { onDelta?.(data.content); } catch { /* A view callback must not relabel a completed paid reply as unknown. */ }
+    // A previous backend or an idempotent replay may return the original JSON response.
+    if (!streamed) notifyDelta(data.content);
     const billing = mode === 'platform' ? normalizeTavernBilling(data.billing) : null;
     return { content: data.content, usage: normalizeTavernUsage(data.usage),
       ...(mode === 'platform' ? { request_id: requestId, billing: billing?.request_id === requestId.toLowerCase() ? billing : null } : {}) };

@@ -18,12 +18,14 @@ from werkzeug.exceptions import RequestEntityTooLarge
 try:
     from backend.music_provider import safe_media_url
     from backend.tavern_pricing import get_tavern_pricing
+    from backend.tavern_stream import completion_deltas, run_without_deltas, stream_response
     from backend.tavern_platform import (TavernPlatformError, clean_usage, platform_available, platform_chat,
                                          register_platform_routes)
     from backend.supabase_service import SupabaseError
 except ModuleNotFoundError:
     from music_provider import safe_media_url
     from tavern_pricing import get_tavern_pricing
+    from tavern_stream import completion_deltas, run_without_deltas, stream_response
     from tavern_platform import (TavernPlatformError, clean_usage, platform_available, platform_chat,
                                  register_platform_routes)
     from supabase_service import SupabaseError
@@ -211,47 +213,75 @@ def resolve_public_host(host, timeout=8):
         raise TavernError("TAVERN_DNS_UNAVAILABLE", "暂时无法解析对话服务域名，本次尚未提交。", 502) from None
 
 
-def provider_context_error(response):
+def provider_rejection(response):
     # Error bodies can echo private messages. Inspect a bounded structured
     # diagnostic locally; never send its text to the caller or logs.
     limit = 16 * 1024
     try:
         raw = response.read(limit + 1)
         if not raw or len(raw) > limit:
-            return False
+            return None
         payload = json.loads(raw)
     except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError):
-        return False
+        return None
     if not isinstance(payload, dict):
-        return False
+        return None
     error = payload.get("error", payload)
     if not isinstance(error, dict):
-        return False
+        return None
     codes = ("context_length_exceeded", "context_window_exceeded", "max_context_length_exceeded",
              "context_limit_exceeded", "prompt_too_long", "input_too_long")
     if any(isinstance(error.get(field), str) and error[field].lower() in codes for field in ("code", "type")):
-        return True
-    message = error.get("message")
-    return isinstance(message, str) and bool(re.search(
+        return "context"
+    message = error.get("message") if isinstance(error.get("message"), str) else ""
+    if re.search(
         r"maximum context length (?:is|of)|context (?:window|length) (?:is )?exceeded"
         r"|exceeds? (?:the |this model.s |its )?(?:maximum |model.s )?context (?:window|length)"
-        r"|上下文(?:长度|窗口)?(?:已超出|超出限制|超过限制|过长)", message, re.I))
+        r"|上下文(?:长度|窗口)?(?:已超出|超出限制|超过限制|过长)", message, re.I):
+        return "context"
+    stream_field = r"""['"`]?(?:stream_options(?:\.include_usage)?|stream)['"`]?"""
+    if ((error.get("param") in ("stream", "stream_options", "stream_options.include_usage")
+         and error.get("code") in ("unsupported_parameter", "unknown_parameter", "unsupported_value"))
+            or re.match(r"^(?:unsupported|unknown|unrecognized|unexpected) (?:request )?(?:argument|parameter|field)\s*:?\s*" + stream_field + r"(?:[\s.:]|$)", message, re.I)
+            or re.match("^" + stream_field + r" (?:is not supported|is unsupported|is not allowed)\b", message, re.I)):
+        return "stream"
+    return None
+
+
+def invalid_reply(usage):
+    return TavernError("TAVERN_RESPONSE_INVALID", "对话服务未返回有效文字，请核对服务记录，不要重复发送。", 502, True, usage=usage)
 
 
 def submit_chat(endpoint, key, body):
-    parsed = validate_endpoint(endpoint)
-    deadline = time.monotonic() + REQUEST_SECONDS
-    try:
-        host = parsed.hostname.encode("idna").decode("ascii")
-        addresses = resolve_public_host(host)
-    except (socket.gaierror, UnicodeError, ValueError):
-        raise TavernError("TAVERN_DNS_UNAVAILABLE", "暂时无法解析对话服务域名，本次尚未提交。", 502) from None
+    return run_without_deltas(provider_reply(endpoint, key, body, time.monotonic() + REQUEST_SECONDS))
 
+
+def stream_chat(endpoint, key, body):
+    deadline = time.monotonic() + REQUEST_SECONDS
+    streaming_body = {**body, "stream": True, "stream_options": {"include_usage": True}}
+    try:
+        return (yield from provider_reply(endpoint, key, streaming_body, deadline))
+    except TavernError as error:
+        if error.code != "TAVERN_STREAM_UNSUPPORTED":
+            raise
+    # Only a structured HTTP 400/422 rejection of a streaming parameter gets
+    # this compatibility path, under the same reservation and wall-clock limit.
+    return (yield from provider_reply(endpoint, key, body, deadline))
+
+
+def provider_reply(endpoint, key, body, deadline):
+    parsed = validate_endpoint(endpoint)
     def remaining():
         seconds = deadline - time.monotonic()
         if seconds <= 0:
             raise TimeoutError()
         return seconds
+
+    try:
+        host = parsed.hostname.encode("idna").decode("ascii")
+        addresses = resolve_public_host(host, timeout=min(8, remaining()))
+    except (socket.gaierror, TimeoutError, UnicodeError, ValueError):
+        raise TavernError("TAVERN_DNS_UNAVAILABLE", "暂时无法解析对话服务域名，本次尚未提交。", 502) from None
 
     connection, watchdog, started = None, None, False
     try:
@@ -273,32 +303,40 @@ def submit_chat(endpoint, key, body):
         started = True
         connection.request("POST", parsed.path, body=json.dumps(body, ensure_ascii=False).encode("utf-8"),
                            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json",
-                                    "Accept": "application/json", "Accept-Encoding": "identity"})
+                                    "Accept": "text/event-stream, application/json" if body["stream"] else "application/json",
+                                    "Accept-Encoding": "identity"})
         transport.settimeout(remaining())
         response = connection.getresponse()
         # This client never follows redirects or retries a paid request.
         if 300 <= response.status < 400:
             raise TavernError("TAVERN_REDIRECT_BLOCKED", "对话服务返回了跳转，已停止本次请求；请核对服务记录后再操作。", 502, True)
         if response.status >= 400:
-            if response.status in (400, 413, 422) and provider_context_error(response):
+            reason = provider_rejection(response) if response.status in (400, 413, 422) else None
+            if reason == "context":
                 raise TavernError("TAVERN_MODEL_CONTEXT_EXCEEDED", "当前模型的上下文容纳不下这次对话。可压缩剧情记忆，或换用上下文更长的模型。", 400)
+            if reason == "stream" and body["stream"] and response.status in (400, 422):
+                raise TavernError("TAVERN_STREAM_UNSUPPORTED", "此接口不支持流式参数。", 400)
             if response.status == 413:
                 raise TavernError("TAVERN_PROVIDER_REQUEST_TOO_LARGE", "对话服务商拒绝了过大的请求体，请缩短本次发送的内容后再试。", 413)
             rejected = response.status in (400, 401, 403, 404, 422, 429)
             message = "对话服务未接受请求，请检查 Key、模型权限和参数。" if rejected else "对话服务结果暂未确认，请核对服务记录，不要重复发送。"
             raise TavernError("TAVERN_REQUEST_REJECTED" if rejected else "TAVERN_RESULT_UNKNOWN", message, 502, not rejected)
-        chunks, length = [], 0
-        while not response.isclosed():
-            transport.settimeout(remaining())
-            chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - length))
-            if not chunk:
-                break
-            length += len(chunk)
-            if length > MAX_RESPONSE_BYTES:
-                raise TavernError("TAVERN_RESPONSE_INVALID", "对话响应超过读取上限，请核对服务记录，不要重复发送。", 502, True)
-            chunks.append(chunk)
-        remaining()
-        payload = json.loads(b"".join(chunks))
+        def chunks():
+            length = 0
+            while not response.isclosed():
+                transport.settimeout(remaining())
+                chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - length))
+                if not chunk:
+                    break
+                length += len(chunk)
+                if length > MAX_RESPONSE_BYTES:
+                    raise TavernError("TAVERN_RESPONSE_INVALID", "对话响应超过读取上限，请核对服务记录，不要重复发送。", 502, True)
+                yield chunk
+            remaining()
+
+        if body["stream"] and response.getheader("Content-Type", "").partition(";")[0].strip().lower() == "text/event-stream":
+            return (yield from completion_deltas(chunks(), normalize_usage, MAX_RESPONSE_CHARS, invalid_reply))
+        payload = json.loads(b"".join(chunks()))
         # Usage is independent of a displayable reply. Providers can consume
         # tokens yet return empty content (for example, an exhausted output
         # budget). Preserve only normalized counts, never reasoning or raw JSON.
@@ -307,7 +345,8 @@ def submit_chat(endpoint, key, body):
         message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip() or len(content) > MAX_RESPONSE_CHARS:
-            raise TavernError("TAVERN_RESPONSE_INVALID", "对话服务未返回有效文字，请核对服务记录，不要重复发送。", 502, True, usage=usage)
+            raise invalid_reply(usage)
+        content.encode("utf-8")
         return {"content": content, "usage": usage}
     except TavernError:
         raise
@@ -486,26 +525,28 @@ def create_tavern_blueprint(server):
 
     @bp.after_request
     def private_response(response):
-        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Cache-Control"] = "private, no-store, no-transform" if response.mimetype == "application/x-ndjson" else "private, no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
-    @bp.errorhandler(TavernError)
-    def error_response(error):
-        return jsonify(success=False, error=error.message, code=error.code,
-                       submission_unknown=error.uncertain, charged_credits=0,
-                       **({"usage": error.usage} if error.usage is not None else {})), error.status
-
-    @bp.errorhandler(TavernPlatformError)
-    def platform_error_response(error):
+    def error_payload(error):
+        if not isinstance(error, (TavernError, TavernPlatformError)):
+            return {"success": False, "error": "对话结果暂未确认，请查询原请求。", "code": "TAVERN_RESULT_UNKNOWN",
+                    "submission_unknown": True, "charged_credits": None}
+        billing = getattr(error, "billing", None)
         payload = {"success": False, "error": error.message, "code": error.code,
                    "submission_unknown": error.uncertain,
-                   "charged_credits": error.billing.get("charged_credits") if error.billing else 0}
-        if error.billing:
-            payload.update(billing=error.billing, request_id=error.billing["request_id"], billing_mode="platform")
+                   "charged_credits": billing.get("charged_credits") if billing else 0}
+        if billing:
+            payload.update(billing=billing, request_id=billing["request_id"], billing_mode="platform")
         if error.usage is not None:
             payload["usage"] = error.usage
-        return jsonify(payload), error.status
+        return payload
+
+    @bp.errorhandler(TavernError)
+    @bp.errorhandler(TavernPlatformError)
+    def error_response(error):
+        return jsonify(error_payload(error)), error.status
 
     @bp.errorhandler(SupabaseError)
     def platform_database_error(_error):
@@ -516,7 +557,7 @@ def create_tavern_blueprint(server):
     def config():
         enabled = platform_available(validate_endpoint)
         return jsonify(platform_configured=enabled, own_key_supported=True, model=DEFAULT_MODEL,
-                       streaming=False, pricing=get_tavern_pricing(enabled))
+                       streaming=True, pricing=get_tavern_pricing(enabled))
 
     @bp.post("/import")
     def import_resource():
@@ -554,8 +595,17 @@ def create_tavern_blueprint(server):
         if not isinstance(data, dict):
             raise TavernError("TAVERN_INVALID_INPUT", "对话请求格式无效。")
         mode = data.get("billing_mode", "platform")
+        # Only explicitly opted-in chat clients receive a stream. Workflow
+        # helpers (assist/summary) retain their existing single JSON contract.
+        streaming = (data.get("kind", "chat") == "chat"
+                     and any(mime == "application/x-ndjson" and quality > 0
+                             for mime, quality in request.accept_mimetypes))
         if mode == "platform":
-            return jsonify(platform_chat(data, server, submit_chat, build_chat_request, validate_endpoint))
+            result = platform_chat(data, server, submit_chat, build_chat_request, validate_endpoint,
+                                   stream_submit=stream_chat if streaming else None)
+            if isinstance(result, dict):
+                return jsonify(result)
+            return stream_response(result, error_payload, finish_on_disconnect=True)
         if mode != "own_key":
             raise TavernError("TAVERN_INVALID_INPUT", "请选择平台积分或自带 API Key 模式。")
         body = build_chat_request(data)
@@ -569,9 +619,15 @@ def create_tavern_blueprint(server):
             server.enforce_rate_limit("tavern-chat-key", hashlib.sha256(key.encode()).hexdigest(), 12, 60)
         except server.ProviderError:
             raise TavernError("TAVERN_RATE_LIMITED", "发送过于频繁，请稍后再试。", 429) from None
-        result = submit_chat(endpoint, key, body)
-        return jsonify(success=True, content=result["content"], usage=result["usage"],
-                       streaming=False, billing_mode="own_key", charged_credits=0)
+        def own_key_result(result):
+            return {"success": True, "content": result["content"], "usage": result["usage"],
+                    "streaming": result.get("streaming", False), "billing_mode": "own_key", "charged_credits": 0}
+
+        if streaming:
+            def own_key_stream():
+                return own_key_result((yield from stream_chat(endpoint, key, body)))
+            return stream_response(own_key_stream(), error_payload, finish_on_disconnect=False)
+        return jsonify(own_key_result(submit_chat(endpoint, key, body)))
 
     register_platform_routes(bp, server)
     return bp

@@ -1,5 +1,6 @@
 """Platform orchestration with synthetic env and mocked database/provider only."""
 import os
+import json
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,57 @@ class TavernPlatformTests(unittest.TestCase):
         held = self.store.begin.call_args.args[-1]
         self.assertEqual(held, reserve_tavern_credits(outgoing))
         self.assertGreater(Decimal(held), Decimal("7"))
+
+    def test_stream_disconnect_drains_and_saves_complete_reply_once_with_original_request(self):
+        def streaming(endpoint, key, body):
+            self.assertFalse(body["stream"])  # transport flags do not enter the durable fingerprint.
+            yield "合成"
+            yield "回复"
+            return {"content": "合成回复", "usage": USAGE, "streaming": True}
+        headers = {**self.headers, "Accept": "application/x-ndjson"}
+        with patch.object(tavern, "stream_chat", side_effect=streaming) as upstream:
+            response = self.post(headers=headers)
+            self.assertEqual(json.loads(next(iter(response.response))), {"type": "delta", "text": "合成"})
+            self.store.apply.assert_not_called()
+            response.close()
+            self.store.apply.assert_called_once_with(OWNER, REQUEST, "completed", USAGE, "合成回复")
+            self.store.begin.return_value = {"ok": True, "leader": False, "request": self.settled}
+            replay = self.post(headers=headers)
+            self.assertTrue(replay.json["idempotent"])
+            self.assertEqual(replay.json["content"], "合成回复")
+            upstream.assert_called_once()
+            self.submit.assert_not_called()
+
+    def test_dropped_wsgi_body_drains_even_if_response_close_hook_never_runs(self):
+        def streaming(_endpoint, _key, _body):
+            yield "合成"
+            yield "回复"
+            return {"content": "合成回复", "usage": USAGE, "streaming": True}
+        with patch.object(tavern, "stream_chat", side_effect=streaming):
+            with self.client.application.test_request_context("/api/tavern/chat", method="POST", json=self.body,
+                    headers={**self.headers, "Accept": "application/x-ndjson"}):
+                response = self.client.application.full_dispatch_request()
+                events = iter(response.response)
+                self.assertEqual(json.loads(next(events))["text"], "合成")
+                # A write/reset error may finalize the body iterator before
+                # the server can invoke the outer WSGI close callbacks.
+                events.close()
+                self.store.apply.assert_called_once_with(OWNER, REQUEST, "completed", USAGE, "合成回复")
+                response.close()
+                self.assertEqual(self.store.apply.call_count, 1)
+
+    def test_stream_cut_short_sends_error_and_keeps_original_hold_for_review(self):
+        def interrupted(*_args):
+            yield "部分"
+            raise tavern.TavernError("TAVERN_RESULT_UNKNOWN", "连接中断", 502, uncertain=True)
+        self.store.apply.return_value = {"ok": True, "request": {**self.record, "status": "unknown", "billing_status": "awaiting_review"}}
+        with patch.object(tavern, "stream_chat", side_effect=interrupted) as upstream:
+            response = self.post(headers={**self.headers, "Accept": "application/x-ndjson"})
+            first, last = [json.loads(line) for line in response.get_data().splitlines()]
+            self.assertEqual((first["text"], last["type"], last["submission_unknown"], last["billing"]["request_id"]), ("部分", "error", True, REQUEST))
+            response.close()
+            self.store.apply.assert_called_once_with(OWNER, REQUEST, "unknown", error_code="TAVERN_RESULT_UNKNOWN")
+            upstream.assert_called_once()
 
     def test_paid_call_uses_server_key_and_reserves_before_single_submission(self):
         sequence = Mock()
