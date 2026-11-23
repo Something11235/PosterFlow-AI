@@ -447,6 +447,15 @@ class SupabaseGateway:
             raise SupabaseError("MUSIC_METRICS_UNAVAILABLE", "音乐统计暂时不可用", 503)
         return result
 
+    def admin_ppt_overview(self, from_date: date, to_date: date, search: str = "", limit: int = 100) -> dict[str, Any]:
+        result = self.rpc("get_admin_ppt_overview", {
+            "p_from": from_date.isoformat(), "p_to": to_date.isoformat(),
+            "p_search": search[:160], "p_limit": min(max(limit, 1), 100),
+        })
+        if not isinstance(result, dict) or not isinstance(result.get("metrics"), dict):
+            raise SupabaseError("PPT_METRICS_UNAVAILABLE", "PPT 统计暂时不可用", 503)
+        return result
+
     def save_admin_bookkeeping(self, admin_user_id: str, scope: str, stat_date: str | None,
                                recharge_text: str, cost_text: str, note: str, revision: int) -> dict[str, Any]:
         return self.rpc("save_admin_bookkeeping", {

@@ -1972,11 +1972,16 @@ def admin_console():
             raise ProviderError("METRICS_DATE_INVALID", "统计日期格式无效", 400, "日期格式应为 YYYY-MM-DD。") from exc
         if from_date > to_date or to_date > today or (to_date - from_date).days > 89:
             raise ProviderError("METRICS_DATE_INVALID", "统计日期范围无效", 400, "请选择今天之前且不超过 90 天的日期范围。")
-        snapshot = gateway.admin_console_snapshot(from_date, to_date, request.args.get("search", ""), 100)
+        search = request.args.get("search", "")
+        snapshot = gateway.admin_console_snapshot(from_date, to_date, search, 100)
         try:
-            snapshot["music"] = enrich_overview(gateway.admin_music_overview(from_date, to_date, request.args.get("search", ""), 100))
+            snapshot["music"] = enrich_overview(gateway.admin_music_overview(from_date, to_date, search, 100))
         except SupabaseError:
             snapshot["music_error"] = "音乐、视频与活跃统计暂时不可用，请刷新重试。其他管理功能仍可使用。"
+        try:
+            snapshot["ppt"] = gateway.admin_ppt_overview(from_date, to_date, search, 100)
+        except SupabaseError:
+            snapshot["ppt_error"] = "PPT 统计暂时不可用，请重新查询。"
         response = jsonify({"success": True, "from": from_date.isoformat(), "to": to_date.isoformat(), **snapshot})
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Vary"] = "Authorization, Cookie"

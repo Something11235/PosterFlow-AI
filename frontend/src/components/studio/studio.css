@@ -35,6 +35,13 @@
 .studio-workspace-host, .studio-image-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .studio-workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; color: var(--studio-text); background: var(--studio-bg); }
 .studio-topbar { display: flex; justify-content: space-between; align-items: center; gap: 15px; min-height: 76px; padding: 14px 38px; border-bottom: 1px solid #1b2738; }
+.studio-workspace[data-studio-area="ppt"] > .studio-topbar {
+  min-height: 48px;
+  padding-block: 1px;
+}
+@media (pointer: fine) {
+  .studio-workspace[data-studio-area="ppt"] .studio-top-drafts { min-height: 32px; }
+}
 .studio-topbar > div { display: flex; align-items: center; gap: 13px; }
 .studio-topbar.has-github-support { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 18px; }
 .studio-github-support { display: flex; align-items: center; justify-content: center; justify-self: center; gap: 7px; min-width: 0; max-width: 100%; min-height: 44px; padding: 7px 12px; border: 1px solid #4f8cff40; border-radius: 6px; background: #4f8cff0d; color: #b9d1ff; font-size: 13px; font-weight: 500; line-height: 1.7; text-align: center; text-decoration: none; transition: background .18s, border-color .18s; }
