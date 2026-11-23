@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, FileText, FileUp, Layers, LoaderCircle, MousePointer2, Paperclip, Presentation, RefreshCw, Sparkles, X } from "lucide-react";
+import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FileUp, Layers, LoaderCircle, MousePointer2, Paperclip, Presentation, RefreshCw, Sparkles, X } from "lucide-react";
 import { saveBrowserFile } from "../../lib/browserSave";
 import { displayCredits } from "../../lib/credits";
 import { accessPptProject, finishPptRequest, isPptPreflightError, newPptProject, PPT_MODEL_NAMES, requestPpt } from "../../lib/pptProject";
@@ -183,7 +183,7 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   const switchPage = next => { setIndex(next); setSelected([]); setInstruction(""); };
 
   return <main className="studio-page ppt-workspace">
-    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={24}/></div><div><h1>一键 PPT</h1><p>从主题生成演示稿，选中页面元素即可继续修改。</p></div></header>
+    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={25}/></div><div><h1>一键 PPT</h1><p>输入主题或添加参考资料，生成可直接编辑的演示稿。</p></div></header>
     {alert && <div role="alert" className="ppt-alert">{alert}<button aria-label="关闭提示" onClick={() => setAlert("")}><X size={16}/></button></div>}
     <div className="ppt-columns">
       <section className="ppt-brief" aria-label="生成设置">
@@ -196,14 +196,14 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
           <button aria-pressed={project.model !== economy} onClick={() => update({ model: high })}>高级模型</button>
           <button aria-pressed={project.model === economy} onClick={() => update({ model: economy })}>性价比模型</button>
         </div>{project.model === economy ? <p>{PPT_MODEL_NAMES[economy]}</p> : <select aria-label="高级模型" value={project.model} onChange={event => update({ model: event.target.value })}><option value={high}>GPT 6.2 Astra · 高级</option><option value={middle}>GPT 6.2 Sol · 均衡</option></select>}
-          <small>{rate ? <>每百万 Token 积分：输入 {rate.input} · 输出 {rate.output} · 缓存读取 {rate.cache_read}{rate.cache_write != null && <> · 缓存写入 {rate.cache_write}</>}</> : "生成和 AI 修改按实际 Token 用量结算。"}</small>
+          <small className="ppt-rate">{rate ? <>每百万 Token 积分：<span>输入 {rate.input}</span> · <span>输出 {rate.output}</span> · <span>缓存读取 {rate.cache_read}</span>{rate.cache_write != null && <> · <span>缓存写入 {rate.cache_write}</span></>}</> : "生成和 AI 修改按实际 Token 用量结算。"}</small>
         </fieldset>
         <fieldset className="ppt-attachments" disabled={locked}><legend>模板与参考资料</legend>
           <label className="ppt-upload"><FileUp size={16}/>{project.template ? "更换 PPT 模板" : "添加 PPT 模板"}<input type="file" accept=".pptx" aria-label="上传 PPT 模板" onChange={event => { const files = [...event.target.files]; event.target.value = ""; importFiles(files, "template"); }}/><small>.pptx</small></label>
           {project.template && <div className="ppt-file"><Check size={14}/><span>{project.template.file?.name}</span><button aria-label="移除模板" onClick={() => update({ template: null })}><X size={14}/></button></div>}
           <label className="ppt-upload"><Paperclip size={16}/>添加参考资料<input type="file" multiple accept=".pptx,.docx,.xlsx,.pdf,.txt,.md,.csv" aria-label="上传参考资料" onChange={event => { const files = [...event.target.files]; event.target.value = ""; importFiles(files, "reference"); }}/><small>{project.references.length}/8</small></label>
           {project.references.map((source, i) => <div className="ppt-file" key={i}><FileText size={14}/><span>{source.name}</span><button aria-label={"移除 " + source.name} onClick={() => patch(current => current.pending ? current : { ...current, references: current.references.filter((_, n) => n !== i) }).catch(error => setAlert(error.message))}><X size={14}/></button></div>)}
-          <small>PPTX、DOCX、XLSX、PDF、TXT、MD、CSV。单个文件最多 24 MB，每份参考资料读取前 12,000 字；PDF 读取前 100 页。</small>
+          <details className="ppt-format-help"><summary>支持的格式与大小<ChevronDown size={14} aria-hidden="true"/></summary><p>支持 PPTX、DOCX、XLSX、PDF、TXT、MD 和 CSV，单个文件最多 24 MB。每份参考资料读取前 12,000 字，PDF 最多读取前 100 页。</p></details>
         </fieldset>
         <button className="ppt-primary" disabled={locked || !topic.trim()} onClick={() => submit("generate")}><Sparkles size={17}/>{project.deck ? "重新生成演示稿" : "生成演示稿"}</button>
       </section>
@@ -218,7 +218,12 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
             <label className="ppt-field"><span className="sr-only">修改要求</span><textarea disabled={locked} rows={2} maxLength={6000} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder="希望怎样修改选中的内容？"/></label>
             <button className="ppt-secondary" disabled={locked || !instruction.trim() || !selected.length} onClick={() => submit("edit")}><Sparkles size={15}/>应用 AI 修改</button>
           </section>
-        </> : <div className="ppt-empty"><div className="ppt-empty-sheet" aria-hidden="true"><i/><i/><i/><b/></div><h3>演示稿将在这里预览</h3><p>填写演示主题后即可生成第一版。</p></div>}
+        </> : <div className="ppt-empty">
+          <div className="ppt-empty-stack" aria-hidden="true">
+            <div className="ppt-cover"><div className="ppt-cover-lines"><i/><i/><i/></div><span className="ppt-cover-arc"/></div>
+          </div>
+          <h3>演示稿将在这里预览</h3><p>生成后可逐页浏览，点选文字或图形即可修改。</p>
+        </div>}
         {(project.pending || busy) && <div className="ppt-progress" role="status"><LoaderCircle size={16} className="ppt-spin"/><span>{busy || "正在查询原任务…"}{project.pending && <small>刷新页面后会继续查询本次任务。</small>}</span>{project.pending && !busy && <button onClick={() => check(project.pending, true)}><RefreshCw size={15}/>查询</button>}</div>}
         {project.pending?.body && missingId === project.pending.id && <button className="ppt-secondary" disabled={Boolean(busy)} onClick={() => submit(project.pending.action, true)}>用原任务编号再次提交</button>}
         {!project.pending && <BillingNote task={project.lastTask}/>}

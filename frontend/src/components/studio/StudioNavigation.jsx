@@ -1,17 +1,16 @@
 import { displayCredits } from "../../lib/credits";
 import React, {useEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
-import { Presentation } from "lucide-react";
-import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, UserRound, Users, Video, Workflow } from "lucide-react";
+import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, Presentation, UserRound, Users, Video, Workflow } from "lucide-react";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
   { id: "canvas", label: "创作画布", icon: Workflow },
-  { id: "ppt", label: "一键 PPT", icon: Presentation },
   { id: "image", label: "图像创作", icon: Image },
   { id: "music", label: "音乐创作", icon: Music2 },
   { id: "video", label: "视频创作", icon: Video },
   { id: "tavern", label: "AI 酒馆", icon: MessagesSquare },
+  { id: "ppt", label: "一键 PPT", icon: Presentation },
 ];
 
 const TAVERN_RESOURCES = [
@@ -37,6 +36,16 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const compactMobile = ["home", "canvas", "ppt"].includes(area);
   const tavernResources = useRef(null);
+  const primaryNav = useRef(null);
+  useEffect(() => {
+    const nav = primaryNav.current;
+    if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+    const active = nav.querySelector('[aria-current="page"]')?.getBoundingClientRect();
+    if (!active) return;
+    const bounds = nav.getBoundingClientRect();
+    if (active.left < bounds.left) nav.scrollLeft += active.left - bounds.left;
+    else if (active.right > bounds.right) nav.scrollLeft += active.right - bounds.right;
+  }, [area]);
   useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
   const accountName = account?.profile?.username || session?.user?.email || "登录 / 注册";
   function openTavernResources() {
@@ -50,7 +59,7 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
       <button type="button" className="studio-nav-toggle" onClick={()=>setCollapsed(value=>!value)} aria-label={collapsed?'展开侧栏':'折叠侧栏'} title={collapsed?'展开侧栏':'折叠侧栏'} aria-expanded={!collapsed} aria-controls="studio-primary-navigation studio-secondary-navigation">{collapsed?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
       <div className="studio-mobile-account">{compactMobile && <button type="button" onClick={() => setMobileToolsOpen(open => !open)} aria-label="资料与工具" title="资料与工具" aria-expanded={mobileToolsOpen} aria-controls="studio-secondary-navigation"><Menu size={19} /></button>}<button type="button" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><UserRound size={19} /></button>{session && account?.is_admin && <button type="button" onClick={onOpenMetrics} aria-label="管理员控制台"><ChartNoAxesCombined size={19} /></button>}</div>
       <p className="studio-nav-caption">工作空间 <span>01 —</span></p>
-      <nav id="studio-primary-navigation" className="studio-primary-nav" aria-label="创作工作区">
+      <nav ref={primaryNav} id="studio-primary-navigation" className="studio-primary-nav" aria-label="创作工作区">
         {NAV.map(item => <button type="button" key={item.id} title={collapsed?item.label:undefined} aria-label={item.label} aria-current={area === item.id ? "page" : undefined} onClick={() => onAreaChange(item.id)}><item.icon size={18} strokeWidth={1.7} /><span>{item.label}</span>{item.hint && <small>{item.hint}</small>}{area === item.id && <span className="studio-nav-dot" />}</button>)}
       </nav>
       <p className="studio-nav-caption studio-library-caption">资料与工具 <span>02 —</span></p>
