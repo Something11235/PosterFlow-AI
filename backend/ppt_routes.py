@@ -59,9 +59,8 @@ class PptError(Exception):
 
 def model_settings(model):
     group_key = "PLATFORM_PPT_DEEPSEEK_API_KEY" if model == "deepseek-v4.1-flash" else "PLATFORM_PPT_GPT_API_KEY"
-    key = next((v.strip() for name in (group_key, "PLATFORM_PPT_API_KEY", "PLATFORM_TAVERN_API_KEY")
-                if (v := os.getenv(name, "")).strip()), "")
-    endpoint = (os.getenv("PLATFORM_PPT_API_ENDPOINT") or os.getenv("PLATFORM_TAVERN_API_ENDPOINT") or DEFAULT_ENDPOINT).strip()
+    key = os.getenv("PLATFORM_PPT_API_KEY", "").strip() or os.getenv(group_key, "").strip()
+    endpoint = os.getenv("PLATFORM_PPT_API_ENDPOINT", "").strip() or DEFAULT_ENDPOINT
     if not key or len(key) > 4096 or not all(33 <= ord(c) <= 126 for c in key):
         raise PptError("PPT_MODEL_UNAVAILABLE")
     try:

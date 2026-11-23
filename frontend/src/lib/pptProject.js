@@ -3,7 +3,7 @@ let connection;
 
 export function newPptProject() {
   return {
-    revision: 0, topic: "", model: "gpt-6.2-astra", pageCount: 6, references: [],
+    revision: 0, topic: "", model: "gpt-6.2-astra", pageCount: 6, autoPageCount: false, references: [],
     template: null, deck: null, deckTemplate: null, deckFont: null, pending: null, lastTask: null,
   };
 }

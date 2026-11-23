@@ -66,6 +66,24 @@ class PptGenerationTests(unittest.TestCase):
             self.assertEqual(r.json["deck"]["slides"][0]["title"], "预算")
         self.assertEqual([m["credits_per_million"].get("cache_write") for m in config["models"]],[60,15,None])
 
+    def test_ppt_credentials_are_isolated_from_tavern_and_shared_across_models(self):
+        env = {"PLATFORM_TAVERN_API_KEY": "tavern-only",
+               "PLATFORM_TAVERN_API_ENDPOINT": "https://tavern.example/v1/chat/completions"}
+        with patch.dict("os.environ", env, clear=True):
+            for model in ppt_routes.MODELS:
+                response = self.client.post("/api/ppt/generate", json={**self.payload, "model": model})
+                self.assertEqual(response.json["code"], "PPT_MODEL_UNAVAILABLE")
+            self.model.assert_not_called()
+            self.store.assert_not_called()
+        group_keys = {"PLATFORM_PPT_GPT_API_KEY": "ppt-gpt", "PLATFORM_PPT_DEEPSEEK_API_KEY": "ppt-ds"}
+        with patch.dict("os.environ", {**env, **group_keys}, clear=True):
+            for model in ppt_routes.MODELS:
+                expected = "ppt-ds" if model == "deepseek-v4.1-flash" else "ppt-gpt"
+                self.assertEqual(ppt_routes.model_settings(model), (ppt_routes.DEFAULT_ENDPOINT, expected))
+            with patch.dict("os.environ", {"PLATFORM_PPT_API_KEY": "ppt-shared"}):
+                for model in ppt_routes.MODELS:
+                    self.assertEqual(ppt_routes.model_settings(model), (ppt_routes.DEFAULT_ENDPOINT, "ppt-shared"))
+
     def test_cache_write_is_an_input_subset(self):
         raw = {"prompt_tokens":1000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":150,"cache_write_tokens":650}}
         self.assertEqual(ppt_routes.ppt_usage(raw)["cache_write_tokens"],650)

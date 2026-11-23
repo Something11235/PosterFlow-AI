@@ -54,7 +54,8 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         sessionStorage.removeItem("ppt-continue-after-login");
         const guest = await accessPptProject("guest");
         if (!initial.revision) initial = await accessPptProject(owner, current => current.revision ? current : {
-          ...current, topic: guest.topic, pageCount: guest.pageCount, model: guest.model, template: guest.template, references: guest.references,
+          ...current, topic: guest.topic, pageCount: guest.pageCount, autoPageCount: Boolean(guest.autoPageCount),
+          model: guest.model, template: guest.template, references: guest.references,
         });
       }
       if (active) { setProject(initial); setTopic(initial.topic); setReady(true); }
@@ -69,6 +70,7 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   const pageIndex = Math.min(index, pages.length - 1);
   const page = pages[pageIndex];
   const rate = config?.models?.find(model => model.id === project.model)?.credits_per_million;
+  const maxPages = config?.max_pages || 16;
   const locked = !ready || Boolean(project.pending) || Boolean(busy);
   const finish = useCallback(async (id, result) => {
     if (result.status === "processing") return;
@@ -158,7 +160,7 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         if (current.pending) throw new Error("已有任务正在处理，请先查询原任务。");
         if (action === "edit" && JSON.stringify(page) !== JSON.stringify(current.deck?.slides.find(slide => slide.id === page?.id))) throw new Error("当前页已更新，请重新选择后修改。");
         const body = { request_id: id, model: current.model, references: current.references };
-        if (action === "generate") Object.assign(body, { topic: topic.trim(), page_count: current.pageCount, template: current.template?.template });
+        if (action === "generate") Object.assign(body, { topic: topic.trim(), page_count: current.autoPageCount ? "auto" : current.pageCount, template: current.template?.template });
         else Object.assign(body, { instruction: instruction.trim(), slide: page, element_ids: selected });
         return { ...current, topic, pending: { id, action, model: current.model, slideId: page?.id, body, at: Date.now() } };
       });
@@ -189,9 +191,17 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
       <section className="ppt-brief" aria-label="生成设置">
         <h2><Layers size={17}/>生成设置</h2>
         <label className="ppt-field">演示主题<textarea rows={4} maxLength={6000} placeholder="例如：为设计团队做一份季度项目复盘，突出成果与下季度计划" value={topic} disabled={locked} onChange={event => { topicDirty.current = true; setTopic(event.target.value); }} onBlur={() => { if (ready && topicDirty.current && topic !== project.topic) update({ topic }); }}/></label>
-        <label className="ppt-field ppt-inline">页数<input aria-label="页数" type="number" min="1" max="16" key={project.pageCount} defaultValue={project.pageCount} disabled={locked} onBlur={event => {
-          const value = Math.max(1, Math.min(16, Math.round(Number(event.target.value) || 6))); event.target.value = value; update({ pageCount: value });
-        }}/></label>
+        <fieldset disabled={locked} className="ppt-page-count">
+          <legend>页数</legend>
+          <div className="ppt-segments">
+            <button type="button" aria-pressed={!project.autoPageCount} onClick={() => update({ autoPageCount: false })}>手动指定</button>
+            <button type="button" aria-pressed={Boolean(project.autoPageCount)} onClick={() => update({ autoPageCount: true })}>由模型决定</button>
+          </div>
+          {project.autoPageCount ? <p>模型会根据主题和参考资料生成 1–{maxPages} 页。</p> :
+            <label className="ppt-field ppt-inline">生成页数<input aria-label="页数" type="number" min="1" max={maxPages} key={project.pageCount} defaultValue={project.pageCount} onBlur={event => {
+              const value = Math.max(1, Math.min(maxPages, Math.round(Number(event.target.value) || 6))); event.target.value = value; update({ pageCount: value });
+            }}/></label>}
+        </fieldset>
         <fieldset className="ppt-models" disabled={locked}><legend>生成模型</legend><div className="ppt-segments">
           <button aria-pressed={project.model !== economy} onClick={() => update({ model: high })}>高级模型</button>
           <button aria-pressed={project.model === economy} onClick={() => update({ model: economy })}>性价比模型</button>

@@ -138,8 +138,14 @@ def prepare(kind, data):
     original = None
     if kind == "generate":
         count = data.get("page_count", 6)
-        if type(count) is not int or not 1 <= count <= MAX_PAGES:
-            raise InvalidDocument("页数须为 1 至 16 的整数。")
+        if count == "auto":
+            page_instruction = f"根据主题、受众和资料内容自行决定 1 至 {MAX_PAGES} 页的合适篇幅，每页聚焦一个要点。"
+            budget_pages = MAX_PAGES
+        elif type(count) is int and 1 <= count <= MAX_PAGES:
+            page_instruction = f"严格按指定的 {count} 页生成。"
+            budget_pages = count
+        else:
+            raise InvalidDocument(f"请选择由模型决定页数，或指定 1 至 {MAX_PAGES} 页。")
         context.update(topic=string(data.get("topic"), 6000, "主题"), page_count=count)
         template = data.get("template")
         if template is not None:
@@ -148,11 +154,11 @@ def prepare(kind, data):
             if re.search(r"data:image/|;base64,", compact(template), re.IGNORECASE):
                 raise InvalidDocument("模板请提供文字与版式，图片文件保留在浏览器。")
             context["template"] = {k: template[k] for k in ("font", "background", "accent", "slides") if k in template}
-        instruction = (
-            '生成指定页数的完整演示稿。输出 {"title":"稿件标题","slides":[{"id":"s1","title":"页标题",'
+        instruction = page_instruction + (
+            '直接输出完整演示稿 {"title":"稿件标题","slides":[{"id":"s1","title":"页标题",'
             '"background":"#FFFFFF","elements":[...]}]}。每页至少一个可见文本元素，标题也须置于元素中。'
             "使用文本和矩形组成图表、时间线和比较版式。不要生成图片链接。")
-        output_bound = min(16000, 1400 + 850*count)
+        output_bound = min(16000, 1400 + 850*budget_pages)
     else:
         original = slide(data.get("slide"))
         selected = data.get("element_ids")
@@ -186,7 +192,9 @@ def result_document(kind, content, requested_count, original, selected):
         raise InvalidDocument("返回数据无效。")
     if kind == "generate":
         slides = raw.get("slides")
-        if not isinstance(slides, list) or len(slides) != requested_count:
+        if not isinstance(slides, list) or not 1 <= len(slides) <= MAX_PAGES:
+            raise InvalidDocument(f"演示稿须有 1 至 {MAX_PAGES} 页。")
+        if requested_count != "auto" and len(slides) != requested_count:
             raise InvalidDocument("生成的页数与要求不符。")
         pages = unique([slide(page, {}) for page in slides])
         if any(not any(e["type"] == "text" for e in page["elements"]) for page in pages):

@@ -46,7 +46,7 @@
 .ppt-brief h2 { gap: 10px; margin-inline: -20px; }
 .ppt-brief h2 svg, .ppt-editor header > div > svg, .ppt-edit strong svg { color: var(--ppt-highlight); }
 
-.ppt-field, .ppt-attachments, .ppt-models { display: grid; gap: 9px; min-width: 0; margin: 0; }
+.ppt-field, .ppt-attachments, .ppt-models, .ppt-page-count { display: grid; gap: 9px; min-width: 0; margin: 0; }
 .ppt-workspace fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
 .ppt-workspace legend { padding: 0; margin: 0 0 9px; }
 .ppt-field, .ppt-workspace legend { color: var(--ppt-secondary); font-size: 14px; font-weight: 600; }
@@ -67,6 +67,7 @@
 .ppt-workspace textarea::placeholder { color: var(--studio-muted); }
 .ppt-inline { display: flex; align-items: center; justify-content: space-between; }
 .ppt-inline input { width: 82px; min-height: 40px; font-variant-numeric: tabular-nums; }
+.ppt-page-count p { margin: 0; color: var(--studio-muted); font-size: 13px; line-height: 1.55; }
 .ppt-segments { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; background: var(--studio-bg); border: 1px solid var(--studio-line); border-radius: 8px; }
 .ppt-segments button { min-height: 36px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--studio-muted); font-size: 13px; }
 .ppt-segments button[aria-pressed=true] { background: var(--ppt-tint); border-color: var(--ppt-accent-border); color: var(--ppt-highlight); font-weight: 650; }
