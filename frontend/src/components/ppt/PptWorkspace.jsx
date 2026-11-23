@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FileUp, Layers, LoaderCircle, MessageSquare, MousePointer2, Paperclip, Presentation, RefreshCw, Sparkles, X } from "lucide-react";
 import { saveBrowserFile } from "../../lib/browserSave";
 import { displayCredits } from "../../lib/credits";
-import { accessPptProject, finishPptRequest, isPptPreflightError, newPptProject, pptChatContext, PPT_MODEL_NAMES, requestPpt } from "../../lib/pptProject";
+import { accessPptProject, finishPptRequest, getPptChat, isPptPreflightError, newPptChatSession, newPptProject, pptChatContext, PPT_MODEL_NAMES, requestPpt, setPptChatDraft } from "../../lib/pptProject";
 import PptChat from "./PptChat";
 import PptSlide from "./PptSlide";
 import "./ppt.css";
@@ -10,6 +10,28 @@ import "./ppt.css";
 const high = "gpt-6.2-astra";
 const middle = "gpt-6.2-sol";
 const economy = "deepseek-v4.1-flash";
+
+function draftKey(owner, chatId) {
+  return "ppt-chat-draft:" + owner + (chatId === "initial" ? "" : ":" + chatId);
+}
+
+function readDraft(key) {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+
+function resumeGuestProject(current, guest) {
+  if (current.pending) return current;
+  const guestDraft = getPptChat(guest).draft;
+  if (!current.revision) {
+    return { ...setPptChatDraft(current, current.activeChatId, guestDraft), topic: guest.topic, pageCount: guest.pageCount,
+      autoPageCount: guest.autoPageCount, model: guest.model, template: guest.template, references: guest.references, view: guest.view };
+  }
+  if (guest.view !== "chat" || !guestDraft) return current;
+  const existing = getPptChat(current);
+  if (!existing.turns.length && !existing.draft) return { ...setPptChatDraft(current, existing.id, guestDraft), view: "chat" };
+  const session = { ...newPptChatSession(), draft: guestDraft };
+  return { ...current, view: "chat", chatSessions: [session, ...current.chatSessions], activeChatId: session.id };
+}
 
 function BillingNote({ task }) {
   if (!task) return null;
@@ -33,16 +55,23 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   const [alert, setAlert] = useState("");
   const [config, setConfig] = useState(null);
   const [missingId, setMissingId] = useState("");
-  const chatCache = "ppt-chat-draft:" + owner;
-  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(chatCache); } catch { return null; } });
+  const activeChat = getPptChat(project);
+  const chatId = activeChat.id;
+  const cacheKey = draftKey(owner, chatId);
+  const [draft, setDraft] = useState(null);
+  const localDraft = draft?.key === cacheKey ? draft.value : readDraft(cacheKey);
+  const chatText = localDraft ?? activeChat.draft;
   const changeDraft = value => {
-    setDraft(value);
-    try {
-      if (value === null) sessionStorage.removeItem(chatCache);
-      else sessionStorage.setItem(chatCache, value);
-    } catch { /* The project also stores the draft when leaving the composer. */ }
+    setDraft({ key: cacheKey, value });
+    try { sessionStorage.setItem(cacheKey, value); } catch { /* IndexedDB also saves on blur. */ }
   };
-  const chatText = draft ?? project.chatDraft;
+  const clearSavedDraft = (key, value) => {
+    try {
+      if (readDraft(key) === value) sessionStorage.removeItem(key);
+    } catch { /* The draft was persisted with its conversation. */ }
+    setDraft(previous => previous?.key === key && previous.value === value ? null : previous);
+  };
+  const pendingChat = project.pending?.action === "chat" && project.pending.chatId === chatId ? project.pending : null;
   const showChat = project.view === "chat";
   const mounted = useRef(false);
   const submitting = useRef(false);
@@ -58,20 +87,38 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
     return next;
   }, [owner]);
   const update = fields => patch(current => current.pending ? current : { ...current, ...fields }).catch(error => setAlert(error.message));
+
+  function storeDraft(current) {
+    if (localDraft === null || (current.pending?.action === "chat" && current.pending.chatId === chatId)) return current;
+    return setPptChatDraft(current, chatId, localDraft);
+  }
+  function saveDraft() {
+    if (!ready || localDraft === null) return;
+    patch(storeDraft).then(() => clearSavedDraft(cacheKey, localDraft)).catch(error => setAlert(error.message));
+  }
+  async function selectChat(targetId) {
+    if (!ready || targetId === chatId) return;
+    try {
+      await patch(current => {
+        const saved = storeDraft(current);
+        if (targetId) return getPptChat(saved, targetId) ? { ...saved, activeChatId: targetId } : saved;
+        const empty = saved.chatSessions.find(session => !session.turns.length && !session.draft && session.id !== saved.pending?.chatId);
+        const next = empty || newPptChatSession();
+        return { ...saved, activeChatId: next.id, chatSessions: empty ? saved.chatSessions : [next, ...saved.chatSessions] };
+      });
+      if (localDraft !== null) clearSavedDraft(cacheKey, localDraft);
+    } catch (error) { setAlert(error.message); }
+  }
   useEffect(() => {
     mounted.current = true;
     let active = true;
     (async () => {
       let initial = await accessPptProject(owner);
+      if (!active) return;
       if (signedIn && sessionStorage.getItem("ppt-continue-after-login") === "yes") {
         sessionStorage.removeItem("ppt-continue-after-login");
         const guest = await accessPptProject("guest");
-        if (!initial.revision) initial = await accessPptProject(owner, current => current.revision ? current : {
-          ...current, topic: guest.topic, pageCount: guest.pageCount, autoPageCount: Boolean(guest.autoPageCount),
-          model: guest.model, template: guest.template, references: guest.references, view: guest.view, chatDraft: guest.chatDraft,
-        });
-        else if (guest.view === "chat" && guest.chatDraft && !initial.pending) initial = await accessPptProject(owner, current =>
-          current.pending ? current : { ...current, view: "chat", chatDraft: current.chatDraft || guest.chatDraft });
+        initial = await accessPptProject(owner, current => resumeGuestProject(current, guest));
       }
       if (active) { setProject(initial); setTopic(initial.topic); setReady(true); }
     })().catch(() => { if (active) setAlert("无法保存到本浏览器。请允许网站使用本地存储后刷新。"); });
@@ -160,7 +207,9 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   async function submit(action, retry = false) {
     if ((!retry && locked) || submitting.current || (retry && !project.pending?.body)) return;
     if (!signedIn) {
-      await update({ topic, chatDraft: chatText });
+      try {
+        await patch(current => ({ ...setPptChatDraft(current, chatId, chatText), topic, activeChatId: chatId }));
+      } catch (error) { setAlert(error.message); return; }
       try { sessionStorage.setItem("ppt-continue-after-login", "yes"); } catch { /* No transferable guest draft. */ }
       onLogin(); return;
     }
@@ -181,12 +230,12 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         if (action === "edit" && JSON.stringify(page) !== JSON.stringify(current.deck?.slides.find(slide => slide.id === page?.id))) throw new Error("当前页已更新，请重新选择后修改。");
         const body = { request_id: id, model: current.model, references: current.references };
         if (action === "generate") Object.assign(body, { topic: topic.trim(), page_count: current.autoPageCount ? "auto" : current.pageCount, template: current.template?.template });
-        else if (action === "chat") Object.assign(body, pptChatContext(current, topic, chatText, page?.id));
+        else if (action === "chat") Object.assign(body, pptChatContext(current, topic, chatText, page?.id, chatId));
         else Object.assign(body, { instruction: instruction.trim(), slide: page, element_ids: selected });
-        return { ...current, topic, chatDraft: action === "chat" ? chatText : current.chatDraft,
-          pending: { id, action, model: current.model, slideId: page?.id, body, at: Date.now() } };
+        const saved = action === "chat" ? setPptChatDraft(current, chatId, chatText) : current;
+        return { ...saved, topic, pending: { id, action, ...(action === "chat" && { chatId }), model: current.model, slideId: page?.id, body, at: Date.now() } };
       });
-      if (action === "chat") changeDraft(null);
+      if (action === "chat") clearSavedDraft(cacheKey, chatText);
       await sendPending(snapshot.pending);
     } catch (error) {
       await patch().catch(() => {});
@@ -247,9 +296,10 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         <button className="ppt-primary" disabled={locked || !topic.trim()} onClick={async () => { await switchView("preview"); await submit("generate"); }}><Sparkles size={17}/>{project.deck ? "重新生成演示稿" : "生成演示稿"}</button>
       </section>
       <section className="ppt-editor" aria-label={showChat ? "AI 对话" : "演示稿预览"}>
-        {showChat ? <PptChat turns={project.chatTurns} pending={project.pending} model={project.model} busy={locked}
-          value={project.pending?.action === "chat" ? "" : chatText} onChange={changeDraft}
-          onSaveDraft={() => { if (ready && draft !== null && draft !== project.chatDraft) update({ chatDraft: draft }); }}
+        {showChat ? <PptChat sessions={project.chatSessions} activeChatId={chatId} onNewChat={() => selectChat()} onSelectChat={selectChat} historyDisabled={!ready}
+          turns={activeChat.turns} pending={pendingChat} model={project.model} busy={locked}
+          composerDisabled={!ready || Boolean(pendingChat) || (!project.pending && Boolean(busy))}
+          value={pendingChat ? "" : chatText} onChange={changeDraft} onSaveDraft={saveDraft}
           onSend={() => submit("chat")} onUseTopic={async text => {
             await update({ topic: text }); setTopic(text); topicDirty.current = false; await switchView("preview");
           }}/> : <>
@@ -269,9 +319,9 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
           </div>
           <h3>演示稿将在这里预览</h3><p>生成后可逐页浏览，点选文字或图形即可修改。</p>
         </div>}</>}
-        {(project.pending || busy) && <div className="ppt-progress" role="status"><LoaderCircle size={16} className="ppt-spin"/><span>{busy || "正在查询原任务…"}{project.pending && <small>刷新页面后会继续查询本次任务。</small>}</span>{project.pending && !busy && <button onClick={() => check(project.pending, true)}><RefreshCw size={15}/>查询</button>}</div>}
+        {(project.pending || busy) && <div className="ppt-progress" role="status"><LoaderCircle size={16} className="ppt-spin"/><span>{showChat && project.pending?.action === "chat" && !pendingChat ? "另一段对话正在等待回复…" : busy || "正在查询原任务…"}{project.pending && <small>刷新页面后会继续查询本次任务。</small>}</span>{project.pending && !busy && <button onClick={() => check(project.pending, true)}><RefreshCw size={15}/>查询</button>}</div>}
         {project.pending?.body && missingId === project.pending.id && <button className="ppt-secondary" disabled={Boolean(busy)} onClick={() => submit(project.pending.action, true)}>用原任务编号再次提交</button>}
-        {!project.pending && <BillingNote task={project.lastTask}/>}
+        {!project.pending && (showChat ? project.lastTask?.chatId === chatId : project.lastTask?.action !== "chat") && <BillingNote task={project.lastTask}/>}
       </section>
     </div>
   </main>;

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { finishPptRequest, isPptPreflightError, newPptProject, pptChatContext } from "../src/lib/pptProject.js";
+import { finishPptRequest, getPptChat, isPptPreflightError, newPptChatSession, newPptProject, pptChatContext,
+  restorePptProject, setPptChatDraft } from "../src/lib/pptProject.js";
 
 test("recovering an automatically sized deck preserves the user's manual page count", () => {
   const project = newPptProject();
@@ -39,17 +40,18 @@ test("recovery applies a completed edit once and preserves the other pages", () 
 test("chat recovers exactly one turn alongside an unchanged deck and preserves a failed question", () => {
   const pending = { id: "one", action: "chat", model: "gpt-6.2-astra", body: { message: "这个标题怎么样？" } };
   const deck = { title: "项目复盘", slides: [{ id: "s1" }] };
-  const draft = { ...newPptProject(), pending, deck, chatDraft: pending.body.message };
+  const draft = setPptChatDraft({ ...newPptProject(), pending, deck }, "initial", pending.body.message);
   const result = { status: "succeeded", reply: "用成果作标题更清晰。" };
   const updated = finishPptRequest(draft, "one", result);
-  assert.deepEqual(updated.chatTurns, [{ id: "one", model: pending.model, message: pending.body.message, reply: result.reply }]);
-  assert.equal(updated.chatDraft, "");
+  assert.deepEqual(getPptChat(updated).turns, [{ id: "one", model: pending.model, message: pending.body.message, reply: result.reply }]);
+  assert.equal(getPptChat(updated).draft, "");
+  assert.equal(updated.lastTask.chatId, "initial");
   assert.equal(updated.deck, deck);
   assert.equal(finishPptRequest(updated, "one", result), updated);
   assert.throws(() => finishPptRequest(draft, "one", { status: "succeeded", deck }));
   const failed = finishPptRequest(draft, "one", { status: "failed" });
-  assert.equal(failed.chatDraft, pending.body.message);
-  assert.equal(failed.chatTurns.length, 0);
+  assert.equal(getPptChat(failed).draft, pending.body.message);
+  assert.equal(getPptChat(failed).turns.length, 0);
 });
 
 test("chat accepts a blank project and only sends text from the active slide with ordered recent history", () => {
@@ -61,7 +63,7 @@ test("chat accepts a blank project and only sends text from the active slide wit
     deck: { title: "计划", slides: [
       { id: "s1", title: "背景", elements: [] },
       { id: "s2", title: "成果", elements: [{ type: "rect", fill: "#fff" }, { type: "text", text: "访谈摘要" }] },
-    ] }, chatTurns: Array.from({ length: 25 }, (_, id) => ({ message: `q${id}`, reply: `a${id}` })) };
+    ] }, chatSessions: [{ ...getPptChat(fresh), turns: Array.from({ length: 25 }, (_, id) => ({ message: `q${id}`, reply: `a${id}` })) }] };
   const context = pptChatContext(project, "分享", "继续", "s2");
   assert.equal(context.deck_title, "计划");
   assert.deepEqual(context.slide_titles, ["背景", "成果"]);
@@ -70,4 +72,44 @@ test("chat accepts a blank project and only sends text from the active slide wit
   assert.equal(context.history.length, 40);
   assert.deepEqual(context.history[0], { role: "user", content: "q5" });
   assert.deepEqual(context.history.at(-1), { role: "assistant", content: "a24" });
+});
+
+test("restoring the single-chat project migrates its turns, draft, request and receipt without resubmitting", () => {
+  const legacy = {
+    revision: 10, topic: "主题", view: "chat",
+    chatTurns: [{ id: "sent", model: "m", message: "第一问", reply: "第一答" }], chatDraft: "第二问",
+    pending: { id: "in-flight", action: "chat", at: 123, body: { message: "第二问" } },
+    lastTask: { id: "sent", action: "chat", status: "succeeded", billing: { charged_credits: 0.1 } },
+  };
+  const project = restorePptProject(legacy);
+  assert.equal(project.activeChatId, "initial");
+  assert.deepEqual(getPptChat(project), { id: "initial", turns: legacy.chatTurns, draft: "第二问", updatedAt: 123 });
+  assert.deepEqual(project.pending, { ...legacy.pending, chatId: "initial" });
+  assert.deepEqual(project.lastTask, { ...legacy.lastTask, chatId: "initial" });
+  assert.equal(project.revision, legacy.revision);
+  assert.equal(Object.hasOwn(project, "chatTurns"), false);
+  assert.deepEqual(restorePptProject(project), project);
+});
+
+test("switching sessions isolates drafts, history and recovery of a pending reply", () => {
+  const fresh = newPptProject();
+  const prior = getPptChat(fresh);
+  const second = newPptChatSession();
+  assert.notEqual(second.id, newPptChatSession().id);
+  const a = { ...prior, turns: [{ message: "旧话题", reply: "旧回答" }], draft: "正在发送" };
+  let project = { ...fresh, chatSessions: [a, second], activeChatId: second.id,
+    pending: { id: "one", action: "chat", chatId: a.id, model: "m", body: { message: "正在发送" } } };
+  project = setPptChatDraft(project, second.id, "另一个草稿");
+  const restored = restorePptProject(project);
+  assert.deepEqual(pptChatContext(restored, "", "新问题").history, []);
+  assert.deepEqual(pptChatContext(restored, "", "继续", null, a.id).history.map(item => item.content), ["旧话题", "旧回答"]);
+  assert.throws(() => pptChatContext(restored, "", "继续", null, "missing"));
+  const completed = finishPptRequest(restored, "one", { status: "succeeded", reply: "原任务完成" });
+  assert.equal(completed.activeChatId, second.id);
+  assert.equal(completed.lastTask.chatId, a.id);
+  assert.equal(getPptChat(completed).draft, "另一个草稿");
+  assert.deepEqual(getPptChat(completed).turns, []);
+  assert.equal(getPptChat(completed, a.id).turns.at(-1).reply, "原任务完成");
+  assert.equal(getPptChat(completed, a.id).draft, "");
+  assert.equal(finishPptRequest(completed, "one", { status: "succeeded", reply: "重复" }), completed);
 });
