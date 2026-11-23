@@ -5,6 +5,7 @@ export function newPptProject() {
   return {
     revision: 0, topic: "", model: "gpt-6.2-astra", pageCount: 6, autoPageCount: false, references: [],
     template: null, deck: null, deckTemplate: null, deckFont: null, pending: null, lastTask: null,
+    chatTurns: [], chatDraft: "", view: "preview",
   };
 }
 
@@ -28,7 +29,7 @@ export async function accessPptProject(owner, update) {
     let cause;
     const read = store.get(owner);
     read.onsuccess = () => {
-      const current = read.result || newPptProject();
+      const current = { ...newPptProject(), ...read.result };
       try {
         next = update ? update(current) : current;
         if (update && next !== current) {
@@ -46,14 +47,39 @@ export async function accessPptProject(owner, update) {
   });
 }
 
+export function pptChatContext(project, topic, message, slideId) {
+  const slides = project.deck?.slides || [];
+  const currentSlide = slides.find(slide => slide.id === slideId);
+  const context = { topic: topic.trim(), message: message.trim(), references: project.references,
+    deck_title: project.deck?.title || "", slide_titles: slides.map(slide => slide.title),
+    slide_text: (currentSlide?.elements || []).filter(el => el.type === "text").map(el => el.text).join("\n").slice(0, 12000) };
+  // Reserve space for the server instructions and include the newest complete turns that fit.
+  const encoder = new TextEncoder();
+  let remaining = 195000 - encoder.encode(JSON.stringify(context)).byteLength;
+  const history = [];
+  for (const turn of (project.chatTurns || []).slice(-20).reverse()) {
+    const pair = [{ role: "user", content: turn.message }, { role: "assistant", content: turn.reply }];
+    const size = encoder.encode(JSON.stringify(pair)).byteLength;
+    if (size > remaining) break;
+    history.unshift(...pair);
+    remaining -= size;
+  }
+  return { ...context, history };
+}
+
 export function finishPptRequest(project, requestId, result) {
   const pending = project.pending;
   if (pending?.id !== requestId || !["succeeded", "failed"].includes(result.status)) return project;
   let deck = project.deck;
   let deckTemplate = project.deckTemplate;
   let deckFont = project.deckFont;
+  let chatTurns = project.chatTurns;
+  let chatDraft = project.chatDraft;
   if (result.status === "succeeded") {
-    if (pending.action === "generate" && result.deck?.slides?.length) {
+    if (pending.action === "chat" && typeof result.reply === "string" && result.reply.trim()) {
+      chatTurns = [...(chatTurns || []), { id: requestId, model: pending.model, message: pending.body.message, reply: result.reply }];
+      chatDraft = "";
+    } else if (pending.action === "generate" && result.deck?.slides?.length) {
       deck = result.deck;
       deckTemplate = project.template?.file || null;
       deckFont = project.template?.template?.font || null;
@@ -63,7 +89,7 @@ export function finishPptRequest(project, requestId, result) {
       throw new Error("结果格式不完整，请稍后查询原任务。");
     }
   }
-  return { ...project, deck, deckTemplate, deckFont, pending: null,
+  return { ...project, deck, deckTemplate, deckFont, chatTurns, chatDraft, pending: null,
     lastTask: { id: requestId, action: pending.action, model: pending.model, status: result.status, billing: result.billing, error: result.error?.message, note: result.note?.message } };
 }
 

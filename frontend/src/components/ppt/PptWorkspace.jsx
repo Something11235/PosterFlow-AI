@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FileUp, Layers, LoaderCircle, MousePointer2, Paperclip, Presentation, RefreshCw, Sparkles, X } from "lucide-react";
+import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FileUp, Layers, LoaderCircle, MessageSquare, MousePointer2, Paperclip, Presentation, RefreshCw, Sparkles, X } from "lucide-react";
 import { saveBrowserFile } from "../../lib/browserSave";
 import { displayCredits } from "../../lib/credits";
-import { accessPptProject, finishPptRequest, isPptPreflightError, newPptProject, PPT_MODEL_NAMES, requestPpt } from "../../lib/pptProject";
+import { accessPptProject, finishPptRequest, isPptPreflightError, newPptProject, pptChatContext, PPT_MODEL_NAMES, requestPpt } from "../../lib/pptProject";
+import PptChat from "./PptChat";
 import PptSlide from "./PptSlide";
 import "./ppt.css";
 
@@ -13,7 +14,8 @@ const economy = "deepseek-v4.1-flash";
 function BillingNote({ task }) {
   if (!task) return null;
   const { billing } = task;
-  return <div className="ppt-receipt" role="status">{task.status === "failed" ? task.error || "任务未完成。" : (task.action === "edit" ? "修改已保存" : "演示稿已保存")}
+  const success = { chat: "回复已保存", edit: "修改已保存", generate: "演示稿已保存" };
+  return <div className="ppt-receipt" role="status">{task.status === "failed" ? task.error || "任务未完成。" : success[task.action]}
     {billing?.status === "settled" && <> · 本次扣除 {displayCredits(billing.charged_credits)} 积分</>}
     {billing?.status === "refunded" && <> · 预留积分已退还</>}
     {task.note && <> · {task.note}</>}
@@ -31,6 +33,17 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   const [alert, setAlert] = useState("");
   const [config, setConfig] = useState(null);
   const [missingId, setMissingId] = useState("");
+  const chatCache = "ppt-chat-draft:" + owner;
+  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(chatCache); } catch { return null; } });
+  const changeDraft = value => {
+    setDraft(value);
+    try {
+      if (value === null) sessionStorage.removeItem(chatCache);
+      else sessionStorage.setItem(chatCache, value);
+    } catch { /* The project also stores the draft when leaving the composer. */ }
+  };
+  const chatText = draft ?? project.chatDraft;
+  const showChat = project.view === "chat";
   const mounted = useRef(false);
   const submitting = useRef(false);
   const topicDirty = useRef(false);
@@ -55,8 +68,10 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         const guest = await accessPptProject("guest");
         if (!initial.revision) initial = await accessPptProject(owner, current => current.revision ? current : {
           ...current, topic: guest.topic, pageCount: guest.pageCount, autoPageCount: Boolean(guest.autoPageCount),
-          model: guest.model, template: guest.template, references: guest.references,
+          model: guest.model, template: guest.template, references: guest.references, view: guest.view, chatDraft: guest.chatDraft,
         });
+        else if (guest.view === "chat" && guest.chatDraft && !initial.pending) initial = await accessPptProject(owner, current =>
+          current.pending ? current : { ...current, view: "chat", chatDraft: current.chatDraft || guest.chatDraft });
       }
       if (active) { setProject(initial); setTopic(initial.topic); setReady(true); }
     })().catch(() => { if (active) setAlert("无法保存到本浏览器。请允许网站使用本地存储后刷新。"); });
@@ -74,8 +89,12 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   const locked = !ready || Boolean(project.pending) || Boolean(busy);
   const finish = useCallback(async (id, result) => {
     if (result.status === "processing") return;
-    await patch(current => finishPptRequest(current, id, result));
-    if (mounted.current) { setAlert(""); setMissingId(""); setSelected([]); setInstruction(""); refresh.current?.(); }
+    const next = await patch(current => finishPptRequest(current, id, result));
+    if (mounted.current && next.lastTask?.id === id) {
+      setAlert(""); setMissingId("");
+      if (next.lastTask.action !== "chat") { setSelected([]); setInstruction(""); }
+      refresh.current?.();
+    }
   }, [patch]);
   const check = useCallback(async (pending, manual = false) => {
     if (!pending || checking.current || submitting.current) return;
@@ -141,14 +160,15 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
   async function submit(action, retry = false) {
     if ((!retry && locked) || submitting.current || (retry && !project.pending?.body)) return;
     if (!signedIn) {
-      await update({ topic });
+      await update({ topic, chatDraft: chatText });
       try { sessionStorage.setItem("ppt-continue-after-login", "yes"); } catch { /* No transferable guest draft. */ }
       onLogin(); return;
     }
     if (!retry && action === "generate" && !topic.trim()) { setAlert("请填写演示主题。"); return; }
     if (!retry && action === "edit" && (!instruction.trim() || !selected.length)) { setAlert("请先选中元素并填写修改要求。"); return; }
+    if (!retry && action === "chat" && !chatText.trim()) return;
     submitting.current = true;
-    setBusy(action === "edit" ? "正在修改…" : "正在生成…"); setAlert(""); setMissingId("");
+    setBusy({ chat: "正在等待 AI 回复…", edit: "正在修改…", generate: "正在生成…" }[action]); setAlert(""); setMissingId("");
     try {
       if (retry) {
         const latest = await patch();
@@ -161,9 +181,12 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
         if (action === "edit" && JSON.stringify(page) !== JSON.stringify(current.deck?.slides.find(slide => slide.id === page?.id))) throw new Error("当前页已更新，请重新选择后修改。");
         const body = { request_id: id, model: current.model, references: current.references };
         if (action === "generate") Object.assign(body, { topic: topic.trim(), page_count: current.autoPageCount ? "auto" : current.pageCount, template: current.template?.template });
+        else if (action === "chat") Object.assign(body, pptChatContext(current, topic, chatText, page?.id));
         else Object.assign(body, { instruction: instruction.trim(), slide: page, element_ids: selected });
-        return { ...current, topic, pending: { id, action, model: current.model, slideId: page?.id, body, at: Date.now() } };
+        return { ...current, topic, chatDraft: action === "chat" ? chatText : current.chatDraft,
+          pending: { id, action, model: current.model, slideId: page?.id, body, at: Date.now() } };
       });
+      if (action === "chat") changeDraft(null);
       await sendPending(snapshot.pending);
     } catch (error) {
       await patch().catch(() => {});
@@ -183,11 +206,17 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
     finally { if (mounted.current) setBusy(""); }
   }
   const switchPage = next => { setIndex(next); setSelected([]); setInstruction(""); };
+  const switchView = view => patch(current => current.view === view ? current : { ...current, view }).catch(error => setAlert(error.message));
 
   return <main className="studio-page ppt-workspace">
-    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={25}/></div><div><h1>一键 PPT</h1><p>输入主题或添加参考资料，生成可直接编辑的演示稿。</p></div></header>
+    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={25}/></div><div><h1>一键 PPT</h1><p>输入主题或添加参考资料，生成可直接编辑的演示稿。</p></div>
+      <div className="ppt-view-switch ppt-segments" role="group" aria-label="工作区视图">
+        <button aria-pressed={!showChat} disabled={!ready} onClick={() => switchView("preview")}><Presentation size={16}/>演示稿预览</button>
+        <button aria-pressed={showChat} disabled={!ready} onClick={() => switchView("chat")}><MessageSquare size={16}/>AI 对话</button>
+      </div>
+    </header>
     {alert && <div role="alert" className="ppt-alert">{alert}<button aria-label="关闭提示" onClick={() => setAlert("")}><X size={16}/></button></div>}
-    <div className="ppt-columns">
+    <div className={"ppt-columns" + (showChat ? " ppt-columns-chat" : "")}>
       <section className="ppt-brief" aria-label="生成设置">
         <h2><Layers size={17}/>生成设置</h2>
         <label className="ppt-field">演示主题<textarea rows={4} maxLength={6000} placeholder="例如：为设计团队做一份季度项目复盘，突出成果与下季度计划" value={topic} disabled={locked} onChange={event => { topicDirty.current = true; setTopic(event.target.value); }} onBlur={() => { if (ready && topicDirty.current && topic !== project.topic) update({ topic }); }}/></label>
@@ -215,9 +244,15 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
           {project.references.map((source, i) => <div className="ppt-file" key={i}><FileText size={14}/><span>{source.name}</span><button aria-label={"移除 " + source.name} onClick={() => patch(current => current.pending ? current : { ...current, references: current.references.filter((_, n) => n !== i) }).catch(error => setAlert(error.message))}><X size={14}/></button></div>)}
           <details className="ppt-format-help"><summary>支持的格式与大小<ChevronDown size={14} aria-hidden="true"/></summary><p>支持 PPTX、DOCX、XLSX、PDF、TXT、MD 和 CSV，单个文件最多 24 MB。每份参考资料读取前 12,000 字，PDF 最多读取前 100 页。</p></details>
         </fieldset>
-        <button className="ppt-primary" disabled={locked || !topic.trim()} onClick={() => submit("generate")}><Sparkles size={17}/>{project.deck ? "重新生成演示稿" : "生成演示稿"}</button>
+        <button className="ppt-primary" disabled={locked || !topic.trim()} onClick={async () => { await switchView("preview"); await submit("generate"); }}><Sparkles size={17}/>{project.deck ? "重新生成演示稿" : "生成演示稿"}</button>
       </section>
-      <section className="ppt-editor" aria-label="演示稿预览">
+      <section className="ppt-editor" aria-label={showChat ? "AI 对话" : "演示稿预览"}>
+        {showChat ? <PptChat turns={project.chatTurns} pending={project.pending} model={project.model} busy={locked}
+          value={project.pending?.action === "chat" ? "" : chatText} onChange={changeDraft}
+          onSaveDraft={() => { if (ready && draft !== null && draft !== project.chatDraft) update({ chatDraft: draft }); }}
+          onSend={() => submit("chat")} onUseTopic={async text => {
+            await update({ topic: text }); setTopic(text); topicDirty.current = false; await switchView("preview");
+          }}/> : <>
         <header><div><Presentation size={17}/><h2>{project.deck?.title || "演示稿预览"}</h2></div><button className="ppt-export" disabled={!page || Boolean(busy)} onClick={download}><ArrowDownToLine size={16}/>导出 PPTX</button></header>
         {page ? <>
           <div className="ppt-paper"><PptSlide key={page.id} slide={page} selected={selected} font={project.deckFont || "Microsoft YaHei, sans-serif"} onSelect={locked ? undefined : setSelected}/></div>
@@ -233,7 +268,7 @@ export default function PptWorkspace({ owner, signedIn, authHeaders, onLogin, on
             <div className="ppt-cover"><div className="ppt-cover-lines"><i/><i/><i/></div><span className="ppt-cover-arc"/></div>
           </div>
           <h3>演示稿将在这里预览</h3><p>生成后可逐页浏览，点选文字或图形即可修改。</p>
-        </div>}
+        </div>}</>}
         {(project.pending || busy) && <div className="ppt-progress" role="status"><LoaderCircle size={16} className="ppt-spin"/><span>{busy || "正在查询原任务…"}{project.pending && <small>刷新页面后会继续查询本次任务。</small>}</span>{project.pending && !busy && <button onClick={() => check(project.pending, true)}><RefreshCw size={15}/>查询</button>}</div>}
         {project.pending?.body && missingId === project.pending.id && <button className="ppt-secondary" disabled={Boolean(busy)} onClick={() => submit(project.pending.action, true)}>用原任务编号再次提交</button>}
         {!project.pending && <BillingNote task={project.lastTask}/>}

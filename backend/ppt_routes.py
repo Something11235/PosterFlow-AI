@@ -1,4 +1,4 @@
-"""Authenticated BuyToken presentation generation, selective editing and recovery."""
+"""Authenticated BuyToken presentation generation, editing, chat and recovery."""
 import hashlib
 import os
 import time
@@ -39,7 +39,7 @@ MESSAGES = {
     "PPT_PENDING_LIMIT": (429, "已有三项 PPT 任务处理中，请稍后查看结果。"),
     "PPT_MODEL_UNAVAILABLE": (503, "此 PPT 模型暂未配置，请联系站主开通。"),
     "PPT_DATABASE_UNAVAILABLE": (503, "暂时无法确认 PPT 任务状态，请保留当前任务并查询原编号。"),
-    "PPT_RESULT_INVALID": (200, "模型未返回可用的演示文稿或选区修改，预留积分已退回。"),
+    "PPT_RESULT_INVALID": (200, "模型未返回可用结果，预留积分已退回。"),
     "PPT_PROVIDER_REJECTED": (200, "模型服务商未接受本次请求，预留积分已退回。"),
     "PPT_PROVIDER_UNREACHABLE": (200, "暂时无法连接模型服务商，预留积分已退回。"),
     "PPT_RESULT_UNAVAILABLE": (200, "未收到可交付的模型结果，预留积分已退回。"),
@@ -142,8 +142,10 @@ def run_request(kind, user_id, payload, deadline):
                                        "p_input_bound": input_bound, "p_output_bound": output_bound})
     if reply.get("leader") is not True:
         return public_result(reply["request"])
-    body = {"model": model, "messages": messages, "stream": False, "response_format": {"type": "json_object"},
+    body = {"model": model, "messages": messages, "stream": False,
             "max_tokens" if model == "deepseek-v4.1-flash" else "max_completion_tokens": output_bound}
+    if kind != "chat":
+        body["response_format"] = {"type": "json_object"}
     usage, document, error_code = None, None, None
     try:
         answer = run_without_deltas(provider_reply(endpoint, key, body, deadline, usage_reader=ppt_usage))
@@ -219,5 +221,9 @@ def create_ppt_blueprint(server):
     @bp.post("/edit")
     def edit():
         return submit("edit")
+
+    @bp.post("/chat")
+    def chat():
+        return submit("chat")
 
     return bp

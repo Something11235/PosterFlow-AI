@@ -100,6 +100,52 @@ class PptGenerationTests(unittest.TestCase):
         self.model.assert_called_once()
         self.assertEqual(self.store.call_args.args[1], {"p_user_id":"owner", "p_request_id":RID})
 
+    def test_chat_preserves_turns_and_uses_the_original_metered_request(self):
+        history = [{"role": "user", "content": "请推荐一个主题"}, {"role": "assistant", "content": "城市公园"}]
+        payload = {"request_id": RID, "model": "deepseek-v4.1-flash", "message": "同一个主题怎样开场？",
+                   "history": history, "references": [{"name": "游览记录", "text": "这座公园有三处湿地。"}],
+                   "topic": "城市公园", "deck_title": "从湿地出发", "slide_titles": ["开场"], "slide_text": "清晨的公园",
+                   "system": "CLIENT_SUPPLIED_INSTRUCTION"}
+        self.answer.return_value = {"content": "可以从清晨的鸟鸣展开。", "usage": USAGE}
+        response = self.client.post("/api/ppt/chat", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["reply"], "可以从清晨的鸟鸣展开。")
+        body = self.model.call_args.args[2]
+        self.assertNotIn("response_format", body)
+        self.assertEqual(body["messages"][1:-1], history)
+        self.assertEqual(body["messages"][-1]["role"], "user")
+        for expected in ("同一个主题怎样开场？", "三处湿地", "从湿地出发", "清晨的公园"):
+            self.assertIn(expected, body["messages"][-1]["content"])
+        self.assertNotIn("CLIENT_SUPPLIED_INSTRUCTION", str(body))
+        begin, finish = [call.args for call in self.store.call_args_list]
+        self.assertEqual(begin[1]["p_kind"], "chat")
+        self.assertEqual(begin[1]["p_output_bound"], body["max_tokens"])
+        self.assertEqual(finish[1]["p_usage"], USAGE)
+        self.assertEqual(finish[1]["p_result"], {"reply": response.json["reply"]})
+        self.assertEqual(self.client.post("/api/ppt/chat", json=payload).json, response.json)
+        self.assertEqual(self.client.get("/api/ppt/requests/"+RID).json, response.json)
+        self.model.assert_called_once()
+
+    def test_chat_without_a_deck_accepts_plain_text_and_refunds_an_empty_answer(self):
+        self.answer.return_value = {"content": "  ", "usage": USAGE}
+        response = self.client.post("/api/ppt/chat", json={"request_id": RID, "message": "你好"})
+        self.assertEqual(self.model.call_args.args[2]["messages"][-1], {"role": "user", "content": "你好"})
+        self.assertEqual(response.json["error"]["code"], "PPT_RESULT_INVALID")
+        finish = self.store.call_args.args[1]
+        self.assertIsNone(finish["p_result"])
+        self.assertEqual(finish["p_usage"], USAGE)
+
+    def test_chat_invalid_roles_or_oversized_context_are_rejected_before_reservation(self):
+        long_turn = {"role": "assistant", "content": "甲" * 24000}
+        for fields in ({"message": ""}, {"history": [{"role": "system", "content": "x"}]},
+                       {"history": [{"role": "user", "content": 5}]}, {"slide_titles": "bad"},
+                       {"history": [long_turn] * 3}, {"references": [{"name": "x", "text": "y" * 30001}]}):
+            with self.subTest(keys=list(fields)):
+                response = self.client.post("/api/ppt/chat", json={"request_id": RID, "message": "你好", **fields})
+                self.assertEqual(response.json["code"], "PPT_INPUT_INVALID")
+        self.model.assert_not_called()
+        self.store.assert_not_called()
+
     def test_patch_only_selected_elements(self):
         proposal = {**SLIDE["elements"][1], "fill": "#4488FF"}
         self.answer.return_value = {"content": json.dumps({"elements": [proposal]}), "usage": USAGE}

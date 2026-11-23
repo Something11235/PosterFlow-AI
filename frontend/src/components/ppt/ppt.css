@@ -20,6 +20,8 @@
 }
 .ppt-workspace svg { flex-shrink: 0; }
 .ppt-heading { gap: 15px; margin-bottom: 24px; }
+.ppt-heading .ppt-view-switch { margin-left: auto; flex-shrink: 0; }
+.ppt-view-switch button { display: flex; align-items: center; justify-content: center; gap: 7px; padding-inline: 12px; }
 .ppt-heading-icon {
   width: 52px;
   height: 52px;
@@ -171,6 +173,21 @@
 .ppt-progress, .ppt-receipt { margin-top: 12px; background: var(--ppt-tint); color: var(--ppt-secondary); }
 .ppt-progress small { display: block; color: var(--studio-muted); }
 .ppt-progress button { gap: 4px; margin-left: auto; color: var(--ppt-highlight); }
+.ppt-chat-model, .ppt-chat-compose small { color: var(--studio-muted); font-size: 12px; }
+.ppt-chat-log { display: flex; flex-direction: column; gap: 18px; height: clamp(280px, 44vh, 520px); overflow-y: auto; overscroll-behavior: contain; padding: 12px 6px; scrollbar-width: thin; }
+.ppt-chat-empty { display: grid; justify-items: center; align-content: center; flex: 1; padding: 12px; text-align: center; }
+.ppt-chat-empty svg { box-sizing: content-box; padding: 15px; border-radius: 15px; color: var(--ppt-highlight); background: var(--ppt-tint); }
+.ppt-chat-empty h3 { margin: 15px 0 6px; font-size: 19px; }
+.ppt-chat-empty p { max-width: 36ch; margin: 0; color: var(--studio-muted); font-size: 14px; line-height: 1.7; }
+.ppt-chat-user, .ppt-chat-reply { display: grid; gap: 6px; min-width: 0; max-width: 94%; }
+.ppt-chat-user { align-self: flex-end; justify-items: end; }
+.ppt-chat-reply { align-self: flex-start; justify-items: start; }
+.ppt-chat-log :is(.ppt-chat-user,.ppt-chat-reply) > span { font-size: 12px; font-weight: 600; color: var(--studio-muted); }
+.ppt-chat-user p, .ppt-chat-reply p { margin: 0; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ppt-chat-user p { padding: 9px 14px; background: var(--ppt-tint); border-radius: 10px 10px 2px 10px; }
+.ppt-chat-reply button { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 2px 0; border: 0; background: none; color: var(--ppt-highlight); font-size: 12px; }
+.ppt-chat-compose { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--studio-line); }
+.ppt-chat-compose > div { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin-top: 8px; }
 @media (prefers-reduced-motion: no-preference) {
   .ppt-workspace :is(button, .ppt-upload, textarea, select) { transition: background-color .16s, color .16s, border-color .16s; }
   .ppt-spin { animation: ppt-spin 1.2s linear infinite; }
@@ -178,10 +195,13 @@
 @keyframes ppt-spin { to { transform: rotate(360deg); } }
 @media (max-width: 940px) {
   .ppt-columns { grid-template-columns: minmax(0, 1fr); }
+  .ppt-columns-chat > .ppt-editor { grid-row: 1; }
   .ppt-brief { gap: 14px; }
 }
 @media (max-width: 600px) {
-  .ppt-heading { gap: 11px; margin-bottom: 18px; }
+  .ppt-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; margin-bottom: 18px; }
+  .ppt-heading .ppt-view-switch { grid-column: 1 / -1; width: 100%; margin: 0; }
+  .ppt-chat-reply button { min-height: 44px; }
   .ppt-heading-icon { width: 44px; height: 44px; }
   .ppt-heading p { font-size: 13px; }
   .ppt-brief, .ppt-editor { padding-inline: 14px; }
