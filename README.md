@@ -13,9 +13,9 @@
 
 </div>
 
-![PosterFlow AI 图像、音乐、视频与 AI 酒馆入口](docs/screenshots/showcase/overview-20261113.png)
+![PosterFlow AI 创作总览，AI 创作画布入口的光带依次经过分镜、视频和尾帧续镜](docs/screenshots/showcase/overview-animated-20261125.gif)
 
-*图 1 · 从创作总览或主导航，进入图像、音乐、视频与 AI 酒馆。*
+*图 1 · 从主页进入 AI 创作画布，或选择图像、音乐、视频、AI 酒馆与一键 PPT。*
 
 ## 从灵感到作品
 
