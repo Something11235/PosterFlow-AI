@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "lang": "zh-CN",
+  "name": "PosterFlow AI 创作工作台",
+  "short_name": "PosterFlow",
+  "description": "图像、音乐、视频、创作画布与一键 PPT",
+  "scope": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#090d14",
+  "theme_color": "#090d14",
+  "icons": [
+    { "src": "/pwa/posterflow-p-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa/posterflow-p-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa/posterflow-p-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

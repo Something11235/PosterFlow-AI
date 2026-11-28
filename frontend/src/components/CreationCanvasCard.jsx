@@ -80,7 +80,7 @@ export default function CreationCanvasCard({
       </select>
     </div>}
     {isGeneration && quote && <CanvasNodeParameters title={node.title} quote={quote} disabled={isPending || working}
-      onChange={(key, value) => onParamChange(node.id, quote.model, key, value)} />}
+      onModelChange={model => onModelChange(node.id, model)} onChange={(key, value) => onParamChange(node.id, quote.model, key, value)} />}
     <footer className="cc-node-footer">
       {node.type === "prompt" ? <><button type="button" onClick={() => onAssist(node.id)}><Sparkles size={13}/>AI 助写</button><span>{draft.length} / 6000</span></>
       : node.type === "reference" ? <><span title={node.filename}>{node.filename || "参考素材"}</span><button onClick={() => uploader.current?.click()}>{hasMedia ? "替换" : "选择"}</button></>

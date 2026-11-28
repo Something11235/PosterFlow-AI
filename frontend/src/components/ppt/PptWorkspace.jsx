@@ -92,6 +92,7 @@ function PptEditor({ owner, signedIn, authHeaders, onLogin, onAccountRefresh, pr
   const [topic, setTopic] = useState("");
   const [instruction, setInstruction] = useState("");
   const [selected, setSelected] = useState([]);
+  const [mobileTool, setMobileTool] = useState("");
   const [index, setIndex] = useState(0);
   const [followGeneration, setFollowGeneration] = useState(true);
   const following = useRef(true);
@@ -440,7 +441,7 @@ function PptEditor({ owner, signedIn, authHeaders, onLogin, onAccountRefresh, pr
   </main>;
 
   return <main className="studio-page ppt-workspace">
-    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={25}/></div><div><h1>一键 PPT</h1><p>输入主题或添加参考资料，生成可直接编辑的演示稿。</p></div>
+    <header className="ppt-heading"><div className="ppt-heading-icon"><Presentation size={25}/></div><div><h1>一键 PPT</h1><p>演示稿保存在此设备，可导出为 PPTX。</p></div>
       <div className="ppt-view-switch ppt-segments" role="group" aria-label="工作区视图">
         <button aria-pressed={!showChat} disabled={!ready} onClick={() => switchView("preview")}><Presentation size={16}/>演示稿预览</button>
         <button aria-pressed={showChat} disabled={!ready} onClick={() => switchView("chat")}><MessageSquare size={16}/>AI 对话</button>
@@ -454,7 +455,7 @@ function PptEditor({ owner, signedIn, authHeaders, onLogin, onAccountRefresh, pr
       onSelect={id => changePresentation("select", id)}
       onDelete={id => changePresentation("delete", id)} />
     {alert && <div role="alert" className="ppt-alert">{alert}<button aria-label="关闭提示" onClick={() => setAlert("")}><X size={16}/></button></div>}
-    <div className={"ppt-columns" + (showChat ? " ppt-columns-chat" : "")}>
+    <div className={"ppt-columns" + (showChat ? " ppt-columns-chat" : "") + (page || provisional ? " ppt-has-pages" : "")} data-mobile-tool={mobileTool}>
       <section className="ppt-brief" aria-label={original ? "原稿设置" : "生成设置"}>
         <h2><Layers size={17}/>{original ? "原稿设置" : "生成设置"}</h2>
         {original && <p className="ppt-original-source"><FileText size={16}/><span>{project.originalPptx.name}<small>{pages.length} 页 · 浏览器本地副本</small></span></p>}
@@ -503,8 +504,12 @@ function PptEditor({ owner, signedIn, authHeaders, onLogin, onAccountRefresh, pr
           onEnd={() => patch(endPausedGeneration).catch(error => setAlert(error.message))} />
         {page || provisional ? <>
           {original && <p className="ppt-format-help">原稿预览 · 可修改文本框和表格文字。复杂图形、动画及母版效果以导出的 PPTX 为准。</p>}
-          <div className="ppt-paper" style={original ? {aspectRatio: page.originalAspectRatio} : undefined}><PptSlide key={provisional ? project.pending.id : page.id} slide={provisional || page} selected={selected} font={(provisional ? run.settings.template?.font : project.deckFont) || "Microsoft YaHei, sans-serif"} onSelect={locked ? undefined : setSelected}/></div>
+          <div className="ppt-paper" style={original ? {aspectRatio: page.originalAspectRatio} : undefined}><PptSlide key={provisional ? project.pending.id : page.id} slide={provisional || page} selected={selected} font={(provisional ? run.settings.template?.font : project.deckFont) || "Microsoft YaHei, sans-serif"} onSelect={locked ? undefined : ids => { setSelected(ids); if (ids.length) setMobileTool("edit"); }}/></div>
           <div className="ppt-pagebar"><span>{provisional ? `第 ${targetIndex + 1} 页 · 生成中` : `${pageIndex + 1} / ${pages.length} 页`}</span>{pageActions}<div><button aria-label="上一页" disabled={provisional && !regenerating ? !pages.length : pageIndex <= 0} onClick={() => switchPage(provisional && !regenerating ? pages.length - 1 : pageIndex - 1)}><ChevronLeft size={17}/></button><button aria-label="下一页" disabled={pageIndex >= pages.length - 1} onClick={() => switchPage(pageIndex + 1)}><ChevronRight size={17}/></button></div></div>
+          <div className="ppt-mobile-tools" role="group" aria-label="页面工具">
+            <button type="button" aria-expanded={mobileTool === "pages"} onClick={() => setMobileTool(tool => tool === "pages" ? "" : "pages")}><Layers size={16}/>缩略图</button>
+            {page && !provisional && <button type="button" aria-expanded={mobileTool === "edit"} onClick={() => setMobileTool(tool => tool === "edit" ? "" : "edit")}><MousePointer2 size={16}/>编辑本页</button>}
+          </div>
           {original && pages.length > 16 && <label className="ppt-field ppt-inline ppt-jump-page">跳到第几页<select value={pageIndex} onChange={event => switchPage(Number(event.target.value))}>
             {pages.map((slide, i) => <option key={slide.id} value={i}>{i + 1} · {slide.title}</option>)}
           </select></label>}

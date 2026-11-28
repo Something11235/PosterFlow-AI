@@ -1,0 +1,63 @@
+.cc-touch-settings, .ppt-mobile-tools { display: none; }
+
+.cc-sheet-model {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0;
+  color: #bacce1;
+  font-size: 13px;
+}
+.cc-sheet-model select {
+  width: 100%;
+  min-height: 40px;
+  padding: 5px 9px;
+  border: 1px solid #3b4e67;
+  border-radius: 5px;
+  background: #0d1724;
+  color: #e7eff9;
+}
+
+@media (max-width: 767px) {
+  .studio-app .studio-image-workspace .mobile-image-submit {
+    position: fixed;
+    z-index: 20;
+    inset-inline: 14px;
+    bottom: calc(var(--studio-mobile-nav-height, 60px) + env(safe-area-inset-bottom) + 8px);
+    width: auto;
+    min-height: 44px;
+    box-shadow: 0 2px 8px #05080e80;
+  }
+  .studio-app .studio-image-workspace { padding-bottom: 60px; }
+  .cc-node .cc-node-model, .cc-node .cc-param-strip > label, .cc-node .cc-desktop-settings { display: none; }
+  .cc-node .cc-param-more { width: 100%; min-height: 40px; }
+  .cc-node .cc-touch-settings { display: inline; font-size: 13px; }
+  dialog.cc-param-dialog.cc-dialog {
+    inset: auto 0 0;
+    margin: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 80dvh;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+    border-radius: 18px 18px 0 0;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+  .cc-param-dialog .cc-sheet-model select,
+  .cc-param-dialog .cc-param-grid :is(select, input:not([type=checkbox])) { min-height: 44px; font-size: 16px; }
+  .cc-param-dialog header button { min-width: 44px; min-height: 44px; }
+  .ppt-has-pages > .ppt-editor { grid-row: 1; }
+  .ppt-editor .ppt-mobile-tools { display: flex; gap: 8px; margin-block: 8px; }
+  .ppt-mobile-tools button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--ppt-edge);
+    border-radius: 8px;
+    color: var(--ppt-secondary);
+  }
+  .ppt-mobile-tools button[aria-expanded=true] { color: var(--ppt-highlight); background: var(--ppt-tint); }
+  .ppt-columns:not([data-mobile-tool=pages]) :is(.ppt-thumbnails, .ppt-jump-page),
+  .ppt-columns:not([data-mobile-tool=edit]) .ppt-edit { display: none; }
+}

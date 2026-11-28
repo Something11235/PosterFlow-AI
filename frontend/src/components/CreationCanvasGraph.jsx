@@ -36,6 +36,7 @@ export default function CreationCanvasGraph({ project, owner, downloadScope, quo
   const gesture = useRef(null);
   const touchMovedCanvas = useRef(false);
   const pickerTap = useRef(null);
+  const tappedNode = useRef(null);
   const firstView = useRef(false);
   const projectRef = useRef(project);
   projectRef.current = project;
@@ -128,6 +129,7 @@ export default function CreationCanvasGraph({ project, owner, downloadScope, quo
     if (list || e.button !== 0) return;
     const target = e.target;
     if (!board.current.contains(target)) return;
+    tappedNode.current = null;
     pickerTap.current = null;
     if (touchMovedCanvas.current && e.pointerType === "touch" && e.isPrimary && target.matches("select:enabled")) {
       pickerTap.current = { select: target, x: e.clientX, y: e.clientY };
@@ -223,7 +225,12 @@ export default function CreationCanvasGraph({ project, owner, downloadScope, quo
         const last = { id: drag.id, x: drag.x + dx, y: drag.y + dy };
         setDragging(last);
         void onMove(drag.id, dx, dy, viewRef.current).finally(() => setDragging(current => current === last ? null : current));
-      } else setDragging(null);
+      } else {
+        setDragging(null);
+        if (!cancelled && drag.pointerType === "touch" && window.matchMedia("(max-width: 767px)").matches) {
+          tappedNode.current = drag.id;
+        }
+      }
     } else if (cancelled) updateView({ ...viewRef.current, x: drag.x, y: drag.y });
     else if (drag.moved) { const v = viewRef.current; void onEdit(p => ({ ...p, viewport: v })); }
     else { setSelected(null); setSource(null); }
@@ -300,7 +307,12 @@ export default function CreationCanvasGraph({ project, owner, downloadScope, quo
     <div ref={board} className={`cc-board ${list ? "cc-list-view" : ""} ${panMode ? "cc-hand-mode" : ""}`} data-moving-node={dragging ? "" : undefined}
       onPointerDown={onDown} onPointerMove={onDrag} onPointerUp={e => finishDrag(e)} onPointerCancel={e => finishDrag(e, true)}
       onLostPointerCapture={e => { if (e.target === e.currentTarget) finishDrag(e, true); }}
-      onTouchEnd={onTouchEnd} onTouchCancel={() => { pickerTap.current = null; }} onKeyDown={onBoardKey}>
+      onTouchEnd={onTouchEnd} onTouchCancel={() => { pickerTap.current = null; }} onKeyDown={onBoardKey}
+      onClick={() => {
+        const id = tappedNode.current;
+        tappedNode.current = null;
+        if (id) board.current?.querySelector(`[data-node-id="${CSS.escape(id)}"] .cc-param-more`)?.click();
+      }}>
       {list ? <div className="cc-card-list">{cards}</div> : <div className="cc-scene" ref={stage} style={{ transform: `translate(${view.x}px,${view.y}px) scale(${view.k})` }}>
         <svg className="cc-wires" aria-hidden="true"><g>{project.edges.map(edge => {
           const a = from(edge.from), b = to(edge.to);

@@ -6,6 +6,7 @@ import { REFERENCE_FILE_ACCEPT, referenceFileKey } from "../lib/referenceSelecti
 
 import ImageModelSelect from "./ImageModelSelect";
 import ReferenceUploadProgress from "./ReferenceUploadProgress";
+import "./mobileWorkspaceControls.css";
 
 const PROMPT_CHARACTER_LIMIT = 6000;
 
@@ -197,7 +198,7 @@ export default function PromptEditor({
         type="button"
         onClick={providerConfigured ? onGenerate : onOpenProvider}
         disabled={generationDisabled}
-        className={`flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
+        className={`mobile-image-submit flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${
           generationDisabled
             ? "cursor-not-allowed bg-bg-elevated text-text-muted"
             : "bg-accent text-white shadow-lg shadow-accent/20 hover:bg-accent-hover active:scale-[0.99]"

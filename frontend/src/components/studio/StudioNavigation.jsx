@@ -1,7 +1,8 @@
 import { displayCredits } from "../../lib/credits";
 import React, {useEffect,useLayoutEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
-import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, Presentation, UserRound, Users, Video, Workflow } from "lucide-react";
+import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, Download, ExternalLink, Gift, Globe2, Grid2X2, History, House, Image, Layers3, LayoutGrid, LibraryBig, ListChecks, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, Presentation, UserRound, Users, Video, Workflow, X } from "lucide-react";
+import "./studio-mobile-navigation.css";
 
 const NAV = [
   { id: "home", label: "创作总览", icon: LayoutGrid },
@@ -21,14 +22,81 @@ const TAVERN_RESOURCES = [
   { label: "Pygmalion", href: "https://pygmalion.chat/explore" },
 ];
 
-function TavernResources({ detailsRef }) {
+function TavernResources({ detailsRef, guideTarget = true }) {
   return <details ref={detailsRef} className="studio-prompt-library studio-tavern-resources">
-    <summary data-tavern-guide="resources"><LibraryBig size={18} aria-hidden="true" /><span>酒馆资源</span><ChevronDown size={14} className="studio-prompt-chevron" aria-hidden="true" /></summary>
-    <div id="studio-tavern-resource-links" data-tavern-guide="sites">
+    <summary data-tavern-guide={guideTarget ? "resources" : undefined}><LibraryBig size={18} aria-hidden="true" /><span>酒馆资源</span><ChevronDown size={14} className="studio-prompt-chevron" aria-hidden="true" /></summary>
+    <div id={guideTarget ? "studio-tavern-resource-links" : undefined} data-tavern-guide={guideTarget ? "sites" : undefined}>
       <p className="studio-resource-note"><Globe2 size={13} aria-hidden="true" /><span>部分网站需要代理访问</span></p>
       {TAVERN_RESOURCES.map(link => <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer"><span>{link.label}</span><ExternalLink size={14} aria-hidden="true" /></a>)}
     </div>
   </details>;
+}
+
+const MOBILE_TABS = [
+  { id: "home", label: "首页", icon: House },
+  { id: "create", label: "创作", icon: LayoutGrid },
+  { id: "tasks", label: "任务", icon: ListChecks },
+  { id: "mine", label: "我的", icon: UserRound },
+];
+
+const openInstall = () => window.dispatchEvent(new Event("posterflow:install"));
+
+function MobileDock({ area, onAreaChange, accountName, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
+  const [sheet, setSheet] = useState(null);
+  const dialog = useRef(null);
+  const mobile = useRef(null);
+  useEffect(() => {
+    mobile.current = window.matchMedia("(max-width: 767px)");
+    const onResize = () => { if (!mobile.current.matches) dialog.current?.close(); };
+    mobile.current.addEventListener("change", onResize);
+    return () => mobile.current.removeEventListener("change", onResize);
+  }, []);
+  useLayoutEffect(() => {
+    if (sheet && !dialog.current.open) dialog.current.showModal();
+  }, [sheet]);
+  function run(action) {
+    dialog.current.close();
+    action();
+  }
+  const destinations = sheet === "create"
+    ? NAV.slice(1).map(item => ({ ...item, action: () => onAreaChange(item.id) }))
+    : sheet === "tasks"
+      ? [{ label: "创作历史", icon: History, action: onOpenHistory }, { label: "生图任务", icon: Image, action: onOpenImageTasks }]
+      : [
+          { label: "创作素材", icon: Layers3, action: () => onAreaChange("materials") },
+          { label: "模型一览", icon: Grid2X2, action: () => onAreaChange("models") },
+          { label: "购买积分", icon: ArrowUpRight, action: onOpenRecharge },
+          { label: "邀请奖励", icon: Gift, action: onOpenReferrals },
+          { label: "QQ 交流群", icon: Users, action: onOpenCommunity },
+          ...(session && account?.is_admin ? [{ label: "管理员控制台", icon: ChartNoAxesCombined, action: onOpenMetrics }] : []),
+        ];
+  const activeTab = sheet || (area === "home" ? "home" : NAV.some(item => item.id === area) ? "create" : "mine");
+  return <>
+    <nav className="studio-phone-dock" aria-label="手机主导航">
+      {MOBILE_TABS.map(tab => <button type="button" key={tab.id} className={activeTab === tab.id ? "is-active" : undefined}
+        aria-current={tab.id === "home" && area === "home" ? "page" : undefined}
+        aria-haspopup={tab.id === "home" ? undefined : "dialog"}
+        onClick={() => tab.id === "home" ? onAreaChange("home") : setSheet(tab.id)}>
+        <span><tab.icon size={20} strokeWidth={1.75} aria-hidden="true" /></span>{tab.label}
+      </button>)}
+    </nav>
+    <dialog ref={dialog} className="studio-phone-sheet" aria-labelledby="studio-phone-sheet-title"
+      onClose={() => setSheet(null)} onClick={event => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
+      {sheet && <section>
+        <header><h2 id="studio-phone-sheet-title">{MOBILE_TABS.find(tab => tab.id === sheet)?.label}</h2>
+          <button type="button" aria-label="关闭菜单" onClick={() => dialog.current.close()}><X size={20} /></button></header>
+        {sheet === "mine" && <button type="button" className="studio-phone-profile" onClick={() => run(session ? onOpenAccount : onOpenAuth)}>
+          <UserRound size={22} /><span><strong>{accountName}</strong>{session && <small>平台积分 · {accountLoading ? "同步中…" : displayCredits(account?.credits?.balance)}</small>}</span><ChevronRight size={17} />
+        </button>}
+        <div className="studio-phone-links">{destinations.map(item => <button type="button" key={item.label} onClick={() => run(item.action)}>
+          <item.icon size={19} aria-hidden="true" />{item.label}</button>)}</div>
+        {sheet === "mine" && <>
+          <PromptReferences /><TavernResources guideTarget={false} />
+          <button type="button" className="studio-phone-install" onClick={() => run(openInstall)}><Download size={17} />添加到手机桌面</button>
+        </>}
+      </section>}
+    </dialog>
+  </>;
 }
 
 export default function StudioNavigation({ area, guideResourcesOpen, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
@@ -62,8 +130,9 @@ export default function StudioNavigation({ area, guideResourcesOpen, onAreaChang
     requestAnimationFrame(() => tavernResources.current?.querySelector("summary")?.focus());
   }
   return (
-    <aside className={`studio-nav${collapsed?' is-collapsed':''}${compactMobile ? ' has-compact-tools' : ''}${mobileToolsOpen ? ' tools-open' : ''}`}>
+    <aside className={`studio-nav studio-with-mobile-dock${collapsed?' is-collapsed':''}${compactMobile ? ' has-compact-tools' : ''}${mobileToolsOpen ? ' tools-open' : ''}${guideResourcesOpen ? ' showing-resource-guide' : ''}`}>
       <div className="studio-brand"><span className="studio-brand-mark"><Aperture size={26} strokeWidth={1.4} /></span><div><strong>PosterFlow<span>AI</span></strong><small>THE CREATIVE STUDIO</small></div></div>
+      {area === "home" && <button type="button" className="studio-phone-install studio-phone-home-install" onClick={openInstall}><Download size={16} />添加到桌面</button>}
       <button type="button" className="studio-nav-toggle" onClick={()=>setCollapsed(value=>!value)} aria-label={collapsed?'展开侧栏':'折叠侧栏'} title={collapsed?'展开侧栏':'折叠侧栏'} aria-expanded={!collapsed} aria-controls="studio-primary-navigation studio-secondary-navigation">{collapsed?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button>
       <div className="studio-mobile-account">{compactMobile && <button type="button" onClick={() => setMobileToolsOpen(open => !open)} aria-label="资料与工具" title="资料与工具" aria-expanded={mobileToolsOpen} aria-controls="studio-secondary-navigation"><Menu size={19} /></button>}<button type="button" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><UserRound size={19} /></button>{session && account?.is_admin && <button type="button" onClick={onOpenMetrics} aria-label="管理员控制台"><ChartNoAxesCombined size={19} /></button>}</div>
       <p className="studio-nav-caption">工作空间 <span>01 —</span></p>
@@ -89,6 +158,7 @@ export default function StudioNavigation({ area, guideResourcesOpen, onAreaChang
         {session && account?.is_admin && <button type="button" title="管理员控制台" aria-label="管理员控制台" className="studio-admin-link" onClick={onOpenMetrics}><ChartNoAxesCombined size={17} />管理员控制台<ChevronRight size={14} /></button>}
         <button type="button" className="studio-account-link" onClick={session ? onOpenAccount : onOpenAuth} aria-label={session ? "账户中心" : "登录或注册"}><span className="studio-avatar">{session ? accountName.slice(0, 1).toUpperCase() : <UserRound size={16} />}</span><span>{accountName}<small>{session ? "管理你的账户" : "继续你的创作"}</small></span><ChevronRight size={15} /></button>
       </div>
+      <MobileDock {...{area, onAreaChange, accountName, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity}} />
     </aside>
   );
 }
