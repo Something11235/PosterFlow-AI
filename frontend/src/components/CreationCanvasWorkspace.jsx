@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Archive, Check, ChevronDown, Folder, FolderOpen, LoaderCircle, Plus, Save, Workflow, X } from "lucide-react";
+import { Archive, BookOpen, Check, ChevronDown, Clapperboard, Folder, FolderOpen, LoaderCircle, Plus, Save, Workflow, X } from "lucide-react";
 import {
   cancelPreparingCanvasRun, claimCanvasRun, connectCanvasNodes, createCanvasProject, extractCanvasTailFrame, finishCanvasRun,
   getCanvasAsset, listCanvasProjects, loadCanvasProject, openOrCreateCanvasProject, putCanvasAsset,
@@ -11,7 +11,13 @@ import {
 } from "../lib/creationCanvasGeneration";
 import { canvasInputInfo, prepareCanvasReference, readCanvasReference, readCanvasVideoDuration } from "../lib/creationCanvasMedia";
 import CreationCanvasGraph from "./CreationCanvasGraph";
+import CreationCanvasTour from "./CreationCanvasTour";
+import useCanvasGuide, { graphGuide, storyboardGuide } from "./useCanvasGuide";
 import CreationCanvasExport from "./CreationCanvasExport";
+import CreationCanvasStoryboard from "./CreationCanvasStoryboard";
+import CanvasPromptWriter from "./CanvasPromptWriter";
+import useCanvasTextAssistant from "./useCanvasTextAssistant";
+import { canvasNodePrompt, storyboardItemSignature, storyboardPlan } from "../lib/creationCanvasStoryboard";
 import { incomingNodes, initialCanvasFields, moveCanvasNode, needsFrameUpdate, newCanvasNode } from "./creationCanvasLayout";
 import "./creationCanvas.css";
 
@@ -35,10 +41,11 @@ async function remoteBlob(url, mime) {
 }
 
 export default function CreationCanvasWorkspace({
-  ownerId = "guest", generationContext = {}, onOpenAccount, onBalanceChange,
+  ownerId = "guest", user, generationContext = {}, onOpenAccount, onBalanceChange,
 }) {
   const owner = ownerId || "guest";
   const [project, setProject] = useState(null);
+  const { tourOpen, openTour, closeTour } = useCanvasGuide(owner, user, Boolean(project));
   const projectRef = useRef(null);
   const [notice, setNotice] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -48,6 +55,8 @@ export default function CreationCanvasWorkspace({
   const [uploads, setUploads] = useState({});
   const [picker, setPicker] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [writer, setWriter] = useState(null);
+  const batchRunning = useRef(false);
   const [entryName, setEntryName] = useState("");
   const [recent, setRecent] = useState([]);
   const queuedWrites = useRef(Promise.resolve());
@@ -99,6 +108,9 @@ export default function CreationCanvasWorkspace({
       report(error);
     }).finally(() => { if (alive.current) setSaving(count => Math.max(0, count - 1)); });
   }, [owner, receive, report]);
+
+  const textAI = useCanvasTextAssistant({ owner, project, projectRef, contextRef, queuedWrites, receive, report, refresh: balanceRef,
+    login: () => { if (owner === "guest" && project) rememberGuestCanvasForLogin(project.id); onOpenAccount?.(); } });
 
   const commitResult = useCallback(async (projectId, nodeId, requestId, result) => {
     const patch = { status: result.status, message: result.message || "" };
@@ -227,7 +239,8 @@ export default function CreationCanvasWorkspace({
       const settings = canvasGenerationSettings({ kind: node.type, model: node.model, params: node.params, context });
       const latestQuote = nodeQuote(node, current, context);
       if (latestQuote.error) throw new Error(latestQuote.error);
-      if (displayed.model !== settings.model || JSON.stringify(displayed.params) !== JSON.stringify(settings.params) || displayed.credits !== latestQuote.credits || displayed.reservedCredits !== latestQuote.reservedCredits) {
+      if (displayed.inputSignature && displayed.inputSignature !== storyboardItemSignature(current, nodeId)) throw new Error("镜头的提示词或参考素材已变化，请重新核对。");
+      if (displayed.model !== settings.model || displayed.billingMode !== settings.billingMode || displayed.providerOrigin !== settings.providerOrigin || JSON.stringify(displayed.params) !== JSON.stringify(settings.params) || displayed.credits !== latestQuote.credits || displayed.reservedCredits !== latestQuote.reservedCredits) {
         receive(current); setNotice("节点参数或报价已变化，请核对后再生成。"); return;
       }
       if (!canvasModelOptions(node.type, context).some(option => option.value === settings.model)) throw new Error("请先为此节点选择可用模型。");
@@ -238,7 +251,7 @@ export default function CreationCanvasWorkspace({
         return;
       }
       const inputs = incomingNodes(current, nodeId);
-      const prompt = inputs.filter(n => n.type === "prompt").map(n => n.text?.trim()).filter(Boolean).join("\n");
+      const prompt = canvasNodePrompt(current, nodeId);
       const media = inputs.filter(n => n.type !== "prompt");
       if (!prompt && (node.type === "image" || !media.length && !settings.params.link_url)) throw new Error("先连接并填写提示词，再运行这个节点。");
       const references = [];
@@ -269,6 +282,7 @@ export default function CreationCanvasWorkspace({
         beforeDispatch: async () => receive(await markCanvasRunDispatched(owner, current.id, node.id, requestId)),
       });
       await commitResult(source.id, nodeId, requestId, result);
+      return result.status;
     } catch (error) { report(error); }
     finally {
       activeRuns.current.delete(marker);
@@ -280,6 +294,26 @@ export default function CreationCanvasWorkspace({
         return next;
       });
     }
+  }
+
+  async function generateShots({ kind, shotIds, plan }) {
+    if (batchRunning.current) return;
+    const projectId = projectRef.current.id;
+    batchRunning.current = true;
+    try {
+      await queuedWrites.current;
+      const latest = await loadCanvasProject(owner, projectId);
+      const checked = storyboardPlan(latest, shotIds, kind, contextRef.current);
+      if (!checked.items.length || checked.signature !== plan.signature || checked.items.some(item => item.error)) {
+        receive(latest); throw new Error("所选镜头或报价已变化，请重新确认。");
+      }
+      for (const item of checked.items) {
+        if (!alive.current || projectRef.current?.id !== projectId) break;
+        const state = await runNode(item.nodeId, item.requestId, item.quote);
+        if (!state || state === "failed") break;
+      }
+    } catch (error) { report(error); }
+    finally { batchRunning.current = false; }
   }
 
   async function addReference(id, file) {
@@ -360,23 +394,46 @@ export default function CreationCanvasWorkspace({
   if (!project) return <section className="cc-loading" aria-live="polite"><Workflow size={22} />{loadError || "正在打开创作画布…"}{loadError && <button onClick={() => { setLoadError(""); setRetry(n => n + 1); }}>重新打开</button>}</section>;
 
   const downloadScope = { owner, projectId: project.id, imageOptions: { authenticated: generationContext.authenticated, headers: generationContext.authHeaders } };
+  const boardOpen = project.canvasView === "storyboard";
+  const switchView = view => {
+    if ((view === "storyboard") !== boardOpen) return edit(p => ({ ...p, canvasView: view }));
+  };
+  const writingNode = writer?.projectId === project.id ? writer.id : null;
+  const aiNode = project.textProposal?.input.nodeId;
   return <section className="cc-workspace" aria-label="AI 创作画布">
     <header className="cc-project-bar">
-      <div className="cc-heading-icon"><Workflow size={22} /></div>
-      <div className="cc-heading"><h1>AI 创作画布</h1><button onClick={showProjects}><Folder size={13} />{project.name}<ChevronDown size={13} /></button></div>
+      <div className="cc-project-identity">
+        <div className="cc-heading-icon"><Workflow size={22} /></div>
+        <div className="cc-heading"><h1>AI 创作画布</h1><button onClick={showProjects} title={project.name}><Folder size={13} /><span>{project.name}</span><ChevronDown size={13} /></button></div>
+      </div>
+      <div className="cc-workspace-modes" role="group" aria-label="工作区视图">
+        <button type="button" data-canvas-guide="graph" aria-pressed={!boardOpen} onClick={() => switchView("graph")}><Workflow size={18}/><span>节点画布</span></button>
+        <button type="button" data-canvas-guide="storyboard" aria-pressed={boardOpen} onClick={() => switchView("storyboard")}><Clapperboard size={18}/><span>分镜工作台</span></button>
+      </div>
       <div className="cc-project-actions"><span className="cc-saved" role="status">{saving ? <LoaderCircle size={14} /> : saveFailed ? <X size={14}/> : <Check size={14} />}{saving ? "保存中" : saveFailed ? "保存失败" : "已存本机"}</span>
-        <button className="cc-tool-button" aria-label="批量导出" title="批量导出" onClick={() => setExportOpen(true)}><Archive size={16} /><span>批量导出</span></button>
-        <button className="cc-tool-button" aria-label="我的项目" onClick={showProjects}><FolderOpen size={16} /><span>我的项目</span></button>
+        <button className="cc-tool-button" data-canvas-guide="export" aria-label="批量导出" title="批量导出" onClick={() => setExportOpen(true)}><Archive size={16} /><span>批量导出</span></button>
+        <button className="cc-tool-button" data-canvas-guide="projects" aria-label="我的项目" title="我的项目" onClick={showProjects}><FolderOpen size={16} /><span>我的项目</span></button>
+        <button className="cc-tool-button cc-tour-trigger" data-canvas-guide="help" aria-label="新手指引" title="新手指引" onClick={openTour}><BookOpen size={16}/><span>新手指引</span></button>
       </div>
     </header>
+    {textAI.configured === false && (boardOpen || writingNode) && <div className="cc-notice" role="status"><span>AI 拆镜与助写等待开通。你可以手动添加镜头、设置模型并查看预计积分。</span></div>}
     {notice && <div className="cc-notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="关闭提示"><X size={15} /></button></div>}
-    {exportOpen && <CreationCanvasExport key={project.id} project={project} scope={downloadScope} onClose={() => setExportOpen(false)} />}
+    {project.textError && <div className="cc-notice" role="alert"><span>{project.textError}</span><button aria-label="关闭 AI 提示" onClick={() => edit(p => ({ ...p, textError: "" }))}><X size={15}/></button></div>}
+    {project.textRequest && <div className="cc-notice" role="status"><span>{textAI.missing ? "服务端暂未查到这项 AI 文本任务。" : "AI 文本任务处理中，刷新后会继续查询。"}</span>{textAI.missing && <button className="cc-text-action" onClick={textAI.retry}>用原编号重试</button>}</div>}
+    {project.textProposal && (!boardOpen || aiNode) && <div className="cc-notice"><span>AI 建议已就绪</span><button className="cc-text-action" onClick={() => aiNode ? setWriter({ id: aiNode, projectId: project.id }) : switchView("storyboard")}>查看建议</button></div>}
+    {writingNode && <CanvasPromptWriter key={project.id + writingNode} project={project} nodeId={writingNode} quote={nodeQuote} configured={textAI.configured} routeLabel={textAI.routeLabel} onClose={() => setWriter(null)}
+      onStart={textAI.start} onDismiss={() => textAI.apply()} onApply={textAI.apply}/>}
+    {exportOpen && <CreationCanvasExport key={`export-${project.id}`} project={project} scope={downloadScope} onClose={() => setExportOpen(false)} />}
+    {tourOpen && <CreationCanvasTour steps={boardOpen ? storyboardGuide : graphGuide} onDismiss={closeTour} />}
+    {boardOpen ? <CreationCanvasStoryboard key={project.id} project={project} owner={owner} generationContext={generationContext} textConfigured={textAI.configured} routeLabel={textAI.routeLabel} onEdit={edit} onBack={() => switchView("graph")}
+      onGenerate={generateShots} onTextAction={textAI.start} onApplyProposal={textAI.apply} onDismissProposal={() => textAI.apply()}/> :
     <CreationCanvasGraph key={project.id} project={project} owner={owner} downloadScope={downloadScope} quote={nodeQuote} onRun={runNode} onUpload={addReference}
       onExtract={extractFrame} onNextShot={addNextShot} onError={report} onEdit={edit} onModelChange={changeNodeModel} onParamChange={changeNodeParam}
       onCancel={(id,requestId) => cancelPreparingCanvasRun(owner, project.id, id, requestId).then(receive).catch(report)}
       onMove={(id, dx, dy, view) => edit(p => moveCanvasNode(p, id, dx, dy, view))}
       onText={(id, text) => edit(p => replaceNode(p, id, { text }))}
-      onConnect={(from, to) => edit(p => connectNodes(p, from, to))} />
+      onAssist={id => setWriter({ id, projectId: project.id })}
+      onConnect={(from, to) => edit(p => connectNodes(p, from, to))} />}
     {picker && <div className="cc-dialog-scrim" onClick={() => setPicker(null)} onKeyDown={e => { if (e.key === "Escape") setPicker(null); }}>
       <section className="cc-dialog" aria-label="画布项目" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
         <header><h2>{picker === "list" ? "我的画布项目" : picker === "new" ? "新建项目" : "修改项目名称"}</h2>

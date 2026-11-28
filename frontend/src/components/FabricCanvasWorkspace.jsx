@@ -17,6 +17,7 @@ import {
 } from "fabric";
 import { apimartImageModel } from "../lib/provider";
 import { cleanupReferencePaths, uploadReferenceBlobs } from "../lib/referenceUpload";
+import { prepareReferenceImage, REFERENCE_FILE_ACCEPT } from "../lib/referenceImage";
 import ReferenceUploadProgress from "./ReferenceUploadProgress";
 import { imageDiagnosticText } from "../lib/imageGenerationError";
 import {
@@ -206,6 +207,17 @@ function dataUrlToBlob(dataUrl) {
   const output = new Uint8Array(bytes.length);
   for (let index = 0; index < bytes.length; index += 1) output[index] = bytes.charCodeAt(index);
   return new Blob([output], { type });
+}
+
+async function canvasImportFile(file) {
+  try {
+    // The local canvas can display full-size originals without uploading them.
+    return await prepareReferenceImage(file, { maxBytes: Infinity });
+  } catch (error) {
+    if (error.code !== "REFERENCE_IMAGE_UNSUPPORTED") throw error;
+    // The canvas also accepts formats the browser itself can render, such as SVG.
+    return file;
+  }
 }
 
 async function createImageObject(file, meta = {}) {
@@ -1198,7 +1210,11 @@ export default function FabricCanvasWorkspace({
       setStatus({ type: "loading", message: "正在解析并渲染图片" });
       let objects = [];
       try {
-        objects = await Promise.all(files.map((file) => createImageObject(file, { source: "local" })));
+        // Keep only one phone photo decoder active at a time.
+        for (const file of files) {
+          const image = await canvasImportFile(file);
+          objects.push(await createImageObject(image, { source: "local" }));
+        }
         if (canvas.disposed || canvas.destroyed) return [];
         const center = point || canvasCenter(canvas);
         const gap = 36;
@@ -1704,7 +1720,7 @@ export default function FabricCanvasWorkspace({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            accept={REFERENCE_FILE_ACCEPT + ",image/svg+xml,.svg"}
             multiple
             className="hidden"
             onChange={handleFileChange}

@@ -1,11 +1,13 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Check, ChevronDown, Cpu, Download, Eye, EyeOff, Feather, FileUp, KeyRound, Link2, Loader2, Pencil, Plus, Save, Settings2, Sparkles, Trash2, Upload, UserRound, X } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, CircleHelp, Cpu, Download, Eye, EyeOff, Feather, FileUp, KeyRound, Link2, Loader2, Pencil, Plus, Save, Settings2, Sparkles, Trash2, Upload, UserRound, X } from 'lucide-react';
 import { exportLorebook, normalizeCharacter, renderCharacterMacros, parseCharacterFile, parseLorebookFile, TAVERN_CHARACTER_LIMITS, TAVERN_MAX_IMAGE_BYTES, TAVERN_MAX_REPLY_CHARS } from '../../lib/tavern.js';
 import { visibleTavernMessage } from '../../lib/tavernStatusBlocks.js';
 import { requestTavernImport } from '../../lib/tavernClient.js';
 import TavernExportActions from './TavernExportActions';
 import TavernUserAvatar from './TavernUserAvatar';
+import CreationCanvasTour from '../CreationCanvasTour';
+import { tavernImportGuide } from './tavernGuideSteps';
 import './tavern-dialogs.css';
 
 export function TavernDialog({ title, eyebrow, icon: Icon, onClose, children, className = '' }) {
@@ -22,7 +24,10 @@ export function TavernDialog({ title, eyebrow, icon: Icon, onClose, children, cl
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, []);
-  return createPortal(<dialog ref={ref} className={`tv-dialog ${className}`} aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => {
+  return createPortal(<dialog ref={ref} className={`tv-dialog ${className}`} aria-labelledby={titleId} onCancel={event => {
+    if (event.target !== event.currentTarget) return;
+    event.preventDefault(); onClose();
+  }} onClick={event => {
     if (event.target !== event.currentTarget) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
@@ -297,6 +302,7 @@ export function TavernSettings({ value, service, onSave, onClose }) {
 export function TavernImportDialog({ kind = 'character', availableBooks = [], onOpenLibrary, onImport, onClose }) {
   const isLore = kind === 'lorebook';
   const noun = isLore ? '世界书' : '角色卡';
+  const [guideOpen, setGuideOpen] = useState(false);
   const [source, setSource] = useState('file');
   const [file, setFile] = useState(null);
   const [url, setUrl] = useState('');
@@ -357,7 +363,7 @@ export function TavernImportDialog({ kind = 'character', availableBooks = [], on
     <form className="tv-dialog-form" onSubmit={confirm} noValidate>
       <div className="tv-dialog-body">
         <div className="tv-import-switch" role="group" aria-label="导入方式">
-          {[['file', '本地文件', FileUp], ['url', '公开链接', Link2]].map(([value, label, Icon]) => <button key={value} type="button" aria-pressed={source === value} disabled={Boolean(busy)} onClick={() => { if (source !== value) { setSource(value); setFile(null); resetPreview(); } }}><Icon size={16} />{label}</button>)}
+          {[['file', '本地文件', FileUp], ['url', '公开链接', Link2]].map(([value, label, Icon]) => <button key={value} type="button" data-tavern-import-guide={value} aria-pressed={source === value} disabled={Boolean(busy)} onClick={() => { if (source !== value) { setSource(value); setFile(null); resetPreview(); } }}><Icon size={16} />{label}</button>)}
         </div>
         {source === 'file' ? <Field label={`${noun}文件`} hint={isLore ? '支持独立世界书 JSON，或内嵌世界书的角色 PNG。JSON 最大 1 MB，PNG 最大 8 MB。' : '支持角色 JSON，或包含角色资料的 PNG 卡片。JSON 最大 1 MB，PNG 最大 8 MB；普通图片无法作为角色卡导入。'}><input data-initial-focus type="file" accept=".json,.png,application/json,image/png" disabled={Boolean(busy)} onChange={event => { setFile(event.target.files?.[0] || null); resetPreview(); }} /></Field> : <Field label="公开下载链接" hint="支持公开 JSON / PNG 下载直链，或 Chub 角色 / 世界书详情页。不支持主页、搜索列表及需要登录的资源；无需填写 API Key。"><input ref={urlRef} type="url" maxLength={4096} value={url} disabled={Boolean(busy)} onChange={event => { setUrl(event.target.value); resetPreview(); }} placeholder={isLore ? 'https://chub.ai/lorebooks/作者/名称' : 'https://chub.ai/characters/作者/名称'} autoComplete="off" spellCheck={false} /></Field>}
         <div className="tv-import-compatibility"><BookOpen size={16} /><p>{isLore ? '导入名称、关键词、设定内容及启用状态。支持常驻条目；高级触发规则、脚本与插件行为不在本次兼容范围。' : '导入角色设定、开场白、示例对话及内嵌世界书。支持 Character Card V2 / V3 的基础字段；脚本与插件不会执行。'}</p></div>
@@ -381,8 +387,11 @@ export function TavernImportDialog({ kind = 'character', availableBooks = [], on
         {error && <p className="tv-form-error" role="alert">{error}</p>}
         <p className="tv-import-status" role="status">{busy === 'reading' ? (source === 'url' ? '正在下载并检查内容…' : '正在检查文件内容…') : status}</p>
       </div>
-      <footer className="tv-dialog-footer"><button type="button" className="tv-button tv-button-secondary" onClick={busy === 'reading' ? cancelRead : dismiss} disabled={busy === 'saving'}>{busy === 'reading' ? '取消读取' : '取消'}</button><button type="submit" className="tv-button tv-button-primary" disabled={Boolean(busy)}>{busy ? <Loader2 size={16} className="tv-spin" /> : preview ? <Check size={16} /> : <FileUp size={16} />}{busy === 'saving' ? '正在导入…' : busy === 'reading' ? '正在读取…' : preview ? '确认导入' : '读取并预览'}</button></footer>
+      <footer className="tv-dialog-footer">
+        {!isLore && <button type="button" className="tv-import-guide-entry" disabled={Boolean(busy)} onClick={() => setGuideOpen(true)}><CircleHelp size={16} />导入指引</button>}
+        <button type="button" className="tv-button tv-button-secondary" onClick={busy === 'reading' ? cancelRead : dismiss} disabled={busy === 'saving'}>{busy === 'reading' ? '取消读取' : '取消'}</button><button type="submit" data-tavern-import-guide="submit" className="tv-button tv-button-primary" disabled={Boolean(busy)}>{busy ? <Loader2 size={16} className="tv-spin" /> : preview ? <Check size={16} /> : <FileUp size={16} />}{busy === 'saving' ? '正在导入…' : busy === 'reading' ? '正在读取…' : preview ? '确认导入' : '读取并预览'}</button></footer>
     </form>
+    {guideOpen && <CreationCanvasTour label="角色卡导入指引" scope=".tv-import-dialog[open]" steps={tavernImportGuide} onDismiss={() => setGuideOpen(false)} />}
   </TavernDialog>;
 }
 

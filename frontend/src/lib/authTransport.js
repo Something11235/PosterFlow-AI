@@ -34,7 +34,7 @@ export function createAuthProxyFetch(supabaseUrl, {fetchImpl=(...args)=>globalTh
     const directFirst=(endpoint==='token' && original.method==='POST' && url.searchParams.get('grant_type')==='password') || (endpoint==='user' && original.method==='GET');
     // Clone before the direct request consumes its body; a transport retry must
     // carry the exact same input without reading or recording credentials.
-    const backup=original.clone();
+    const backup=directFirst ? original.clone() : original;
     if(directFirst){
       try{return await fetchAuthWithDeadline(original,fetchImpl,directTimeoutMs);}
       catch(error){
@@ -42,9 +42,15 @@ export function createAuthProxyFetch(supabaseUrl, {fetchImpl=(...args)=>globalTh
         if(original.signal.aborted || error?.authHttpStatus>=400 || !network)throw error;
       }
     }
-    const proxy=new Request(new URL('/api/auth/proxy/'+endpoint+url.search,origin),backup);
-    const headers=new Headers(proxy.headers);headers.set('X-Posterflow-Auth','1');
-    return fetchAuthWithDeadline(new Request(proxy,{headers}),fetchImpl,timeoutMs);
+    // A Request used as RequestInit exposes its body as a ReadableStream.
+    // Use the original bytes so the proxy receives the same JSON across browsers.
+    const headers=new Headers(backup.headers);
+    headers.set('X-Posterflow-Auth','1');
+    const body=backup.method==='GET' || backup.method==='HEAD' ? undefined : await backup.arrayBuffer();
+    const proxy=new Request(new URL('/api/auth/proxy/'+endpoint+url.search,origin),{
+      method:backup.method,headers,body,signal:backup.signal
+    });
+    return fetchAuthWithDeadline(proxy,fetchImpl,timeoutMs);
   };
 }
 
@@ -56,6 +62,7 @@ export function authErrorMessage(error) {
   if (error?.status===429 || /^over_.*rate_limit$/.test(code||'')) return '操作过于频繁，请稍后再试。';
   if (code==='weak_password') return '密码强度不足，请使用更长且不易猜测的密码。';
   if (code==='user_already_exists' || code==='email_exists') return '该邮箱已注册，请直接登录或使用“忘记密码”。';
+  if (code==='auth_proxy_body_invalid') return '网站未能读取提交的表单。请刷新页面后重新提交；若仍然出现，请联系站主。';
   if (code==='auth_proxy_not_configured') return '登录服务暂未配置，请联系站主。';
   if (code==='auth_network_unavailable' || error?.name==='AuthRetryableFetchError' || /failed to fetch|networkerror|load failed|fetch failed|连接.*超时|连接.*中断/i.test(message)) return '暂时无法连接登录服务。请稍后刷新重试，或切换网络后再登录。也可以尝试使用科学上网后刷新重试。';
   return '操作未完成，请稍后重试；若持续出现，请联系站主。';

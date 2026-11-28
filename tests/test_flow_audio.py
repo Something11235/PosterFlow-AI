@@ -110,6 +110,40 @@ class FlowRouteTests(unittest.TestCase):
         self.assertEqual(self.post().status_code,503)
         self.paid.assert_not_called();self.store.rpc.assert_not_called()
 
+    def test_upload_policy_rejection_ends_import_without_starting_cover(self):
+        raw = "This audio might violate our prohibited use policy and can't be uploaded."
+        result = normalize_task({"data": {"id": IMPORT, "status": "failed", "error": {"message": raw}}}, IMPORT)
+        rejected = {**self.job, "status": "failed", "error_code": result["error_code"], "billing_status": "refunded"}
+        self.store.rpc.return_value = {"job": rejected}
+        with patch.object(routes, "query_music", return_value=result), patch.object(flow, "submit_flow") as cover:
+            response = self.client.get("/api/music/tasks/" + REQ, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["job"]["error_code"], "MUSIC_AUDIO_POLICY_REJECTED")
+        self.assertIn("上传审核", response.json["job"]["failure_reason"])
+        self.assertNotIn(raw, str(response.json))
+        self.assertEqual(self.store.rpc.call_args.args[1]["p_event"], "import_failed")
+        self.assertEqual(self.store.rpc.call_args.args[1]["p_error_code"], "MUSIC_AUDIO_POLICY_REJECTED")
+        cover.assert_not_called()
+
+    def test_immediate_rejection_carries_typed_reason_for_the_form(self):
+        self.paid.side_effect = MusicError("MUSIC_PROVIDER_REJECTED", "音频未通过审核", 502,
+                                           reason_code="MUSIC_AUDIO_POLICY_REJECTED")
+        response = self.post()
+        self.assertEqual(response.json["code"], "MUSIC_PROVIDER_REJECTED")
+        self.assertEqual(response.json["reason_code"], "MUSIC_AUDIO_POLICY_REJECTED")
+
+    def test_generic_moderation_is_audio_specific_only_during_import(self):
+        row = {**self.job, "status": "failed", "error_code": "MUSIC_CONTENT_REJECTED"}
+        self.assertEqual(routes.public_job(row)["error_code"], "MUSIC_AUDIO_POLICY_REJECTED")
+        for stage in (None, "generating", "cover_submitting"):
+            self.assertEqual(routes.public_job({**row, "flow_stage": stage})["error_code"], "MUSIC_CONTENT_REJECTED")
+        self.store.rpc.return_value = {"job": row}
+        response = {"status": "failed", "progress": 0, "tracks": [], "error_code": "MUSIC_CONTENT_REJECTED"}
+        with patch.object(routes, "query_music", return_value=response), patch.object(flow, "submit_flow") as cover:
+            self.client.get("/api/music/tasks/" + REQ, headers=self.headers)
+        self.assertEqual(self.store.rpc.call_args.args[1]["p_error_code"], "MUSIC_AUDIO_POLICY_REJECTED")
+        cover.assert_not_called()
+
     def test_unknown_transition_does_not_query_old_import_or_resubmit(self):
         self.store.get.return_value={**self.job,"flow_stage":"cover_submitting","provider_task_id":None,"status":"submission_unknown"}
         with patch.object(routes,"query_music") as query:

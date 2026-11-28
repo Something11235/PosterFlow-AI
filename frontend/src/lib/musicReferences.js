@@ -4,8 +4,21 @@ export const MAX_MUSIC_REFERENCE_BYTES = 20 * 1024 * 1024;
 export const AUDIO_OPERATIONS = { generate: "文字创作", inspo: "参考音频创作", upload_cover: "音频改编", flow_cover: "音频改编" };
 export const musicOperations = model => model === "suno" ? ["generate", "inspo", "upload_cover"] : model === "flowmusic" ? ["generate", "flow_cover"] : ["generate"];
 
+// Local selection IDs identify this batch without retaining files or upload receipts in job history.
+export function musicReferenceSelection(operation, items) {
+  if (operation === "generate" || !items.length) return "";
+  return JSON.stringify([operation, ...items.map(item => item.id).sort()]);
+}
+
+export function isRejectedMusicSelection(jobs, selection) {
+  return Boolean(selection) && jobs.some(job =>
+    job.referenceSelection === selection && job.status === "failed" &&
+    ["MUSIC_AUDIO_POLICY_REJECTED", "MUSIC_AUDIO_COPYRIGHT", "MUSIC_AUDIO_MATCH"].includes(job.error_code)
+  );
+}
+
 export function musicFailedBeforeSubmission(error) {
-  return !error.submission_unknown && (String(error.code || "").startsWith("MUSIC_REFERENCE_") || (error.status >= 400 && error.status < 500));
+  return !error.submission_unknown && !error.reason_code && (String(error.code || "").startsWith("MUSIC_REFERENCE_") || (error.status >= 400 && error.status < 500));
 }
 
 export function musicAudioFile(file) {

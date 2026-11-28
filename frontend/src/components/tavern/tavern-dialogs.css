@@ -190,6 +190,8 @@
 .tv-import-switch > button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--tv-d-muted); font-size: 13px; cursor: pointer; }
 .tv-import-switch > button[aria-pressed="true"] { border-color: #4f8cff4d; background: #4f8cff19; color: #c3d8ff; }
 .tv-import-switch > button:hover:not(:disabled) { color: var(--tv-d-text); }
+.tv-import-guide-entry { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-right: auto; padding: 4px; border: 0; background: transparent; color: #a9c8ff; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.tv-import-guide-entry:hover:not(:disabled) { color: #e0ebff; }
 .tv-import-dialog input[type="file"] { min-height: 63px; padding: 8px; overflow: hidden; font-size: 12px; cursor: pointer; }
 .tv-import-dialog input[type="file"]::file-selector-button { min-height: 44px; margin-right: 12px; padding: 9px 12px; border: 1px solid #3a5070; border-radius: 6px; background: #192940; color: #c3d8ff; font: inherit; cursor: pointer; }
 .tv-import-compatibility { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-left: 2px solid #4d719d; background: #4f8cff09; color: var(--tv-d-muted); }

@@ -19,6 +19,8 @@
     "fabric": "^7.4.0",
     "fflate": "0.8.3",
     "js-sha256": "1.1.0",
+    "jszip": "3.10.2",
+    "libheif-js": "1.23.5",
     "lucide-react": "^1.29.0",
     "pdfjs-dist": "6.5.438",
     "pptxgenjs": "4.0.1",

@@ -26,10 +26,16 @@ REQUEST_CREDITS = 2
 PUBLIC_JOB_FIELDS = ("request_id", "billing_mode", "billing_unit", "credits_per_request", "credits_per_song", "model", "version", "status", "billing_status", "provider_task_id", "generated_count", "reserved_credits", "charged_credits", "error_code", "created_at", "operation", "reference_count", "flow_stage")
 
 
+def stage_failure(code, importing):
+    # Flow has only received audio_url at this stage. No lyrics or cover instruction have been sent.
+    return "MUSIC_AUDIO_POLICY_REJECTED" if importing and code == "MUSIC_CONTENT_REJECTED" else code
+
+
 def public_job(job):
     result = {key: job.get(key) for key in PUBLIC_JOB_FIELDS}
     if job.get("status") == "failed":
-        result["failure_reason"] = failure_reason(job.get("error_code"))
+        result["error_code"] = stage_failure(job.get("error_code"), job.get("flow_stage") == "importing")
+        result["failure_reason"] = failure_reason(result["error_code"])
     return result
 
 
@@ -75,6 +81,8 @@ def create_music_blueprint(require_user, optional_user, rate_limit, allowed_orig
     @bp.errorhandler(MusicError)
     def music_error(error):
         diagnostic = {"provider_status": error.provider_status, "provider_code": error.provider_code} if error.provider_status is not None else {}
+        if error.reason_code:
+            diagnostic["reason_code"] = error.reason_code
         return jsonify(error=error.message, code=error.code, submission_unknown=error.uncertain, **diagnostic), error.status
 
     @bp.errorhandler(SupabaseError)
@@ -141,6 +149,8 @@ def create_music_blueprint(require_user, optional_user, rate_limit, allowed_orig
         if not job.get("provider_task_id"):
             return {"success": True, "job": public_job(job), "tracks": []}
         result = query_music(key, job["provider_task_id"], query_template, auth_type)
+        if result["status"] == "failed":
+            result["error_code"] = stage_failure(result.get("error_code"), job.get("flow_stage") == "importing")
         if job.get("operation") == "flow_cover" and job.get("flow_stage") == "importing" and job.get("status") != "failed":
             data = reconcile_flow_import(store, owner, job, result, key, auth_type)
             return {"success": True, **data, "job": public_job(data["job"])}
@@ -158,7 +168,10 @@ def create_music_blueprint(require_user, optional_user, rate_limit, allowed_orig
         if status == "failed":
             # An old already-refunded row can retain its original generic code;
             # show the newly queried reason without rewriting historical money.
-            visible_job["failure_reason"] = failure_reason(result["error_code"])
+            reason = result["error_code"]
+            if reason and (reason not in {"MUSIC_TASK_FAILED", "MUSIC_PROVIDER_JOB_FAILED"} or
+                           updated.get("error_code") in {None, "MUSIC_TASK_FAILED"}):
+                visible_job.update(error_code=reason, failure_reason=failure_reason(reason))
         return {"success": True, "job": visible_job, "tracks": tracks, "progress": result["progress"], "credit_balance": applied.get("balance")}
 
     @bp.get("/config")
@@ -228,6 +241,9 @@ def create_music_blueprint(require_user, optional_user, rate_limit, allowed_orig
         try:
             task_id = submit_flow(key, "uploadAudioFlowMusic", {"model": "flowmusic", "audio_url": urls[0]}, auth_type) if flow else submit_operation(key, operation, body, urls, endpoint, auth_type)
         except MusicError as error:
+            if flow and error.reason_code == "MUSIC_CONTENT_REJECTED":
+                error.reason_code = stage_failure(error.reason_code, True)
+                error.message = failure_reason(error.reason_code)
             store.apply(owner, request_id, "submission_unknown" if error.uncertain else "rejected", error_code=error.reason_code or error.code)
             raise
         applied = store.apply(owner, request_id, "submitted", task_id=task_id)

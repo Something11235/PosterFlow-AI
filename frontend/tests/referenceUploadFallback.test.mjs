@@ -14,6 +14,26 @@ const mask = { name: "mask.png", blob: new Blob(["mask pixels"], { type: "image/
 const signed = () => Response.json({ signed_url: directUrl, path, token: "fixture", relay_ticket: "relay-fixture" });
 afterEach(() => mock.restoreAll());
 
+test("a MIME-less reference is signed as PNG and uploaded with the corrected filename and exact pixels", async () => {
+  const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWp8AAAAASUVORK5CYII=", "base64");
+  const routes = [];
+  mock.method(globalThis, "fetch", async (url, init) => {
+    routes.push(url);
+    if (url === signUrl) {
+      assert.deepEqual(JSON.parse(init.body), { content_type: "image/png", size: bytes.length });
+      return signed();
+    }
+    assert.equal(url, directUrl);
+    const file = init.body.get("");
+    assert.equal(file.name, "photo.png");
+    assert.equal(file.type, "image/png");
+    assert.deepEqual(Buffer.from(await file.arrayBuffer()), bytes);
+    return Response.json({});
+  });
+  assert.deepEqual(await uploadReferenceBlobs([new File([bytes], "photo")]), [path]);
+  assert.deepEqual(routes, [signUrl, directUrl]);
+});
+
 test("reference connection failures include recovery advice without relabeling a rejected file", async () => {
   const hint = "请更换网络环境或开启代理后刷新页面重试，或等待一段时间后再试。";
   for (const [status, code, showHint] of [[503, "REFERENCE_UPLOAD_UNAVAILABLE", true], [413, "REFERENCE_IMAGE_TOO_LARGE", false], [429, "REFERENCE_UPLOAD_RATE_LIMITED", false]]) {

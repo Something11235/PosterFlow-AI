@@ -1,0 +1,71 @@
+.cc-tour {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: #edf3fb;
+  color-scheme: dark;
+  overscroll-behavior: contain;
+}
+.cc-tour::backdrop { background: transparent; }
+.cc-tour-highlight {
+  position: absolute;
+  border: 2px solid #8db9ff;
+  border-radius: 9px;
+  box-shadow: 0 0 0 220vmax rgb(3 8 16 / 74%);
+  pointer-events: none;
+}
+.cc-tour:has(.cc-tour-highlight[hidden]) { background: rgb(3 8 16 / 74%); }
+.cc-tour-card {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: min(336px, calc(100% - 20px));
+  box-sizing: border-box;
+  padding: 13px 18px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #456084;
+  border-radius: 12px;
+  background: #142033;
+  box-shadow: 0 12px 34px rgb(0 0 0 / 40%);
+  text-align: start;
+}
+.cc-tour-card header, .cc-tour-card footer, .cc-tour-card header > span, .cc-tour-card button {
+  display: flex;
+  align-items: center;
+}
+.cc-tour-card header { justify-content: space-between; gap: 12px; }
+.cc-tour-card header > span { gap: 10px; font-size: 12px; color: #a8c9ff; }
+.cc-tour-card header b { font-weight: 500; font-variant-numeric: tabular-nums; color: #adc0d8; }
+.cc-tour-card h2 { margin: 8px 0 5px; font-size: 19px; line-height: 1.4; font-weight: 650; }
+.cc-tour-card h2:focus { outline: none; }
+.cc-tour-card p { margin: 0; font-size: 14px; line-height: 1.65; color: #c4d1e1; overflow-wrap: anywhere; }
+.cc-tour-card footer { gap: 10px; margin-top: 16px; }
+.cc-tour-card button {
+  min-height: 36px;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  border-radius: 6px;
+  padding-inline: 10px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cc-tour-card button:focus-visible { outline: 2px solid #a9caff; outline-offset: 2px; }
+.cc-tour-card .cc-tour-skip { margin-right: -7px; color: #b8c9df; }
+.cc-tour-card .cc-tour-prev { margin-left: -7px; color: #c9d7e9; }
+.cc-tour-card :is(.cc-tour-skip,.cc-tour-prev):hover { color: #fff; background: #26364b; }
+.cc-tour-card .cc-tour-next { margin-left: auto; padding-inline: 14px; color: #fff; background: #315ba0; border: 1px solid #5682c6; }
+.cc-tour-card .cc-tour-next:hover { background: #3d6ab4; }
+@media (pointer: coarse) {
+  .cc-tour-card button { min-height: 44px; }
+}

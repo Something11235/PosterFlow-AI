@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Archive, Download, ExternalLink, X } from "lucide-react";
 import { saveBrowserFile } from "../lib/browserSave";
 import { CANVAS_MEDIA_LABELS, canvasBackupUrl, canvasBatchDownloads, canvasDownloadName, createCanvasArchive, readCanvasDownload, safeCanvasName } from "../lib/creationCanvasDownloads";
@@ -44,10 +44,14 @@ export default function CreationCanvasExport({ project, scope, onClose }) {
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const dialog = useRef(null);
-  useEffect(() => {
-    const previous = document.activeElement;
-    dialog.current.showModal();
-    return () => previous?.focus?.({ preventScroll: true });
+  useLayoutEffect(() => {
+    const modal = dialog.current;
+    const opener = document.activeElement;
+    modal.showModal();
+    return () => {
+      modal.close();
+      if (opener?.isConnected) opener.focus?.({ preventScroll: true });
+    };
   }, []);
   async function exportZip() {
     if (progress || !selected.size) return;
@@ -60,7 +64,7 @@ export default function CreationCanvasExport({ project, scope, onClose }) {
     finally { setProgress(""); }
   }
   return <dialog className="cc-dialog cc-export-dialog" ref={dialog} aria-label="批量导出" onCancel={e => { e.preventDefault(); if (!progress) onClose(); }}>
-    <header><h2>批量导出</h2><button disabled={Boolean(progress)} onClick={onClose} aria-label="关闭导出窗口"><X size={18}/></button></header>
+    <header><h2>批量导出</h2><button type="button" disabled={Boolean(progress)} onClick={onClose} aria-label="关闭导出窗口"><X size={18}/></button></header>
     {items.length ? <><p>选择要打包到 ZIP 的画布素材。</p>
       <div className="cc-export-list">{items.map(item => <label key={item.id}>
         <input type="checkbox" checked={selected.has(item.id)} disabled={Boolean(progress)} onChange={() => setSelected(current => {

@@ -1,0 +1,45 @@
+.ppt-presentation-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-bottom: 16px;
+}
+.ppt-presentation-picker, .ppt-presentation-picker > span, .ppt-presentation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ppt-presentation-picker {
+  gap: 12px;
+  min-width: 0;
+}
+.ppt-presentation-picker > span {
+  color: var(--ppt-secondary);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.ppt-presentation-picker svg { color: var(--ppt-highlight); }
+.ppt-presentation-picker select {
+  width: clamp(180px, 24vw, 360px);
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--studio-text);
+  border: 1px solid var(--ppt-edge);
+  border-radius: 7px;
+  background: var(--studio-bg);
+  font: inherit;
+  font-size: 14px;
+}
+.ppt-presentation-actions { max-width: 100%; flex-wrap: wrap; }
+.ppt-presentation-actions .ppt-secondary { min-height: 38px; padding: 6px 12px; font-weight: 500; white-space: nowrap; }
+.ppt-presentation-actions .ppt-secondary:first-child { border-color: var(--ppt-accent-border); color: var(--ppt-highlight); background: var(--ppt-tint); }
+.ppt-presentation-actions .ppt-secondary:hover:not(:disabled) { border-color: var(--ppt-accent-border); }
+@media (max-width: 620px) {
+  .ppt-presentation-picker { width: 100%; }
+  .ppt-presentation-picker select { flex: 1; }
+  .ppt-presentation-actions .ppt-secondary, .ppt-presentation-picker select { min-height: 44px; }
+}

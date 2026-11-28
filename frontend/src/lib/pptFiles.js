@@ -7,9 +7,11 @@ const OOXML_PARTS = /^(ppt\/(presentation\.xml|_rels\/presentation\.xml\.rels|sl
 const PPT_STYLE_PARTS = /^ppt\/(slides\/_rels|slideLayouts(?:\/_rels)?|slideMasters(?:\/_rels)?|theme)\/[^/]+\.xml(?:\.rels)?$/
 
 // Only inflate document parts needed for text and styles. Never open embedded objects or external relationships.
-function readOffice(bytes) {
+export function readOffice(bytes, { original = false } = {}) {
   let total = 0
   let entries = 0
+  const archiveNames = new Set()
+  let archiveSize = 0
   function withinBudget(entry) {
     total += entry.originalSize
     if (entry.originalSize > 8 * MIB || total > 32 * MIB) throw new Error('文档解压后过大，请拆分后导入。')
@@ -17,10 +19,18 @@ function readOffice(bytes) {
   }
   const parts = unzipSync(bytes, { filter(entry) {
     if (++entries > 8000) throw new Error('文档包含过多文件。请选用较小的资料。')
+    if (original) {
+      if (archiveNames.has(entry.name) || entry.name.includes('\\') || entry.name.startsWith('/') || entry.name.split('/').includes('..')) throw new Error('PPTX 包含无法安全识别的文件路径。')
+      archiveNames.add(entry.name)
+      archiveSize += entry.originalSize
+      if (archiveSize > 256 * MIB) throw new Error('PPTX 解压后过大，请拆分后导入。')
+    }
     return OOXML_PARTS.test(entry.name) && withinBudget(entry)
   } })
   const parsed = new Map()
-  return { names: Object.keys(parts), loadStyles(names) {
+  return { names: Object.keys(parts), pictures(names) {
+    return unzipSync(bytes, { filter: entry => names.has(entry.name) && entry.originalSize <= 8 * MIB })
+  }, loadStyles(names) {
     const wanted = new Set(names.filter(n => PPT_STYLE_PARTS.test(n) && !Object.hasOwn(parts, n)))
     if (wanted.size) Object.assign(parts, unzipSync(bytes, { filter: entry => wanted.has(entry.name) && withinBudget(entry) }))
   }, xml(name) {
@@ -50,7 +60,7 @@ const themeColor = (el, fallback) => {
 
 const child = (el, name) => Array.from(el?.children || []).find(node => node.localName === name)
 const relPath = name => name.replace(/\/([^/]+)$/, '/_rels/$1.rels')
-function relationships(office, part) {
+export function relationships(office, part) {
   return nodes(office.xml(relPath(part)), 'Relationship').flatMap(rel => {
     const target = attr(rel, 'Target')
     if (!target || attr(rel, 'TargetMode') === 'External' || /[\\?#]|^[a-z]+:|^\/\//i.test(target)) return []
@@ -107,17 +117,40 @@ function placeholders(part, key) {
   return result
 }
 
-function pptParts(office, includeTemplate) {
+export function pptSlideOrder(office, strict = false) {
   const presentation = office.xml('ppt/presentation.xml')
   if (!presentation) throw new Error('文件中没有找到 PowerPoint 演示文稿。')
   const rels = new Map(relationships(office, 'ppt/presentation.xml').filter(rel => rel.type === 'slide').map(rel => [rel.id, rel.path]))
   const order = nodes(presentation, 'sldId').map(s => {
     const id = s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id')
     return rels.get(id || attr(s, 'r:id'))
-  }).filter(name => office.names.includes(name))
-  const slides = order.length ? order : office.names.filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+  })
+  if (strict && (!order.length || order.some(name => !office.names.includes(name)) || new Set(order).size !== order.length)) {
+    throw new Error('无法按原稿顺序读取所有幻灯片，请在 PowerPoint 中另存为 .pptx 后重试。')
+  }
+  const valid = order.filter(name => office.names.includes(name))
+  const slides = valid.length ? valid : office.names.filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
     .sort((a,b) => a.localeCompare(b, 'en', { numeric: true }))
   if (!slides.length) throw new Error('演示文稿没有幻灯片。')
+  return slides
+}
+
+export function pptSlideStyles(office, slides) {
+  const layouts = sampleParents(office, slides, 'slideLayout')
+  const uniqueParents = map => [...new Set(map.values())].filter(Boolean)
+  const masters = sampleParents(office, uniqueParents(layouts), 'slideMaster')
+  const themes = sampleParents(office, uniqueParents(masters), 'theme')
+  return name => {
+    const layoutName = layouts.get(name), masterName = masters.get(layoutName)
+    const slide = office.xml(name), layout = office.xml(layoutName), master = office.xml(masterName)
+    return { slide, layout, master, layoutName, masterName, style: themeContext(office.xml(themes.get(masterName)), master, layout, slide),
+      layoutSlots: placeholders(layout,'idx'), masterSlots: placeholders(master,'type') }
+  }
+}
+
+function pptParts(office, includeTemplate) {
+  const presentation = office.xml('ppt/presentation.xml')
+  const slides = pptSlideOrder(office)
   let text = ''
   for (const name of slides) {
     if (text.length >= TEXT_LIMIT) break
@@ -128,19 +161,12 @@ function pptParts(office, includeTemplate) {
   const cx = Number(attr(size, 'cx')) || 12192000
   const cy = Number(attr(size, 'cy')) || 6858000
   const sample = slides.slice(0, 6)
-  const layouts = sampleParents(office, sample, 'slideLayout')
-  const uniqueParents = map => [...new Set(map.values())].filter(Boolean)
-  const masters = sampleParents(office, uniqueParents(layouts), 'slideMaster')
-  const themes = sampleParents(office, uniqueParents(masters), 'theme')
+  const context = pptSlideStyles(office, sample)
   const template = { slides: [] }
   for (const name of sample) {
-    const slide = office.xml(name)
-    const layoutName = layouts.get(name), masterName = masters.get(layoutName)
-    const layout = office.xml(layoutName), master = office.xml(masterName)
-    const style = themeContext(office.xml(themes.get(masterName)), master, layout, slide)
+    const { slide, layout, master, style, layoutSlots, masterSlots } = context(name)
     const base = style.background(master, style.color('bg1', '#FFFFFF'))
     if (!template.slides.length) Object.assign(template, { font: style.font, accent: style.color('accent1', '#3264DA'), background: base })
-    const layoutSlots = placeholders(layout, 'idx'), masterSlots = placeholders(master, 'type')
     const elements = []
     for (const shape of nodes(slide, 'sp')) {
       if (elements.length === 12) break
@@ -205,8 +231,9 @@ function workbookText(office) {
 }
 
 async function pdfText(data) {
+  // Both the page and its worker need PDF.js's compatibility build on older browsers.
   const [{ getDocument, GlobalWorkerOptions }, worker] = await Promise.all([
-    import('pdfjs-dist/build/pdf.mjs'), import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+    import('pdfjs-dist/legacy/build/pdf.mjs'), import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
   ])
   GlobalWorkerOptions.workerSrc = worker.default
   const loading = getDocument({ data, isEvalSupported: false, useSystemFonts: false, useWorkerFetch: false })
@@ -249,11 +276,13 @@ export async function importPptFile(file, kind = 'reference') {
   return { source: { name: file.name, text: text.slice(0, TEXT_LIMIT) }, ...(template ? {template} : {}) }
 }
 
-export async function exportPptFile(deck, templateFile) {
+export async function exportPptFile(deck, savedTemplate, motionEnabled = false) {
   if (!deck?.slides?.length) throw new Error('请先生成幻灯片。')
   const { default: PptxGenJS } = await import('pptxgenjs')
   const pptx = new PptxGenJS()
-  const style = templateFile ? (await importPptFile(templateFile, 'template')).template : null
+  // Older projects saved the original template file. New projects store the
+  // parsed styles so WebKit never needs to persist a disk-backed File.
+  const style = savedTemplate instanceof Blob ? (await importPptFile(savedTemplate, 'template')).template : savedTemplate
   const fontFace = style?.font || 'Microsoft YaHei'
   pptx.layout = 'LAYOUT_WIDE'
   pptx.author = 'PosterFlow AI'
@@ -276,6 +305,10 @@ export async function exportPptFile(deck, templateFile) {
         slide.addImage({ ...pos, data:e.src })
       }
     }
+  }
+  if (motionEnabled && deck.slides.some(slide => slide.motion)) {
+    const { addGeneratedMotion } = await import('./pptMotionExport.js')
+    return addGeneratedMotion(await pptx.write({outputType:'uint8array',compression:true}),deck.slides)
   }
   return pptx.write({ outputType: 'blob', compression: true })
 }

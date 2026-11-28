@@ -19,7 +19,7 @@ function frameView(nodes, width, height) {
   return { x: (width - w * k) / 2 - left * k, y: (height - h * k) / 2 - top * k - 8, k };
 }
 
-export default function CreationCanvasGraph({ project, owner, downloadScope, quote, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onMove, onEdit, onConnect, onError, onModelChange, onParamChange }) {
+export default function CreationCanvasGraph({ project, owner, downloadScope, quote, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onAssist, onMove, onEdit, onConnect, onError, onModelChange, onParamChange }) {
   const board = useRef(null);
   const stage = useRef(null);
   const viewRef = useRef({ x: 50, y: 85, k: 1 });
@@ -285,7 +285,7 @@ export default function CreationCanvasGraph({ project, owner, downloadScope, quo
     quote={["image","video"].includes(node.type) ? quote(node) : null}
     onSelect={setSelected} onMenu={toggleNodeMenu} menuOpen={menu === node.id} onParamChange={onParamChange}
     onConnectStart={id => setSource(s => s === id ? null : id)} onConnectEnd={endConnection}
-    onRun={onRun} onCancel={onCancel} onUpload={onUpload} onExtract={onExtract} onNextShot={onNextShot} onText={onText} onModelChange={onModelChange} />);
+    onRun={onRun} onCancel={onCancel} onUpload={onUpload} onExtract={onExtract} onNextShot={onNextShot} onText={onText} onAssist={onAssist} onModelChange={onModelChange} />);
   return <div className="cc-graph">
     <div className="cc-toolbar">
       <div className="cc-toolbar-set"><button className="cc-add" aria-expanded={menu === "add"} onClick={() => { setMenu(menu === "add" ? "" : "add"); setHelp(false); }}><Plus size={16} />添加节点<ChevronDown size={13} /></button>

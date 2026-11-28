@@ -376,7 +376,11 @@
 .tavern-platform-balance button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 4px 0; color: #a8c7ff; font: inherit; background: transparent; border: 0; cursor: pointer; }
 .tavern-platform-balance button:disabled { opacity: .5; cursor: not-allowed; }
 .tavern-platform-balance button:focus-visible { outline: 2px solid #4f8cff; outline-offset: 3px; }
-@media (max-width: 480px) { .tavern-page-bar { flex-wrap: wrap; gap: 12px; } .tavern-page-actions { width: 100%; } .tavern-page-actions > button { flex: 1; } .tavern-platform-balance { padding-inline: 14px; } }
+@media (max-width: 480px) {
+  .tavern-page-bar { flex-wrap: wrap; gap: 12px; }
+  .tavern-page-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .tavern-platform-balance { padding-inline: 14px; }
+}
 .tavern-session-entry { display: flex; position: relative; align-items: center; min-width: 0; }
 .tavern-session-entry > button { flex: 1; min-width: 0; padding-right: 30px; }
 .tavern-session-entry > button > span { overflow-wrap: anywhere; }

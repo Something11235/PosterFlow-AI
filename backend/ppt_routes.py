@@ -1,5 +1,7 @@
 """Authenticated BuyToken presentation generation, editing, chat and recovery."""
 import hashlib
+import json
+import logging
 import os
 import time
 import uuid
@@ -9,20 +11,23 @@ from flask import Blueprint, jsonify, request
 
 try:
     from backend.ppt_document import MAX_PAGES, InvalidDocument, compact, prepare, result_document
+    from backend.ppt_preview import PptPreview
     from backend.supabase_service import SupabaseError, SupabaseGateway
     from backend.tavern_platform import DEFAULT_ENDPOINT
     from backend.tavern_routes import TavernError, normalize_usage, provider_reply, validate_endpoint
-    from backend.tavern_stream import run_without_deltas
+    from backend.tavern_stream import run_without_deltas, stream_response
 except ModuleNotFoundError:
     from ppt_document import MAX_PAGES, InvalidDocument, compact, prepare, result_document
+    from ppt_preview import PptPreview
     from supabase_service import SupabaseError, SupabaseGateway
     from tavern_platform import DEFAULT_ENDPOINT
     from tavern_routes import TavernError, normalize_usage, provider_reply, validate_endpoint
-    from tavern_stream import run_without_deltas
+    from tavern_stream import run_without_deltas, stream_response
 
 
 DEFAULT_MODEL = "gpt-6.2-astra"
-PPT_DEADLINE_SECONDS = 250  # Vercel maxDuration is 300s. Leave time for durable settlement.
+PPT_DEADLINE_SECONDS = 120  # One absolute provider deadline, including any protocol negotiation.
+PPT_EDIT_CHAT_SECONDS = 250
 # Supplier RMB per million: ordinary input, output, cache read, and optional 5-minute write.
 MODELS = {
     DEFAULT_MODEL: ("GPT 6.2 Astra", "3.2", "16", "0.16", "4"),
@@ -42,6 +47,8 @@ MESSAGES = {
     "PPT_RESULT_INVALID": (200, "模型未返回可用结果，预留积分已退回。"),
     "PPT_PROVIDER_REJECTED": (200, "模型服务商未接受本次请求，预留积分已退回。"),
     "PPT_PROVIDER_UNREACHABLE": (200, "暂时无法连接模型服务商，预留积分已退回。"),
+    "PPT_PROVIDER_TIMEOUT": (200, "本次模型请求超时，本步预留积分已退回。"),
+    "PPT_PROVIDER_UNAVAILABLE": (200, "模型服务商暂时无法提供该模型，本步预留积分已退回。"),
     "PPT_RESULT_UNAVAILABLE": (200, "未收到可交付的模型结果，预留积分已退回。"),
     "PPT_RESULT_EXPIRED": (200, "原任务超时，预留积分已退回。"),
     "PPT_USAGE_UNCONFIRMED": (200, "服务商用量未能核实，已释放本次预留积分。"),
@@ -100,13 +107,17 @@ def rpc(name, params):
     return result
 
 
-def public_result(record):
+def public_record(record):
     payload = dict(record)
     code = payload.pop("error_code", None)
     if code in MESSAGES:
         field = "note" if payload.get("status") == "succeeded" else "error"
         payload[field] = {"code": code, "message": MESSAGES[code][1]}
-    return jsonify(payload), 202 if payload.get("status") == "processing" else 200
+    return payload
+
+
+def public_result(record):
+    return jsonify(public_record(record)), 202 if record.get("status") == "processing" else 200
 
 
 def ppt_usage(raw):
@@ -123,7 +134,34 @@ def ppt_usage(raw):
     return usage
 
 
-def run_request(kind, user_id, payload, deadline):
+def provider_events(endpoint, key, body, deadline, streaming, kind):
+    def invoke(options):
+        return provider_reply(endpoint, key, options, deadline, usage_reader=ppt_usage, model_fallback=True, structured=kind != "chat")
+
+    if streaming:
+        preview = None if kind == "motion_only" else PptPreview(kind)
+        stream = invoke({**body, "stream": True, "stream_options": {"include_usage": True}})
+        try:
+            while True:
+                try:
+                    fragment = next(stream)
+                except StopIteration as finished:
+                    return finished.value
+                if fragment is None:
+                    yield {"type": "heartbeat"}
+                elif preview is not None:
+                    yield from preview.feed(fragment)
+        except TavernError as error:
+            # Some compatible routes explicitly reject the streaming parameter
+            # before accepting a completion. Never replay an ambiguous POST.
+            if error.code != "TAVERN_STREAM_UNSUPPORTED":
+                raise
+        finally:
+            stream.close()
+    return (yield from invoke(body))
+
+
+def run_request(kind, user_id, payload, deadline, streaming=False):
     rid = request_id(payload.get("request_id"))
     model = payload.get("model", DEFAULT_MODEL)
     if not isinstance(model, str) or model not in MODELS:
@@ -146,22 +184,68 @@ def run_request(kind, user_id, payload, deadline):
             "max_tokens" if model == "deepseek-v4.1-flash" else "max_completion_tokens": output_bound}
     if kind != "chat":
         body["response_format"] = {"type": "json_object"}
+    work = finish_request(ids, kind, payload, original, selected, endpoint, key, body, deadline, streaming)
+    if streaming:
+        def stream_error(error):
+            error = error if isinstance(error, PptError) else PptError("PPT_DATABASE_UNAVAILABLE")
+            return {"error": {"code": error.code, "message": error.message}, "status": error.status}
+        return stream_response(work, stream_error, finish_on_disconnect=True,
+                               delta_packet=lambda event: event, result_packet=lambda record: {"type": "result", "data": record})
+    return jsonify(run_without_deltas(work))
+
+
+def finish_request(ids, kind, payload, original, selected, endpoint, key, body, deadline, streaming):
+    if streaming:
+        yield {"type": "start"}
+    if deadline is None:
+        # Generation gets its full provider budget after auth and reservation.
+        deadline = time.monotonic() + PPT_DEADLINE_SECONDS
     usage, document, error_code = None, None, None
+    diagnostic = None
     try:
-        answer = run_without_deltas(provider_reply(endpoint, key, body, deadline, usage_reader=ppt_usage))
+        preview_kind = kind
+        if kind == "page" and "motion_only" in payload:
+            preview_kind = "motion_only"
+        elif kind == "page" and "original_edit" in payload:
+            preview_kind = "original_edit"
+        answer = yield from provider_events(endpoint, key, body, deadline, streaming, preview_kind)
         usage = answer["usage"]
-        document = result_document(kind, answer["content"], payload.get("page_count", 6), original, selected)
+        if answer.get("finish_reason") == "content_filter":
+            raise InvalidDocument("服务商明确拒绝输出本次内容，未能交付演示稿结果。")
+        try:
+            document = result_document(kind, answer["content"], payload.get("page_count", 6), original, selected)
+        except (ValueError, TypeError, KeyError, RecursionError):
+            if answer.get("finish_reason") == "length":
+                raise InvalidDocument("模型达到输出 Token 上限，返回内容未通过演示稿校验。") from None
+            raise
     except TavernError as error:
         usage = error.usage
         if error.code == "TAVERN_RESPONSE_INVALID":
             error_code = "PPT_RESULT_INVALID"
-        elif error.code in ("TAVERN_DNS_BUSY", "TAVERN_DNS_UNAVAILABLE"):
+            diagnostic = "服务商响应未通过读取或有效文字校验。"
+        elif error.code == "TAVERN_MODEL_TIMEOUT" or time.monotonic() >= deadline:
+            error_code = "PPT_PROVIDER_TIMEOUT"
+        elif error.code == "TAVERN_MODEL_UNAVAILABLE":
+            error_code = "PPT_PROVIDER_UNAVAILABLE"
+        elif error.code in ("TAVERN_DNS_BUSY", "TAVERN_DNS_UNAVAILABLE", "TAVERN_CONNECTION_FAILED"):
             error_code = "PPT_PROVIDER_UNREACHABLE"
         else:
             error_code = "PPT_RESULT_UNAVAILABLE" if error.uncertain else "PPT_PROVIDER_REJECTED"
-    except (ValueError, RecursionError, TypeError, KeyError):
+    except InvalidDocument as error:
         error_code = "PPT_RESULT_INVALID"
+        # The document validators construct these messages from rule labels and counts only.
+        diagnostic = str(error)
+    except json.JSONDecodeError as error:
+        error_code = "PPT_RESULT_INVALID"
+        diagnostic = f"JSON 解析失败，第 {error.lineno} 行、第 {error.colno} 列。"
+    except (ValueError, RecursionError, TypeError, KeyError) as error:
+        error_code = "PPT_RESULT_INVALID"
+        diagnostic = f"处理模型结果时出现未分类的 {type(error).__name__}。"
     finish = {**ids, "p_result": document, "p_usage": usage, "p_error_code": error_code}
+    if diagnostic:
+        finish["p_diagnostic"] = diagnostic
+        logging.getLogger(__name__).warning("PPT result invalid request=%s kind=%s detail=%s",
+                                            ids["p_request_id"], kind, diagnostic)
     try:
         settled = rpc("finish_ppt_request", finish)
     except PptError as error:
@@ -169,7 +253,7 @@ def run_request(kind, user_id, payload, deadline):
             raise
         # A lost DB response is safe to retry, unlike the paid model request.
         settled = rpc("finish_ppt_request", finish)
-    return public_result(settled["request"])
+    return public_record(settled["request"])
 
 
 def create_ppt_blueprint(server):
@@ -177,7 +261,8 @@ def create_ppt_blueprint(server):
 
     @bp.after_request
     def private_response(response):
-        response.headers["Cache-Control"] = "private, no-store"
+        cache = "private, no-store"
+        response.headers["Cache-Control"] = cache + ", no-transform" if response.mimetype == "application/x-ndjson" else cache
         return response
 
     @bp.errorhandler(PptError)
@@ -197,7 +282,7 @@ def create_ppt_blueprint(server):
         return public_result(reply["request"])
 
     def submit(kind):
-        deadline = time.monotonic() + PPT_DEADLINE_SECONDS
+        deadline = time.monotonic() + PPT_EDIT_CHAT_SECONDS if kind in ("chat", "edit") else None
         origin = request.headers.get("Origin")
         if (origin and origin.rstrip("/") not in {request.host_url.rstrip("/"), *server.ALLOWED_ORIGINS}
                 or request.headers.get("Sec-Fetch-Site") == "cross-site"):
@@ -212,7 +297,17 @@ def create_ppt_blueprint(server):
             data = None
         if not isinstance(data, dict):
             raise PptError("PPT_INPUT_INVALID")
-        return run_request(kind, user.id, data, deadline)
+        streaming = kind in ("outline", "page") and request.accept_mimetypes["application/x-ndjson"] > 0 and (
+            "application/x-ndjson" in request.headers.get("Accept", "").lower())
+        return run_request(kind, user.id, data, deadline, streaming=streaming)
+
+    @bp.post("/outline")
+    def outline():
+        return submit("outline")
+
+    @bp.post("/page")
+    def page():
+        return submit("page")
 
     @bp.post("/generate")
     def generate():

@@ -114,6 +114,7 @@ export async function musicApi(path, { mode = "platform", key = "", endpoint = "
     if (!response.ok || payload.error) {
       const error = new Error(typeof payload.error === "string" ? payload.error : "音乐请求未完成，请稍后刷新。");
       error.code = payload.code;
+      error.reason_code = payload.reason_code;
       error.status = response.status;
       error.submission_unknown = Boolean(payload.submission_unknown);
       throw error;

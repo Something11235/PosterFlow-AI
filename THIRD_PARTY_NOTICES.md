@@ -13,6 +13,7 @@
 | `@vercel/analytics` | 2.0.1 | MIT |
 | `fabric` | 7.4.0 | MIT |
 | `fflate` | 0.8.3 | MIT |
+| `libheif-js` | 1.23.5 | LGPL-3.0。HEIC/HEIF 的浏览器备用解码器按需独立加载，含 libheif 1.23.5 与 libde265 1.0.15。[许可证、源码和构建说明](frontend/public/licenses/heif-decoder.txt) |
 | `lucide-react` | 1.29.0 | ISC；Feather 派生部分另含 MIT 声明 |
 | `qrcode.react` | 4.2.0 | ISC；内嵌 Project Nayuki `qrcodegen` 为 MIT |
 | `react`、`react-dom` | 19.2.8 | MIT |
@@ -51,7 +52,7 @@
 
 ## 格式兼容与历史版本
 
-一键 PPT 的设计流程改编自 Hugo He 的 [PPT Master 6.10.0](https://github.com/hugohe3/ppt-master)，仓库内附[上游工作流](backend/ppt_assets/quick-generate.md)和 [MIT 许可证](backend/ppt_assets/LICENSE-ppt-master)。浏览器的 PPTX 导出使用 PptxGenJS（MIT），PDF 文本提取使用 PDF.js（Apache-2.0）。
+一键 PPT 的设计流程和[动效规划指引](backend/ppt_assets/web-motion.md)改编自 Hugo He 的 [PPT Master 6.10.0](https://github.com/hugohe3/ppt-master)，仓库内附[上游工作流](backend/ppt_assets/quick-generate.md)和 [MIT 许可证](backend/ppt_assets/LICENSE-ppt-master)。浏览器的 PPTX 导出使用 PptxGenJS（MIT），PDF 文本提取使用 PDF.js（Apache-2.0）。
 
 角色卡、世界书、PNG 元数据及导入接口的兼容说明涉及 SillyTavern、Character Card 等外部项目或规范。兼容格式本身不代表取得任何外部项目代码或角色内容的再许可；如实际复用第三方实现，仍须保留并遵守其原许可。SillyTavern 自身采用 [AGPL-3.0](https://github.com/SillyTavern/SillyTavern/blob/release/LICENSE)。本次定向核查未发现明确逐段复制其实现的证据，但没有对全部代码进行来源追溯或完整相似度审计。
 
@@ -68,3 +69,15 @@
 - 用户导入的角色卡、世界书、图片及其他内容：权利由各自作者或其他权利人保留，上传或导入不代表授予本项目对外再许可权。
 
 本次排除范围不构成对缺失素材授权的补授或确认。复用、再发布这些内容前，应取得对应许可，或替换为权属清楚的素材。发现权属或署名问题时，请通过 [维护者主页](https://github.com/Something11235) 提供的联系方式提交具体文件与来源信息。
+
+## AI 创作画布分镜与提示词
+
+画布服务端从 `backend/canvas_skills/upstream/` 加载 ZenStory 三个技能的原文节选。版本固定为 `7fed9dfcd33c5a3134ff1b51709dd826488b5aab`，原作者为 drama-skills contributors，依 MIT 授权。[许可证](backend/canvas_skills/LICENSE)
+
+| 本站入口 | 上游原文与选段 |
+| --- | --- |
+| 剧本拆镜 | 工作流第 1、2 步（戏剧落点、运镜与声音），节拍拆镜对照表，镜头目的、接招反应两条规则。[技能正文](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-storyboard/SKILL.md#L28-L33) · [节拍拆镜](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-storyboard/references/shot-craft.md#L3-L12) · [镜头目的](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-storyboard/references/shot-craft.md#L20-L23) |
+| 图片提示词 | “核心特征优先落笔”与设定图通用编写顺序六项，包含构图、材质和字迹约束。[技能正文](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-image-prompts/SKILL.md#L22-L27) · [视觉定调指南](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-image-prompts/references/sheet-prompt-guide.md#L3-L12) |
+| 视频提示词 | 工作流第 3 步前半段（动作、运镜与声音），单镜动作容量、接触发力、动作先后与多人同框反应。[技能正文](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-video-prompts/SKILL.md#L34-L38) · [表演弧线与动作计时](https://github.com/zenstory-ai/drama-skills/blob/7fed9dfcd33c5a3134ff1b51709dd826488b5aab/skills/short-drama-video-prompts/references/performance-action-timing.md#L3-L16) |
+
+每次文本请求只加载对应路径的选段，同时加载本站同名适配文件，指定助写、润色或补全动作以及 JSON 输出结构。上游的完整项目文件工作流、媒体生产和工具调用未纳入。渲染图片和视频由用户在画布另行确认。

@@ -1,40 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Aperture, ArrowRight, CircleAlert, Film, LoaderCircle, MoreHorizontal, Play,
-  Plus, ScanLine, Type, X } from "lucide-react";
-import { getCanvasAsset } from "../lib/creationCanvasProject";
+  Plus, ScanLine, Sparkles, X } from "lucide-react";
+import useCanvasNodeMedia from "./useCanvasNodeMedia";
 import { CANVAS_NODE_TYPES } from "./creationCanvasLayout";
 import { CANVAS_ICONS } from "./creationCanvasIcons";
 import CanvasNodeParameters from "./CanvasNodeParameters";
 import CanvasReferenceContent from "./CanvasReferenceContent";
 import ReferenceUploadProgress from "./ReferenceUploadProgress";
 
-function useNodeMedia(owner, projectId, node) {
-  const asset = node.run ? node.run.assetId : node.assetId;
-  const remote = node.run?.url || node.url || "";
-  const [local, setLocal] = useState(null);
-  useEffect(() => {
-    if (!asset) return;
-    let disposed = false;
-    let url;
-    getCanvasAsset(owner, projectId, asset).then(blob => {
-      if (!blob || disposed) return;
-      url = URL.createObjectURL(blob);
-      setLocal({ asset, url });
-    }).catch(() => {});
-    return () => { disposed = true; if (url) URL.revokeObjectURL(url); };
-  }, [asset, owner, projectId]);
-  if (asset && local?.asset === asset) return local.url;
-  return remote.startsWith("https://") ? remote : "";
-}
-
 export default function CreationCanvasCard({
   node, projectId, owner, position, selected, connectSource, list, quote, inputs, outgoing, staleFrame, menuOpen,
-  onSelect, onConnectStart, onConnectEnd, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onMenu, onModelChange, onParamChange,
+  onSelect, onConnectStart, onConnectEnd, onRun, onCancel, onUpload, onExtract, onNextShot, onText, onAssist, onMenu, onModelChange, onParamChange,
 }) {
   const Icon = CANVAS_ICONS[node.type];
   const spec = CANVAS_NODE_TYPES[node.type];
-  const media = useNodeMedia(owner, projectId, node);
+  const media = useCanvasNodeMedia(owner, projectId, node);
   const [badMedia, setBadMedia] = useState(null);
   const [working, setWorking] = useState(false);
   const [draft, setDraft] = useState(node.text || "");
@@ -101,7 +82,7 @@ export default function CreationCanvasCard({
     {isGeneration && quote && <CanvasNodeParameters title={node.title} quote={quote} disabled={isPending || working}
       onChange={(key, value) => onParamChange(node.id, quote.model, key, value)} />}
     <footer className="cc-node-footer">
-      {node.type === "prompt" ? <><span><Type size={12}/>文字</span><span>{draft.length} / 6000</span></>
+      {node.type === "prompt" ? <><button type="button" onClick={() => onAssist(node.id)}><Sparkles size={13}/>AI 助写</button><span>{draft.length} / 6000</span></>
       : node.type === "reference" ? <><span title={node.filename}>{node.filename || "参考素材"}</span><button onClick={() => uploader.current?.click()}>{hasMedia ? "替换" : "选择"}</button></>
       : isGeneration ? <><span title={quote?.error || [cost, reservation, quote?.model].filter(Boolean).join(" · ")}>{quote?.error || reservation || cost || (quote?.needsDuration ? "待核对报价" : stateText)}</span>{isPreparing ? <button className="cc-run"
         onClick={() => onCancel(node.id,node.run.requestId)}><X size={12}/>取消准备</button> : <button className="cc-run" disabled={working || Boolean(quote?.error && !isPending)}

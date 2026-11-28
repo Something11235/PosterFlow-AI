@@ -59,7 +59,7 @@
 .studio-local-badge > span { width: 5px; height: 5px; border-radius: 50%; background: #4f8cff; box-shadow: 0 0 8px #4f8cff40; }
 .studio-top-drafts { display: flex; align-items: center; gap: 7px; min-height: 35px; padding: 0 12px; border: 1px solid #243142; border-radius: 5px; background: #151f2e; color: #e2e8f0; font-size: 11px; cursor: pointer; }
 .studio-top-drafts > span { color: #4f8cff; }
-.studio-scroll { overflow-y: auto; overflow-x: hidden; min-height: 0; flex: 1; scrollbar-color: #334155 transparent; scrollbar-width: thin; }
+.studio-scroll { overflow-y: auto; overflow-x: hidden; min-height: 0; flex: 1; }
 .studio-page { max-width: 1500px; padding: 36px 38px 24px; margin: 0 auto; }
 .studio-intro { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 3px 0 29px; }
 .studio-eyebrow { margin: 0 0 16px; color: #8796aa; font: 9px Consolas, "Microsoft YaHei UI", monospace; letter-spacing: 2px; }
@@ -335,7 +335,11 @@
 .studio-prompt-library a:hover { background: #4f8cff14; }
 .studio-prompt-library a:focus-visible { outline: 2px solid #8eb6ff; outline-offset: 2px; }
 .studio-preview-art > span { top: 12px; bottom: auto; }
-.studio-nav { overflow-y: auto; scrollbar-width: thin; }
+.studio-nav { overflow-y: auto; }
+.studio-nav, .studio-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
 .studio-primary-nav, .studio-secondary-nav { flex-shrink: 0; }
 .studio-nav-caption { font-size: 12px; }
 .studio-nav-caption span { font-size: 11px; }

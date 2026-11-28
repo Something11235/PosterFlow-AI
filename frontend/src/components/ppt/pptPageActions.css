@@ -1,0 +1,52 @@
+.ppt-pagebar { flex-wrap: wrap; gap: 4px 8px; }
+.ppt-page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.ppt-pagebar .ppt-page-actions { margin-right: auto; }
+.ppt-page-actions .ppt-page-action {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 34px; padding: 4px 9px; border-radius: 6px;
+  color: var(--ppt-secondary); border: 1px solid var(--studio-line);
+  background: var(--studio-raised); font-size: 13px; white-space: nowrap;
+}
+.ppt-page-actions .ppt-page-action:not(:disabled):hover { color: var(--ppt-highlight); border-color: var(--ppt-accent-border); }
+.ppt-empty .ppt-page-actions { margin-top: 14px; }
+.ppt-page-dialog {
+  position: fixed; inset: 0; margin: auto; width: min(380px, calc(100vw - 28px)); padding: 20px;
+  max-height: calc(100dvh - 24px); overflow: auto; border: 1px solid var(--studio-line); border-radius: 12px;
+  background: var(--studio-panel); color: var(--studio-text); text-align: start;
+}
+.ppt-page-dialog::backdrop { background: #040811b8; }
+.ppt-page-dialog form { display: grid; gap: 15px; }
+.ppt-page-dialog h3 { margin: 0; font-size: 18px; }
+.ppt-page-dialog p { margin: 0; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.ppt-page-dialog .ppt-page-error { color: #ffb3b3; }
+.ppt-page-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ppt-page-dialog-actions button { min-height: 40px; padding: 7px 12px; }
+.ppt-page-dialog-actions .ppt-page-delete { color: #ffcdcd; background: #451f2b; border: 1px solid #95535e; border-radius: 7px; }
+.ppt-preview-header { flex-wrap: wrap; }
+.ppt-preview-actions { display: flex; flex-wrap: wrap; }
+.ppt-preview-actions > button { white-space: nowrap; }
+.ppt-regenerate-dialog { width: min(520px, calc(100vw - 24px)); }
+.ppt-regenerate-dialog form { max-height: calc(100dvh - 70px); display: flex; flex-direction: column; gap: 12px; }
+.ppt-regenerate-dialog form > * { flex-shrink: 0; }
+.ppt-regenerate-dialog .ppt-batch-instruction textarea { resize: none; }
+.ppt-regenerate-dialog form > .ppt-regenerate-choices { min-height: 76px; flex-shrink: 1; display: flex; flex-direction: column; }
+.ppt-regenerate-choices { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ppt-regenerate-choices legend { margin-bottom: 8px; }
+.ppt-regenerate-choices > div { max-height: min(32dvh, 250px); min-height: 38px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--studio-line); border-radius: 7px; }
+.ppt-regenerate-choices label { display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-height: 38px; overflow-wrap: anywhere; cursor: pointer; }
+.ppt-regenerate-choices label + label { border-top: 1px solid var(--studio-line); }
+.ppt-regenerate-choices input { accent-color: var(--ppt-action); flex-shrink: 0; }
+.ppt-regenerate-choices button { align-self: flex-start; flex-shrink: 0; margin-top: 6px; padding: 4px 0; color: var(--ppt-highlight); }
+.ppt-regenerate-summary { display: grid; gap: 3px; font-size: 14px; }
+.ppt-regenerate-summary p { color: var(--ppt-secondary); }
+@media (max-width: 600px) {
+  .ppt-page-actions .ppt-page-action, .ppt-page-dialog-actions button { min-height: 44px; }
+}
+@media (max-height: 560px) {
+  .ppt-regenerate-dialog { padding: 12px; }
+  .ppt-regenerate-dialog form { max-height: calc(100dvh - 52px); gap: 6px; }
+  .ppt-regenerate-dialog .ppt-batch-instruction { gap: 3px; }
+  .ppt-regenerate-dialog .ppt-batch-instruction textarea { height: 45px; padding-block: 4px; }
+  .ppt-regenerate-summary p { font-size: 12px; }
+  .ppt-regenerate-dialog .ppt-regenerate-choices legend { margin-bottom: 2px; }
+}

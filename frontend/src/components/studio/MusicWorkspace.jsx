@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowDownToLine, Check, CircleHelp, Copy, KeyRound, LoaderCircle, Music2, RefreshCw } from "lucide-react";
 import { buildMusicParameters, defaultFlow, defaultSuno, downloadMusic, FLOW_VERSIONS, musicApi, musicLength, musicJobCost, musicShouldPoll, readMusicSession, saveMusicSession, SUNO_VERSIONS } from "../../lib/music";
 import { musicHistorySnapshot } from "../../lib/musicHistory";
-import { AUDIO_OPERATIONS, buildAudioOperationParameters, musicFailedBeforeSubmission, musicOperations } from "../../lib/musicReferences";
+import { AUDIO_OPERATIONS, buildAudioOperationParameters, isRejectedMusicSelection, musicFailedBeforeSubmission, musicOperations, musicReferenceSelection } from "../../lib/musicReferences";
 import { useMusicReferences } from "../../lib/useMusicReferences";
 import SunoAudioComposer from "./SunoAudioComposer";
 import FlowAudioComposer from "./FlowAudioComposer";
@@ -20,7 +20,14 @@ function Field({ label, hint, children }) {
 function Select({ value, onChange, label, options }) {
   return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{options.map(option => typeof option === "string" ? <option key={option} value={option}>{option}</option> : <option key={option.value} value={option.value}>{option.label}</option>)}</select>;
 }
-const mergeJobs = (previous, jobs) => [...new Map([...previous, ...jobs].map(job => [job.request_id, job])).values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 50);
+function mergeJobs(previous, jobs) {
+  const byId = new Map(previous.map(job => [job.request_id, job]));
+  for (const job of jobs) {
+    const selection = byId.get(job.request_id)?.referenceSelection;
+    byId.set(job.request_id, selection ? { ...job, referenceSelection: selection } : job);
+  }
+  return [...byId.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 50);
+}
 
 export default function MusicWorkspace({ active, identity, authHeaders, session, account, accountLoading, onLogin, onAccountRefresh, values, onChange, onTaskActivity, bgmIntent, onUseTavernBgm }) {
   const [mode, setMode] = useState(() => readMusicSession(identity, "mode") === "own_key" ? "own_key" : "platform");
@@ -67,6 +74,8 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
   const operation = musicOperations(values.model).includes(values.operation) ? values.operation : "generate";
   const audioOperation = operation !== "generate";
   const audioLimit = operation === "inspo" ? 4 : 1;
+  const referenceSelection = musicReferenceSelection(operation, audio.items);
+  const rejectedSelection = isRejectedMusicSelection(jobs, referenceSelection);
   const audioSupported = Boolean(config?.audio_operations?.includes(operation)) && (mode === "platform" || endpoint.replace(/\/$/, "") === "https://api.apimart.ai/v1/music/generations");
   const canUpload = Boolean(session && account?.email_verified && account.profile?.status === "active");
 
@@ -171,6 +180,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
   }
   async function generate(event) {
     event.preventDefault();
+    if (rejectedSelection) return;
     const running = new Set([...jobsRef.current.filter(job => job.status === "submitting" || musicShouldPoll(job)).map(job => job.request_id), ...pending.current.keys()]);
     if (running.size >= 3) { setMessage("已有 3 个音乐任务正在进行，完成一个后可继续提交。"); return; }
     let parameters;
@@ -187,7 +197,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
     pending.current.set(requestId, controller);
     setBusy(true); setMessage(""); setSubmissionError(null); setSelected(requestId);
     saveMusicSession(identity, `selected.${mode}`, requestId);
-    const placeholder = { request_id: requestId, billing_mode: mode, model: values.model, version: isCustom ? values.custom_version : values.version, operation, reference_count: references.length, status: "submitting", created_at: new Date().toISOString() };
+    const placeholder = { request_id: requestId, billing_mode: mode, model: values.model, version: isCustom ? values.custom_version : values.version, operation, reference_count: references.length, referenceSelection, status: "submitting", created_at: new Date().toISOString() };
     setJobs(previous => mergeJobs(previous, [placeholder]));
     try {
       const data = await musicApi(audioOperation ? `/operations/${operation}` : "/generations", { ...options, body: { request_id: requestId, parameters, ...(audioOperation ? { references } : {}) }, signal: controller.signal });
@@ -198,11 +208,15 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
       if (controller.signal.aborted) return;
       // Validation/storage failures before reservation never become paid unknown tasks.
       const rejectedBeforeSubmit = musicFailedBeforeSubmission(error);
-      setJobs(previous => rejectedBeforeSubmit ? previous.filter(job => job.request_id !== requestId) : mergeJobs(previous, [{ ...placeholder, status: "submission_unknown" }]));
+      const failed = error.reason_code && !error.submission_unknown;
+      setJobs(previous => rejectedBeforeSubmit ? previous.filter(job => job.request_id !== requestId) : mergeJobs(previous, [{ ...placeholder, status: failed ? "failed" : "submission_unknown", error_code: error.reason_code, failure_reason: failed ? error.message : undefined }]));
       setMessage(error.message);
       setSubmissionError({ requestId, message: error.name === "AbortError" ? "提交等待超时，请保留当前请求编号，勿重复生成。" : error.message });
       // A GET recovers an accepted intent; never replay the paid POST.
-      if (!rejectedBeforeSubmit) await refresh(requestId);
+      if (!rejectedBeforeSubmit) {
+        await refresh(requestId);
+        if (failed && mode === "platform") onAccountRefresh();
+      }
     } finally {
       pending.current.delete(requestId); setBusy(pending.current.size > 0);
     }
@@ -230,7 +244,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
     saveMusicSession(identity, `selected.${mode}`, job.request_id);
   }
   const platformBlocked = mode === "platform" && (!config?.platform_configured || (session && (accountLoading || !account || !account.email_verified || account.profile?.status === "frozen" || Number(account.credits?.balance) < 2)));
-  const disabled = activeCount >= 3 || !config?.database_configured || platformBlocked || (mode === "own_key" && !key) || (audioOperation && (!audioSupported || (session && (!canUpload || audio.busy || !audio.ready.length || audio.ready.length > audioLimit || audio.ready.length !== audio.items.length))));
+  const disabled = rejectedSelection || activeCount >= 3 || !config?.database_configured || platformBlocked || (mode === "own_key" && !key) || (audioOperation && (!audioSupported || (session && (!canUpload || audio.busy || !audio.ready.length || audio.ready.length > audioLimit || audio.ready.length !== audio.items.length))));
   const tracks = result?.requestId === selected ? result.tracks || [] : [];
   const AudioComposer = operation === "flow_cover" ? FlowAudioComposer : SunoAudioComposer;
 
@@ -271,6 +285,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
           <div className="music-field-pair"><Field label="目标时长（秒）" hint="可留空，自动决定；指定时为 1–240 秒。"><input type="number" min="1" max="240" step="1" placeholder="自动" value={values.length ?? ""} onChange={event => update({ length: event.target.value })} /></Field><Field label="BPM（可选）" hint="不小于 1"><input type="number" min="1" step="0.01" value={values.bpm || ""} onChange={event => update({ bpm: event.target.value })} /></Field></div>
           <Field label="随机种子（可选）"><input value={values.seed || ""} onChange={event => update({ seed: event.target.value })} /></Field>
         </>}
+        {rejectedSelection && <div role="status" className="music-query-error"><strong>请更换参考音频</strong><p>音乐服务商已拒绝这组素材。请移除并换用其他原创或已获授权的录音，也可以只用文字描述想要的音乐。</p><button type="button" className="studio-secondary" onClick={() => { update({ operation: "generate" }); setMessage(""); }}>改用文字创作</button></div>}
         {message && <p role="alert" className="studio-form-message"><CircleHelp size={16} />{message}</p>}
       </div>
       <div className="studio-form-footer music-submit"><button type="submit" className="studio-primary" disabled={disabled}>{busy ? <LoaderCircle className="music-spin" size={16} /> : <Music2 size={16} />}{activeCount >= 3 ? "任务已满（3/3）" : activeCount ? `继续生成（${activeCount} 个进行中）` : "生成音乐"}<small>{mode === "platform" ? "2 积分 / 次" : "使用自己的 Key"}</small></button></div>
@@ -285,7 +300,7 @@ export default function MusicWorkspace({ active, identity, authHeaders, session,
         {submissionError?.requestId === selected && <p role="alert" className="studio-form-message">{submissionError.message}</p>}
         {["submitting", "submission_unknown", "unknown"].includes(current.status) && <p className="music-config-note">{current.provider_task_id ? "保留当前请求编号并刷新查询；查询不会重复生成。" : "尚未取得服务商任务编号，刷新只会核对本站记录。请先在服务商后台核对这次请求是否受理，再决定是否重新生成。"}</p>}
         {current.billing_status === "awaiting_balance" && <p role="status" className="music-config-note">已生成 {current.generated_count} 首，共需 {musicJobCost(current)} 积分，已预留 {current.reserved_credits} 积分。请补足余额后刷新状态领取。</p>}
-        {current.status === "failed" && <p role="status" className="music-config-note">{current.failure_reason || "音乐生成未完成，服务未提供可识别的具体原因。请保留任务编号核对。"}{current.billing_status === "refunded" ? "预留的网站积分已退回。" : "请在账户记录中核对网站积分处理结果。"}</p>}
+        {current.status === "failed" && <p role="status" className="music-config-note">{current.failure_reason || "音乐生成未完成，服务未提供可识别的具体原因。请保留任务编号核对。"}{current.billing_mode === "own_key" ? "本次使用自带 Key，未扣网站积分。" : current.billing_status === "refunded" ? "预留的网站积分已退回。" : "请在账户记录中核对网站积分处理结果。"}</p>}
         {current.billing_status === "settled" && <p className="music-settled"><Check size={15} />{current.generated_count} 首 · 已扣 {current.charged_credits} 积分</p>}
         {tracks.map(track => <article className="music-track" key={track.audio_index}><div className="music-track-title"><span className="music-track-art"><Music2 size={24} /></span><div><h2>{track.title}</h2><p>音轨 {track.audio_index} · {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, "0")}{track.tags ? ` · ${track.tags}` : ""}</p></div></div><audio controls preload="none" crossOrigin="anonymous" src={track.audio_url} aria-label={`播放 ${track.title}`} onPlay={event => { document.querySelectorAll(".music-track audio").forEach(audio => { if (audio !== event.currentTarget) audio.pause(); }); }} /><div className="music-inline-actions"><button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "audio")}><ArrowDownToLine size={15} />下载音频</button>{onUseTavernBgm && <button type="button" className="studio-secondary" onClick={()=>{document.querySelectorAll(".music-track audio").forEach(audio=>audio.pause());onUseTavernBgm(track);}}><Music2 size={15}/>用于酒馆 BGM</button>}{track.wav_url && <button type="button" className="studio-secondary" disabled={Boolean(downloading)} onClick={() => download(track, "wav")}>下载 WAV</button>}<a href={track.audio_url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">打开音频</a></div>{track.lyrics && <details className="music-lyrics"><summary>查看歌词</summary><pre>{track.lyrics}</pre><button type="button" className="studio-secondary" onClick={async () => { try { await navigator.clipboard.writeText(track.lyrics); setMessage("歌词已复制。"); } catch { setMessage("复制失败，请选择歌词后手动复制。"); } }}><Copy size={15} />复制歌词</button></details>}</article>)}
       </div> : <div className="music-empty"><span className="music-empty-icon"><Music2 size={44} strokeWidth={1.25} /></span><p className="studio-eyebrow">YOUR NEXT TRACK</p><h2>让脑海里的声音<br />成为一首音乐。</h2><p>选择模型、写下描述或歌词。<br />生成后即可试听、查看歌词和下载。</p><div className="music-empty-steps"><span>01 写下灵感</span><span>02 生成音乐</span><span>03 试听与下载</span></div></div>}

@@ -1,11 +1,12 @@
 import { getCanvasAsset } from './creationCanvasProject.js';
+import { MAX_REFERENCE_FILE_BYTES, prepareReferenceImage, referenceImageName, referenceImageType } from './referenceImage.js';
 import { SEEDANCE25_FLASH } from './seedance25.js';
 import { videoFile, videoMediaDuration } from './video.js';
 import { WAN30, WAN_DOCUMENTS } from './wan30.js';
 
 const imageTypes = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 const imageExtension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-const maxImageBytes = 16 * 1024 * 1024;
+const maxImageBytes = MAX_REFERENCE_FILE_BYTES;
 const extensions = filename => String(filename || '').split('.').at(-1).toLowerCase();
 export const CANVAS_REFERENCE_ACCEPT = [...new Set(['png','jpg','jpeg','webp','bmp','tif','tiff','gif','heic','heif',
   'mp4','mov','mp3','wav',...WAN_DOCUMENTS])].map(ext => '.' + ext).join(',');
@@ -39,11 +40,19 @@ export async function readCanvasVideoDuration({ blob, url }, signal) {
 export async function prepareCanvasReference(file, signal) {
   if (!(file instanceof Blob) || !file.size || !file.name) throw new Error('请选择有内容的素材文件。');
   const ext = extensions(file.name);
+  let filename = file.name;
+  // Video nodes can use the original HEIC, TIFF, audio, or document. Retain
+  // the source file; only correct the metadata of recognized still images.
+  if (![...WAN_DOCUMENTS, 'mp3', 'wav', 'mov', 'mp4'].includes(ext)) {
+    const type = await referenceImageType(file);
+    if (type) filename = referenceImageName(filename, type);
+    else if (['jpg','jpeg','png','webp','gif','heic','heif'].includes(ext)) throw new Error('无法识别参考图内容，请重新选择图片。');
+  }
   // The reference may feed different nodes. Use the largest supported upload
   // class here; the receiving node validates its model's limits before submit.
   const model = WAN_DOCUMENTS.includes(ext) ? WAN30 : ['mp3', 'wav'].includes(ext) ? undefined : SEEDANCE25_FLASH;
-  const kind = videoFile(file, model);
-  const info = { assetKind: kind, filename: file.name };
+  const kind = videoFile({ name: filename, size: file.size }, model);
+  const info = { assetKind: kind, filename };
   if (kind === 'video' || kind === 'audio') {
     info.duration_ms = measuredMilliseconds(await videoMediaDuration(file, kind, signal));
   }
@@ -98,9 +107,9 @@ export async function readCanvasReference(owner, projectId, input, targetKind) {
   if (targetKind === 'image') {
     if (!blob) blob = await fetchRemoteImage(url);
     if (blob.size > maxImageBytes) throw new Error('生图节点的单张参考图最多 16 MB。');
-    const type = blob.type && blob.type !== 'application/octet-stream' ? blob.type : imageTypes[filename ? extensions(filename) : urlExt];
-    if (!blob.size || !Object.values(imageTypes).includes(type)) throw new Error('生图节点的参考图支持 JPG、PNG 和 WebP。');
-    if (type !== blob.type) blob = blob.slice(0, blob.size, type);
+    blob = await prepareReferenceImage(blob, { name: filename });
+    if (!Object.values(imageTypes).includes(blob.type)) throw new Error('生图节点的参考图支持 JPG、PNG、WebP 和 HEIC/HEIF。');
+    info.name = blob.name;
   }
   if (!filename && info.kind === 'image') {
     const ext = imageExtension[blob?.type] || (imageTypes[urlExt] && urlExt);

@@ -37,10 +37,12 @@ def sse_data(chunks):
             yield None  # a content-free keepalive
 
 
-def completion_deltas(chunks, normalize_usage, max_chars, invalid_content):
+def completion_deltas(chunks, normalize_usage, max_chars, invalid_content, *, structured=False):
     text, size = [], 0
     final_usage = None
     finished_choice = False
+    finish_reason = None
+    refused = False
     for event in sse_data(chunks):
         if event is None:
             yield None
@@ -63,6 +65,8 @@ def completion_deltas(chunks, normalize_usage, max_chars, invalid_content):
                 delta = {}
             if not isinstance(delta, dict):
                 raise IncompleteStream()
+            if structured and (delta.get("refusal") or choice.get("finish_reason") == "content_filter"):
+                refused = True
             fragment = delta.get("content")
             if fragment is not None and not isinstance(fragment, str):
                 raise IncompleteStream()
@@ -72,11 +76,12 @@ def completion_deltas(chunks, normalize_usage, max_chars, invalid_content):
                 final_usage = None
                 finished_choice = False
                 size += len(fragment)
-                if size <= max_chars:
+                if size <= max_chars and not refused:
                     text.append(fragment)
                     yield fragment
             if choice.get("finish_reason") is not None:
                 finished_choice = True
+                finish_reason = choice["finish_reason"]
                 if frame.get("usage") is not None:
                     final_usage = frame["usage"]
         # include_usage sends the aggregate after the last choice, before DONE.
@@ -90,10 +95,14 @@ def completion_deltas(chunks, normalize_usage, max_chars, invalid_content):
     else:
         # Some compatible providers attach the final counts to the terminal
         # choice itself and cleanly close without a separate DONE message.
-        if not finished_choice or normalize_usage(final_usage)["status"] != "confirmed":
+        explicit_stop = structured and (refused or finish_reason == "length")
+        if not finished_choice or (not explicit_stop and normalize_usage(final_usage)["status"] != "confirmed"):
             raise IncompleteStream()
     content = "".join(text)
     usage = normalize_usage(final_usage)
+    if structured and (refused or finish_reason == "length"):
+        return {"content": content if not refused and size <= max_chars else "", "usage": usage, "streaming": True,
+                "finish_reason": "content_filter" if refused else "length"}
     if not content.strip() or size > max_chars:
         raise invalid_content(usage)
     return {"content": content, "usage": usage, "streaming": True}
@@ -109,7 +118,7 @@ def run_without_deltas(work):
     raise RuntimeError("unexpected delta in a non-streaming request")
 
 
-def stream_response(work, error_payload, finish_on_disconnect):
+def stream_response(work, error_payload, finish_on_disconnect, *, delta_packet=None, result_packet=None):
     # Start the upstream while Flask still handles HTTP errors normally. A
     # provider returning ordinary JSON (or an idempotent replay) needs no stream.
     try:
@@ -144,11 +153,12 @@ def stream_response(work, error_payload, finish_on_disconnect):
         try:
             delta = first
             while True:
-                yield b"\n" if delta is None else encode({"type": "delta", "text": delta})
+                yield b"\n" if delta is None else encode(
+                    delta_packet(delta) if delta_packet else {"type": "delta", "text": delta})
                 try:
                     delta = next(work)
                 except StopIteration as completed:
-                    yield encode({"type": "done", **completed.value})
+                    yield encode(result_packet(completed.value) if result_packet else {"type": "done", **completed.value})
                     return
                 except Exception as error:
                     yield encode({"type": "error", **error_payload(error)})

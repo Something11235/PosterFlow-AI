@@ -36,6 +36,43 @@ test('timeouts or network failures never fall back or replay a signup request',a
   await assert.rejects(offline(project+'/auth/v1/signup',{method:'POST',body:'{}'}),/Failed to fetch/);assert.equal(calls,2);
 });
 
+test('signup forwards the exact UTF-8 JSON once in browsers without streaming request bodies', async t => {
+  const NativeRequest = globalThis.Request;
+  globalThis.Request = class extends NativeRequest {
+    constructor(input, init) {
+      // These browsers serialize a ReadableStream supplied as BodyInit as text.
+      if (init?.body instanceof ReadableStream) {
+        super(input, { method: init.method, headers: init.headers, signal: init.signal, body: String(init.body) });
+      } else {
+        super(input, init);
+      }
+    }
+  };
+  t.after(() => { globalThis.Request = NativeRequest; });
+
+  const body = JSON.stringify({ email: 'fixture@example.invalid', password: 'synthetic-only', data: { username: '测试 🪷' } });
+  const calls = [];
+  const transport = createAuthProxyFetch(project, { origin, fetchImpl: async request => {
+    calls.push({ url: request.url, method: request.method, bytes: new Uint8Array(await request.arrayBuffer()) });
+    return json({ ok: true });
+  } });
+  await transport(project + '/auth/v1/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  assert.deepEqual(calls, [{ url: origin + '/api/auth/proxy/signup', method: 'POST', bytes: new TextEncoder().encode(body) }]);
+});
+
+test('a malformed signup body prompts a refresh without reporting incorrect credentials', async () => {
+  const transport = createAuthProxyFetch(project, { origin, fetchImpl: async () => json(
+    { code: 'auth_proxy_body_invalid', msg: 'invalid request body' }, 400, { 'X-Supabase-Api-Version': '2024-01-01' },
+  ) });
+  const client = createClient(project, 'sb_publishable_fixture', { global: { fetch: transport },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+  const { error } = await client.auth.signUp({ email: 'fixture@example.invalid', password: 'synthetic-only' });
+  assert.equal(error?.code, 'auth_proxy_body_invalid');
+  const message = authErrorMessage(error);
+  assert.match(message, /刷新/);
+  assert.doesNotMatch(message, /密码错误|凭据错误/);
+});
+
 test('the caller abort signal cancels the direct request without falling back',async()=>{
   const controller=new AbortController();let calls=0;
   const proxy=createAuthProxyFetch(project,{origin,fetchImpl:request=>{calls++;return new Promise((_,reject)=>request.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));}});

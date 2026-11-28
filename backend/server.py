@@ -2960,6 +2960,12 @@ except ModuleNotFoundError:
 app.register_blueprint(create_ppt_blueprint(sys.modules[__name__]))
 
 try:
+    from backend.canvas_ai import create_canvas_ai_blueprint
+except ModuleNotFoundError:
+    from canvas_ai import create_canvas_ai_blueprint
+app.register_blueprint(create_canvas_ai_blueprint(sys.modules[__name__]))
+
+try:
     from backend.auth_proxy import create_auth_proxy_blueprint
 except ModuleNotFoundError:
     from auth_proxy import create_auth_proxy_blueprint

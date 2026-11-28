@@ -213,7 +213,32 @@ def resolve_public_host(host, timeout=8):
         raise TavernError("TAVERN_DNS_UNAVAILABLE", "暂时无法解析对话服务域名，本次尚未提交。", 502) from None
 
 
-def provider_rejection(response):
+def model_service_diagnostic(error, status):
+    kinds = {error[field].lower() for field in ("code", "type") if isinstance(error.get(field), str)}
+    if status == 401 or any(
+        word in kind for kind in kinds for word in
+        ("policy", "moderation", "safety", "content_filter", "content_block", "authentication", "api_key",
+         "permission_denied", "permission_error", "insufficient_permission", "quota", "billing", "balance")
+    ):
+        return "rejected"
+    if kinds & {"model_not_found", "model_unavailable", "model_not_available", "model_not_enabled",
+                "model_disabled", "no_available_channel"}:
+        return "model_unavailable"
+    if status == 403:
+        return "rejected"
+    if kinds & {"model_timeout", "upstream_timeout", "gateway_timeout", "request_timeout"}:
+        return "timeout"
+    if kinds & {"model_overloaded", "model_capacity_exceeded", "overloaded_error", "overload",
+                "rate_limit_exceeded", "model_rate_limit_exceeded"}:
+        return "model_unavailable"
+    if status in (408, 500, 502, 503, 504) and kinds and not kinds.issubset({
+        "server_error", "internal_server_error", "service_unavailable", "bad_gateway", "gateway_error", "upstream_error",
+    }):
+        return "rejected"
+    return None
+
+
+def provider_rejection(response, *, model_fallback=False):
     # Error bodies can echo private messages. Inspect a bounded structured
     # diagnostic locally; never send its text to the caller or logs.
     limit = 16 * 1024
@@ -245,7 +270,7 @@ def provider_rejection(response):
             or re.match(r"^(?:unsupported|unknown|unrecognized|unexpected) (?:request )?(?:argument|parameter|field)\s*:?\s*" + stream_field + r"(?:[\s.:]|$)", message, re.I)
             or re.match("^" + stream_field + r" (?:is not supported|is unsupported|is not allowed)\b", message, re.I)):
         return "stream"
-    return None
+    return model_service_diagnostic(error, response.status) if model_fallback else None
 
 
 def invalid_reply(usage):
@@ -269,7 +294,7 @@ def stream_chat(endpoint, key, body):
     return (yield from provider_reply(endpoint, key, body, deadline))
 
 
-def provider_reply(endpoint, key, body, deadline, *, usage_reader=None):
+def provider_reply(endpoint, key, body, deadline, *, usage_reader=None, model_fallback=False, structured=False):
     read_usage = usage_reader or normalize_usage
     parsed = validate_endpoint(endpoint)
     def remaining():
@@ -286,7 +311,8 @@ def provider_reply(endpoint, key, body, deadline, *, usage_reader=None):
 
     connection, watchdog, started = None, None, False
     try:
-        connection = PinnedConnection(host, addresses[0], min(8, remaining()))
+        # TCP and the TLS handshake each use this timeout before the watchdog starts.
+        connection = PinnedConnection(host, addresses[0], min(8, remaining() / 2))
         connection.connect()
         transport = connection.sock
         # read timeout alone can be defeated by slow HTTP headers/chunk framing.
@@ -312,14 +338,21 @@ def provider_reply(endpoint, key, body, deadline, *, usage_reader=None):
         if 300 <= response.status < 400:
             raise TavernError("TAVERN_REDIRECT_BLOCKED", "对话服务返回了跳转，已停止本次请求；请核对服务记录后再操作。", 502, True)
         if response.status >= 400:
-            reason = provider_rejection(response) if response.status in (400, 413, 422) else None
+            reason = None
+            if model_fallback or response.status in (400, 413, 422):
+                reason = provider_rejection(response, model_fallback=model_fallback)
             if reason == "context":
                 raise TavernError("TAVERN_MODEL_CONTEXT_EXCEEDED", "当前模型的上下文容纳不下这次对话。可压缩剧情记忆，或换用上下文更长的模型。", 400)
             if reason == "stream" and body["stream"] and response.status in (400, 422):
                 raise TavernError("TAVERN_STREAM_UNSUPPORTED", "此接口不支持流式参数。", 400)
             if response.status == 413:
                 raise TavernError("TAVERN_PROVIDER_REQUEST_TOO_LARGE", "对话服务商拒绝了过大的请求体，请缩短本次发送的内容后再试。", 413)
-            rejected = response.status in (400, 401, 403, 404, 422, 429)
+            if model_fallback and response.status != 401 and reason != "rejected":
+                if reason == "timeout" or response.status in (408, 504):
+                    raise TavernError("TAVERN_MODEL_TIMEOUT", "上游模型响应超时。", 504, True)
+                if reason == "model_unavailable" or response.status in (500, 502, 503):
+                    raise TavernError("TAVERN_MODEL_UNAVAILABLE", "上游模型暂时不可用。", 503)
+            rejected = reason == "rejected" or response.status in (400, 401, 403, 404, 422, 429)
             message = "对话服务未接受请求，请检查 Key、模型权限和参数。" if rejected else "对话服务结果暂未确认，请核对服务记录，不要重复发送。"
             raise TavernError("TAVERN_REQUEST_REJECTED" if rejected else "TAVERN_RESULT_UNKNOWN", message, 502, not rejected)
         def chunks():
@@ -336,22 +369,42 @@ def provider_reply(endpoint, key, body, deadline, *, usage_reader=None):
             remaining()
 
         if body["stream"] and response.getheader("Content-Type", "").partition(";")[0].strip().lower() == "text/event-stream":
-            return (yield from completion_deltas(chunks(), read_usage, MAX_RESPONSE_CHARS, invalid_reply))
+            return (yield from completion_deltas(chunks(), read_usage, MAX_RESPONSE_CHARS, invalid_reply, structured=structured))
         payload = json.loads(b"".join(chunks()))
         # Usage is independent of a displayable reply. Providers can consume
         # tokens yet return empty content (for example, an exhausted output
         # budget). Preserve only normalized counts, never reasoning or raw JSON.
         usage = read_usage(payload.get("usage")) if isinstance(payload, dict) else None
         choices = payload.get("choices") if isinstance(payload, dict) else None
-        message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None
+        if structured:
+            if choice.get("finish_reason") == "content_filter" or (isinstance(message, dict) and message.get("refusal")):
+                return {"content": "", "usage": usage, "finish_reason": "content_filter"}
+            if choice.get("finish_reason") == "length":
+                if not isinstance(content, str) or len(content) > MAX_RESPONSE_CHARS:
+                    content = ""
+                try:
+                    content.encode("utf-8")
+                except UnicodeEncodeError:
+                    content = ""
+                return {"content": content, "usage": usage, "finish_reason": "length"}
+        if model_fallback and isinstance(message, dict) and (
+            choices[0].get("finish_reason") == "content_filter" or message.get("refusal")
+        ):
+            raise TavernError("TAVERN_REQUEST_REJECTED", "模型未接受本次内容。", 502, usage=usage)
         if not isinstance(content, str) or not content.strip() or len(content) > MAX_RESPONSE_CHARS:
             raise invalid_reply(usage)
         content.encode("utf-8")
         return {"content": content, "usage": usage}
     except TavernError:
         raise
-    except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError):
+    except (OSError, http.client.HTTPException, ValueError, TypeError, RecursionError) as exc:
+        if model_fallback and (isinstance(exc, TimeoutError) or (
+            isinstance(exc, (OSError, http.client.HTTPException)) and time.monotonic() >= deadline
+        )):
+            raise TavernError("TAVERN_MODEL_TIMEOUT", "等待上游模型响应超时。", 504, started) from None
         raise TavernError("TAVERN_RESULT_UNKNOWN" if started else "TAVERN_CONNECTION_FAILED",
                           "连接中断或响应无效，结果暂未确认；请核对服务记录，不要重复发送。" if started else "暂时无法连接对话服务，本次尚未提交。",
                           502, started) from None

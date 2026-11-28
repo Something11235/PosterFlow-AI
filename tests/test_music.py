@@ -348,6 +348,7 @@ class MusicRouteTests(unittest.TestCase):
             response = self.client.get("/api/music/tasks/" + REQUEST_ID, headers=self.headers)
         self.assertEqual(response.status_code, 200)
         self.assertIn("歌词包含受版权保护", response.json["job"]["failure_reason"])
+        self.assertEqual(response.json["job"]["error_code"], "MUSIC_LYRICS_COPYRIGHT")
         self.assertEqual(response.json["job"]["billing_status"], "refunded")
 
     def test_flow_failed_task_refresh_translates_cause_without_resubmit_or_changing_refund(self):
@@ -401,6 +402,22 @@ if __name__ == "__main__":
 
 
 class MusicFailureReasonTests(unittest.TestCase):
+    def test_explicit_audio_policy_and_general_moderation_are_distinct(self):
+        from backend.admin_multimedia import explanation
+        examples = {
+            "This audio might violate our prohibited use policy and can't be uploaded.": "MUSIC_AUDIO_POLICY_REJECTED",
+            "你的请求未通过内容安全审核，请调整提示词或输入素材后重试。": "MUSIC_CONTENT_REJECTED",
+            "This audio can't be uploaded.": "MUSIC_TASK_FAILED",
+        }
+        for message, code in examples.items():
+            with self.subTest(code=code):
+                data = {"id": TASK_ID, "status": "failed", "error": {"message": message}}
+                self.assertEqual(provider.normalize_task({"data": data}, TASK_ID)["error_code"], code)
+        label, reason = explanation("music", "MUSIC_AUDIO_POLICY_REJECTED")
+        self.assertEqual(label, "参考音频上传审核")
+        self.assertIn("未说明", reason)
+        self.assertNotIn("版权", reason)
+
     def test_cover_generic_service_failure_is_neutral_but_specific_copyright_wins(self):
         result = provider.normalize_task({"data": {"id": TASK_ID, "status": "failed", "error": "Job failed,Please try again later."}}, TASK_ID)
         self.assertEqual(result["error_code"], "MUSIC_PROVIDER_JOB_FAILED")

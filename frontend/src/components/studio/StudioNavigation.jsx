@@ -1,5 +1,5 @@
 import { displayCredits } from "../../lib/credits";
-import React, {useEffect,useRef,useState} from "react";
+import React, {useEffect,useLayoutEffect,useRef,useState} from "react";
 import PromptReferences from "../PromptReferences";
 import { Aperture, ArrowUpRight, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronRight, ExternalLink, Gift, Globe2, Grid2X2, History, Image, Layers3, LayoutGrid, LibraryBig, Menu, MessagesSquare, Music2, PanelLeftClose, PanelLeftOpen, Presentation, UserRound, Users, Video, Workflow } from "lucide-react";
 
@@ -23,19 +23,27 @@ const TAVERN_RESOURCES = [
 
 function TavernResources({ detailsRef }) {
   return <details ref={detailsRef} className="studio-prompt-library studio-tavern-resources">
-    <summary><LibraryBig size={18} aria-hidden="true" /><span>酒馆资源</span><ChevronDown size={14} className="studio-prompt-chevron" aria-hidden="true" /></summary>
-    <div id="studio-tavern-resource-links">
+    <summary data-tavern-guide="resources"><LibraryBig size={18} aria-hidden="true" /><span>酒馆资源</span><ChevronDown size={14} className="studio-prompt-chevron" aria-hidden="true" /></summary>
+    <div id="studio-tavern-resource-links" data-tavern-guide="sites">
       <p className="studio-resource-note"><Globe2 size={13} aria-hidden="true" /><span>部分网站需要代理访问</span></p>
       {TAVERN_RESOURCES.map(link => <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer"><span>{link.label}</span><ExternalLink size={14} aria-hidden="true" /></a>)}
     </div>
   </details>;
 }
 
-export default function StudioNavigation({ area, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
-  const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
+export default function StudioNavigation({ area, guideResourcesOpen, onAreaChange, session, account, accountLoading, onOpenAuth, onOpenAccount, onOpenMetrics, onOpenRecharge, onOpenReferrals, onOpenHistory, onOpenImageTasks, onOpenCommunity }) {
+  const [savedCollapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem('posterflow.sidebar.collapsed.v1')==='1';}catch{return false;}});
+  const collapsed = savedCollapsed && !guideResourcesOpen;
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const compactMobile = ["home", "canvas", "ppt"].includes(area);
   const tavernResources = useRef(null);
+  useLayoutEffect(() => {
+    if (!guideResourcesOpen) return;
+    const details = tavernResources.current;
+    const previouslyOpen = details.open;
+    details.open = true;
+    return () => { details.open = previouslyOpen; };
+  }, [guideResourcesOpen]);
   const primaryNav = useRef(null);
   useEffect(() => {
     const nav = primaryNav.current;
@@ -46,7 +54,7 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
     if (active.left < bounds.left) nav.scrollLeft += active.left - bounds.left;
     else if (active.right > bounds.right) nav.scrollLeft += active.right - bounds.right;
   }, [area]);
-  useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',collapsed?'1':'0');}catch{}},[collapsed]);
+  useEffect(()=>{try{localStorage.setItem('posterflow.sidebar.collapsed.v1',savedCollapsed?'1':'0');}catch{}},[savedCollapsed]);
   const accountName = account?.profile?.username || session?.user?.email || "登录 / 注册";
   function openTavernResources() {
     setCollapsed(false);
@@ -68,7 +76,7 @@ export default function StudioNavigation({ area, onAreaChange, session, account,
         <PromptReferences />
         <button type="button" className="studio-collapse-inspiration" title="创作灵感" aria-label="展开创作灵感" onClick={()=>setCollapsed(false)}><BookOpen size={18}/></button>
         <TavernResources detailsRef={tavernResources} />
-        <button type="button" className="studio-collapse-resources" title="酒馆资源" aria-label="展开酒馆资源" aria-controls="studio-tavern-resource-links" onClick={openTavernResources}><LibraryBig size={18} aria-hidden="true" /></button>
+        <button type="button" data-tavern-guide="resources" className="studio-collapse-resources" title="酒馆资源" aria-label="展开酒馆资源" aria-controls="studio-tavern-resource-links" onClick={openTavernResources}><LibraryBig size={18} aria-hidden="true" /></button>
         <button type="button" title="模型一览" aria-label="模型一览" aria-current={area === "models" ? "page" : undefined} onClick={() => onAreaChange("models")}><Grid2X2 size={18} />模型一览</button>
         <button type="button" title="历史记录" aria-label="历史记录" onClick={onOpenHistory}><History size={18} />历史记录</button>
         <button type="button" title="生图任务" aria-label="生图任务" onClick={onOpenImageTasks}><Image size={18} />生图任务</button>

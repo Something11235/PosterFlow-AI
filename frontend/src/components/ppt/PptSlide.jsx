@@ -7,10 +7,19 @@ function elementName(element) {
   return element.type === "image" ? "图片" : "形状";
 }
 
+function originalTextLayout(element) {
+  if (!element.originalInsets && !element.originalVAlign) return undefined;
+  const insets = element.originalInsets || {};
+  return { width: "100%", height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column",
+    justifyContent: ({ center: "center", bottom: "flex-end" })[element.originalVAlign] || "flex-start",
+    paddingTop: insets.top, paddingRight: insets.right, paddingBottom: insets.bottom, paddingLeft: insets.left };
+}
+
 export default function PptSlide({ slide, selected = [], onSelect, font }) {
   const drag = useRef(null);
   const [box, setBox] = useState(null);
   const interactive = Boolean(onSelect);
+  const canSelect = el => interactive && (!slide.originalAspectRatio || typeof el.originalText === "string");
   const point = event => {
     const rect = event.currentTarget.getBoundingClientRect();
     return { x: (event.clientX - rect.left) * 1280 / rect.width, y: (event.clientY - rect.top) * 720 / rect.height };
@@ -34,23 +43,25 @@ export default function PptSlide({ slide, selected = [], onSelect, font }) {
     if (!drag.current) return;
     const area = rectangle(event);
     if (area.width > 5 || area.height > 5) {
-      const ids = slide.elements.filter(el => el.x < area.x + area.width && el.x + el.w > area.x && el.y < area.y + area.height && el.y + el.h > area.y).map(el => el.id);
+      const ids = slide.elements.filter(el => canSelect(el) && el.x < area.x + area.width && el.x + el.w > area.x && el.y < area.y + area.height && el.y + el.h > area.y).map(el => el.id);
       onSelect(drag.current.additive ? [...new Set([...selected, ...ids])] : ids);
     } else choose(drag.current.id, drag.current.additive);
     drag.current = null;
     setBox(null);
   }
   return <svg className={"ppt-slide" + (interactive ? " is-interactive" : "")} viewBox="0 0 1280 720"
-    role={interactive ? "group" : "img"} aria-label={slide.title || "幻灯片"} style={{ background: slide.background || "#ffffff" }}
+    preserveAspectRatio={slide.originalAspectRatio ? "none" : undefined}
+    role={interactive ? "group" : "img"} aria-label={slide.title || "幻灯片"} style={{ background: slide.background || "#ffffff", aspectRatio: slide.originalAspectRatio }}
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; setBox(null); }}>
     {slide.elements.map(el => {
       const bounds = { x: el.x, y: el.y, width: el.w, height: el.h };
-      return <g key={el.id} data-element={el.id} role={interactive ? "button" : undefined} tabIndex={interactive ? 0 : undefined}
-        aria-label={interactive ? elementName(el) : undefined} aria-pressed={interactive ? selected.includes(el.id) : undefined}
-        onKeyDown={interactive ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(el.id, event.shiftKey); } } : undefined}>
+      const editable = canSelect(el);
+      return <g key={el.id} data-element={editable ? el.id : undefined} role={editable ? "button" : undefined} tabIndex={editable ? 0 : undefined}
+        aria-label={editable ? elementName(el) : undefined} aria-pressed={editable ? selected.includes(el.id) : undefined}
+        onKeyDown={editable ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(el.id, event.shiftKey); } } : undefined}>
         <rect {...bounds} fill={el.fill || (el.type === "rect" ? el.color || "#3264da" : "transparent")} />
         {el.type === "text" && <foreignObject {...bounds} pointerEvents="none"><div xmlns="http://www.w3.org/1999/xhtml"
-          style={{ fontFamily: font || "Arial, sans-serif", fontSize: el.fontSize || 32, fontWeight: el.bold ? 700 : 400, textAlign: el.align || "left", lineHeight: 1.18, color: el.color || "#182235", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{el.text}</div></foreignObject>}
+          style={{ fontFamily: font || "Arial, sans-serif", fontSize: el.fontSize || 32, fontWeight: el.bold ? 700 : 400, textAlign: el.align || "left", lineHeight: 1.18, color: el.color || "#182235", whiteSpace: "pre-wrap", overflowWrap: "anywhere", ...originalTextLayout(el) }}>{el.text}</div></foreignObject>}
         {el.type === "image" && /^data:image\/(?:png|jpe?g);base64,/i.test(el.src || "") && <image {...bounds} href={el.src} preserveAspectRatio="none" pointerEvents="none" />}
       </g>;
     })}

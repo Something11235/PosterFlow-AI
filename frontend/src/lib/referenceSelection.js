@@ -1,13 +1,36 @@
 import { MAX_REFERENCE_IMAGES } from "./provider.js";
-
-export const MAX_REFERENCE_FILE_BYTES = 16 * 1024 * 1024;
-export const REFERENCE_FILE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
-const SUPPORTED_TYPES = new Set(REFERENCE_FILE_ACCEPT.split(","));
+import { MAX_REFERENCE_FILE_BYTES, prepareReferenceImage, REFERENCE_UPLOAD_TYPES } from "./referenceImage.js";
+export { MAX_REFERENCE_FILE_BYTES, REFERENCE_FILE_ACCEPT } from "./referenceImage.js";
+const SUPPORTED_TYPES = new Set(REFERENCE_UPLOAD_TYPES);
+const sourceKeys = new WeakMap();
 
 // File objects change when the same local file is selected again. Metadata
 // identifies repeat selections without reading every image into memory.
 export function referenceFileKey(file) {
-  return JSON.stringify([file.name, file.size, file.lastModified ?? 0, file.type]);
+  return sourceKeys.get(file) ?? JSON.stringify([file.name, file.size, file.lastModified ?? 0, file.type]);
+}
+
+export async function prepareReferenceBatch(current, incoming, limit, signal) {
+  const keys = new Set(current.map(referenceFileKey));
+  const batch = { files: [], duplicates: 0, oversized: 0, unsupported: 0, unreadable: 0, overflow: 0 };
+  // Decode serially so multiple camera photos don't occupy memory together.
+  for (const file of incoming) {
+    if (signal?.aborted) break;
+    const key = referenceFileKey(file);
+    if (keys.has(key)) { batch.duplicates++; continue; }
+    if (current.length + batch.files.length >= limit) { batch.overflow++; continue; }
+    try {
+      const normalized = await prepareReferenceImage(file, { signal });
+      sourceKeys.set(normalized, key);
+      batch.files.push(normalized);
+      keys.add(key);
+    } catch (error) {
+      if (error.code === "REFERENCE_IMAGE_TOO_LARGE") batch.oversized++;
+      else if (error.code === "REFERENCE_IMAGE_UNSUPPORTED") batch.unsupported++;
+      else batch.unreadable++;
+    }
+  }
+  return batch;
 }
 
 export function appendReferenceFiles(current, incoming, limit = MAX_REFERENCE_IMAGES) {

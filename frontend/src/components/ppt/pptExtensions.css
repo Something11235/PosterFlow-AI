@@ -1,0 +1,42 @@
+.ppt-extensions { margin: 0 0 16px; }
+.ppt-extensions h2 { margin: 0 0 7px; font-size: 13px; font-weight: 600; color: var(--ppt-secondary); }
+.ppt-extension-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.ppt-extension {
+  min-width: 0; min-height: 72px; border: 1px solid var(--ppt-edge); border-radius: var(--ppt-radius);
+  color: var(--studio-text); background: var(--studio-panel); text-align: start;
+}
+.ppt-open-original, .ppt-motion-extension label {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 16px; min-height: 70px;
+}
+.ppt-open-original { background: var(--ppt-tint); border-color: var(--ppt-accent-border); }
+.ppt-open-original > svg { color: var(--ppt-highlight); }
+.ppt-extension-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 9px; background: var(--studio-raised); border: 1px solid var(--ppt-edge); color: var(--ppt-highlight); }
+.ppt-extension strong, .ppt-extension small { display: block; }
+.ppt-extension strong { font-weight: 650; font-size: 15px; line-height: 1.5; }
+.ppt-extension-verb { display: inline-block; }
+.ppt-extension small { font-size: 12px; line-height: 1.5; margin-top: 3px; color: var(--studio-muted); }
+.ppt-motion-extension label { cursor: pointer; }
+.ppt-motion-extension.is-enabled { border-color: var(--ppt-accent-border); }
+.ppt-motion-extension input {
+  appearance: none; position: relative; width: 36px; height: 21px; margin: 0; border-radius: 20px;
+  border: 1px solid var(--ppt-edge); background: var(--studio-bg); cursor: pointer;
+}
+.ppt-motion-extension input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: var(--studio-muted); }
+.ppt-motion-extension input:checked { background: var(--ppt-action); border-color: var(--ppt-highlight); }
+.ppt-motion-extension input:checked::after { left: 18px; background: white; }
+.ppt-motion-extension input:disabled { opacity: .55; cursor: default; }
+.ppt-motion-details { margin: 0 16px 11px; padding-top: 8px; border-top: 1px solid var(--studio-line); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.ppt-motion-details small { margin: 0; display: flex; align-items: center; gap: 6px; }
+.ppt-motion-details button { min-height: 36px; padding: 4px 10px; color: var(--ppt-highlight); }
+@media (hover:hover) { .ppt-open-original:hover:not(:disabled) { border-color: var(--ppt-highlight); } }
+@media (max-width: 640px) {
+  .ppt-extension-grid { gap: 8px; align-items: stretch; }
+  .ppt-open-original, .ppt-motion-extension label { grid-template-columns: 1fr auto; align-content: start; gap: 8px; padding: 10px 12px; }
+  .ppt-extension-icon { width: 30px; height: 30px; }
+  .ppt-open-original > span:nth-child(2), .ppt-motion-extension label > span:nth-child(2) { grid-area: 2 / 1 / 3 / -1; }
+  .ppt-open-original > svg, .ppt-motion-extension input { grid-area: 1 / 2; justify-self: end; }
+  .ppt-extension strong { font-size: 14px; }
+  .ppt-motion-details { margin-inline: 12px; }
+}
+@media (forced-colors: active) { .ppt-motion-extension input { appearance: auto; } }

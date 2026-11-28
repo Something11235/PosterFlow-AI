@@ -34,7 +34,7 @@ begin
   ) v(model,kind,status,charged,usage,age);
 
   r := public.get_admin_ppt_overview(report_date, report_date, 'BETA%_' || label, 1);
-  assert r->'metrics' = '{"requests":3,"users":1,"generate":1,"edit":1,"chat":1,"completed":1,"failed":1,
+  assert r->'metrics' = '{"requests":3,"users":1,"generate":1,"outline":0,"page":0,"edit":1,"chat":1,"completed":1,"failed":1,
                            "pending":1,"input_tokens":90,"output_tokens":13,"credits":0.0031}'::jsonb;
   assert jsonb_array_length(r->'jobs') = 1 and r#>>'{jobs,0,status}' = 'processing';
   assert r#>'{jobs,0,input_tokens}' = 'null'::jsonb and r#>'{jobs,0,charged_credits}' = 'null'::jsonb;

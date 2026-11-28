@@ -41,7 +41,7 @@ export default function PromptEditor({
   onReferenceAdd,
   onReferenceRemove,
   onReferenceClear,
-  referenceFeedback, referenceUploads = [],
+  referenceFeedback, referenceUploads = [], preparingReferences = false,
   mode,
   onCopyPrompt,
   providerConfigured,
@@ -56,7 +56,7 @@ export default function PromptEditor({
   const promptTooLong = charCount > PROMPT_CHARACTER_LIMIT;
   const referencesDisabled = referenceLimit === 0;
   const tooManyReferences = !referencesDisabled && referenceFiles.length > referenceLimit;
-  const generationDisabled = providerConfigured && (isGenerating || generationLimitReached || !prompt.trim() || promptTooLong || tooManyReferences);
+  const generationDisabled = preparingReferences || providerConfigured && (isGenerating || generationLimitReached || !prompt.trim() || promptTooLong || tooManyReferences);
   const promptQuality = useMemo(() => {
     if (charCount > PROMPT_CHARACTER_LIMIT) return "超出限制";
     if (charCount > 180) return "信息充分";
@@ -145,7 +145,7 @@ export default function PromptEditor({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={referenceLimitReached}
+            disabled={preparingReferences || referenceLimitReached}
             className={`flex w-full items-center justify-center rounded-lg border border-dashed border-border-default bg-bg-tertiary/70 p-3 text-text-muted transition hover:border-accent/45 hover:bg-bg-elevated disabled:cursor-not-allowed disabled:opacity-55 ${files.length ? "min-h-12" : "min-h-24"}`}
           >
             {referencesDisabled ? <span className="text-sm">当前模型不支持上传参考图</span> : files.length ? <span className="inline-flex items-center gap-2 text-sm"><Plus size={17} />{referenceLimitReached ? `已达 ${referenceLimit} 张上限` : "继续添加参考图"}</span> : (
@@ -162,14 +162,14 @@ export default function PromptEditor({
             aria-label="选择参考图片"
             className="hidden"
             multiple
-            disabled={referenceLimitReached}
+            disabled={preparingReferences || referenceLimitReached}
             onChange={(event) => {
               const selected = Array.from(event.currentTarget.files || []);
               event.currentTarget.value = "";
               if (!referenceLimitReached && selected.length) onReferenceAdd(selected);
             }}
           />
-          {files.length > 0 && (
+          {(files.length > 0 || preparingReferences) && (
             <button
               type="button"
               onClick={() => {

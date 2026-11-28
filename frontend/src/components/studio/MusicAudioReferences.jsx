@@ -17,6 +17,6 @@ export default function MusicAudioReferences({ limit, description, audio, canUpl
     </article>)}</div>
     {audio.message && <p role="alert" className="music-reference-error">{audio.message}</p>}
     {audio.items.length > limit && <p role="alert" className="music-reference-error">音频改编每次使用 1 段素材，请移除多余音频。</p>}
-    <p className="music-reference-note">已上传素材临时保留 12 小时，过期或临近清理时需重新添加。请使用你有权使用的音频。</p>
+    <p className="music-reference-note">素材临时保留 12 小时。请使用原创或已获授权的录音。生成时，音乐服务商还会审核参考音频。</p>
   </>;
 }

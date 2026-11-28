@@ -1,11 +1,11 @@
 import { CLIENT_HEADERS } from "./client.js";
 import { optimizeReferenceBlob } from "./referenceCompression.js";
-import { MAX_REFERENCE_FILE_BYTES, REFERENCE_FILE_ACCEPT } from "./referenceSelection.js";
+import { MAX_REFERENCE_FILE_BYTES, prepareReferenceImage, REFERENCE_UPLOAD_TYPES } from "./referenceImage.js";
 import { imageTransportDiagnostic, referenceNetworkInterrupted, referenceNetworkRetryHint } from "./imageGenerationError.js";
 import { referenceDigest } from "./referenceDigest.js";
 
 const API_BASE = "/api";
-const SUPPORTED_TYPES = new Set(REFERENCE_FILE_ACCEPT.split(","));
+const SUPPORTED_TYPES = new Set(REFERENCE_UPLOAD_TYPES);
 // Leave headroom for multipart headers within the site's function body limit.
 const RELAY_PART_BYTES = 4 * 1024 * 1024;
 const RELAY_URL = `${API_BASE}/reference-upload-fallback`;
@@ -173,14 +173,18 @@ async function uploadSignedReference(signed, entry, headers, report) {
   }
 }
 
-function normalizeEntry(entry, index) {
-  const blob = entry?.blob || entry;
+async function normalizeEntry(entry, index) {
+  let blob = entry?.blob || entry;
   if (!(blob instanceof Blob)) throw Object.assign(new Error("参考图内容无法读取"), {code:"REFERENCE_IMAGE_INVALID"});
+  let name = entry?.name || blob.name;
+  if (!SUPPORTED_TYPES.has(blob.type)) {
+    blob = await prepareReferenceImage(blob, { name });
+    name = blob.name;
+  }
   const contentType = String(blob.type || "").toLowerCase();
-  if (!SUPPORTED_TYPES.has(contentType)) throw Object.assign(new Error("参考图仅支持 PNG、JPG、WebP 或 GIF"), {code:"REFERENCE_IMAGE_UNSUPPORTED"});
   if (blob.size > MAX_REFERENCE_FILE_BYTES) throw Object.assign(new Error("参考图不能超过 16 MB"), {code:"REFERENCE_IMAGE_TOO_LARGE"});
   const extension = contentType === "image/jpeg" ? "jpg" : contentType.split("/")[1];
-  const filename = entry?.name || (blob instanceof File && blob.name) || `reference-${index + 1}.${extension}`;
+  const filename = name || `reference-${index + 1}.${extension}`;
   return { blob, contentType, filename, preservePixels: Boolean(entry?.preservePixels) };
 }
 
@@ -208,10 +212,11 @@ export async function uploadReferenceBlobs(entries, { headers = {}, onProgress, 
       onUploadProgress({ current, total, stage, label, filename, loadedBytes: 0, totalBytes, fraction: null, ...data });
     } catch { /* A UI observer cannot change an upload or trigger a retry. */ }
   }
-  const normalizedEntries = files.map((file, index) => {
+  const normalizedEntries = [];
+  for (const [index, file] of files.entries()) {
     notify(index + 1, file?.name || file?.blob?.name || "", (file?.blob || file)?.size || 0, "validating", "正在检查参考图");
-    return normalizeEntry(file, index);
-  });
+    normalizedEntries.push(await normalizeEntry(file, index));
+  }
   const siteHeaders = referenceHeaders(headers);
   const signedPaths = [];
   try {

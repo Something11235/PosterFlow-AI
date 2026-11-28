@@ -20,7 +20,8 @@ function browserMedia(t, duration) {
 test('uploaded files retain their kind/name and audio/video use actual measured duration', async t => {
   const urls = browserMedia(t, 4.876);
   for (const [filename, kind] of [['日落.webp', 'image'], ['镜头.mp4', 'video'], ['配乐.wav', 'audio'], ['剧本.pdf', 'document']]) {
-    const metadata = await prepareCanvasReference(new File(['synthetic'], filename));
+    const contents = kind === 'image' ? 'RIFF\0\0\0\0WEBP' : 'synthetic';
+    const metadata = await prepareCanvasReference(new File([contents], filename));
     assert.deepEqual(metadata, { assetKind: kind, filename, ...(['audio','video'].includes(kind) ? { duration_ms: 4876 } : {}) });
   }
   assert.deepEqual(urls.map(([kind]) => kind), ['video', 'audio']);
@@ -53,7 +54,7 @@ test('an unreadable video cannot be quoted with a guessed duration', async t => 
 test('only bounded, typed image data is passed to an image generator', async t => {
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(options.credentials, 'omit');
-    return new Response('picture', { headers: { 'content-type': 'image/webp' } });
+    return new Response('RIFF\0\0\0\0WEBP', { headers: { 'content-type': 'application/octet-stream' } });
   });
   const result = await readCanvasReference('guest', 'p', { type: 'frame', url: 'https://media.example.test/frame.webp' }, 'image');
   assert.equal(result.blob.type, 'image/webp');

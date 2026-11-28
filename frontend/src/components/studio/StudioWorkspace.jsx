@@ -12,14 +12,31 @@ import MusicWorkspace from "./MusicWorkspace";
 import { defaultSuno } from "../../lib/music";
 import { restoreMusicHistory } from "../../lib/musicHistory";
 import { defaultMusic, MODEL_CATALOG, STUDIO_AREAS } from "../../lib/studioCatalog";
+import { requestPpt } from "../../lib/pptProject";
 
 const ICONS = { image: Image, video: Video, music: Music2, tavern: MessagesSquare };
+const MODEL_FILTERS = [{ id: "all", short: "全部" }, ...STUDIO_AREAS, { id: "ppt", short: "PPT" }];
+const PPT_RATE_LABELS = { input: "普通输入", output: "输出", cache_read: "缓存读取", cache_write: "缓存写入" };
+
+function PptModelCard({ model }) {
+  const rates = Object.entries(PPT_RATE_LABELS).filter(([key]) => Number.isFinite(model.credits_per_million?.[key]));
+  return <article className="studio-model-card">
+    <div><span className="studio-model-icon text-accent"><Presentation size={21} /></span><small>一键 PPT</small></div>
+    <h2>{model.name}</h2><code>{model.id}</code>
+    <footer><div className="w-full">
+      {rates.length ? <><strong className="text-xs font-medium text-text-secondary">每百万 Token 所需积分</strong>
+        <dl className="mt-2 grid gap-1 text-xs">{rates.map(([key, label]) => <div key={key} className="flex items-baseline justify-between gap-3">
+          <dt>{label}</dt><dd className="tabular-nums text-text-primary">{model.credits_per_million[key]}</dd>
+        </div>)}</dl></> : <span>暂无公开费率</span>}
+    </div></footer>
+  </article>;
+}
 const HOME_AREAS = [...STUDIO_AREAS, { id: "tavern", en: "AI TAVERN", label: "AI 酒馆", description: "角色对话 · 角色卡导入 · 世界书", status: "全新空间" }];
 const TavernWorkspace = lazy(() => import("../tavern/TavernWorkspace"));
 const CreationCanvasWorkspace = lazy(() => import("../CreationCanvasWorkspace"));
 const PptWorkspace = lazy(() => import("../ppt/PptWorkspace"));
 const PAGE_TITLES = { home: "创作总览", canvas: "AI 创作画布", ppt: "一键 PPT", video: "视频创作", music: "音乐创作", materials: "创作素材", models: "模型一览", tavern: "AI 酒馆" };
-export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, canvasGenerationContext, authReady, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
+export default function StudioWorkspace({ area, onAreaChange, onStartImage, backgroundImport, onBackgroundImportHandled, username, identity, authHeaders, canvasGenerationContext, authReady, onGuideResourcesChange, session, account, accountLoading, onLogin, onAccountRefresh, onTaskActivity, onVideoTaskActivity, musicHistoryRestore, videoHistoryRestore, presetLibrary, onImportCompanion }) {
   const [bgmIntent,setBgmIntent]=useState(null);
   const [bgmImport,setBgmImport]=useState(null);
   const [idea, setIdea] = useState("");
@@ -35,9 +52,28 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
   }, [musicHistoryRestore, identity]);
   const [modelFilter, setModelFilter] = useState("all");
   const [modelSearch, setModelSearch] = useState("");
+  const [pptModels, setPptModels] = useState(null);
+  const [pptRateError, setPptRateError] = useState(false);
+  const [pptRateRetry, setPptRateRetry] = useState(0);
+  useEffect(() => {
+    if (area !== "models") return;
+    const controller = new AbortController();
+    setPptRateError(false);
+    requestPpt("config", undefined, undefined, undefined, controller.signal).then(config => {
+      if (!Array.isArray(config.models)) throw new Error("Invalid PPT model catalog");
+      if (!controller.signal.aborted) setPptModels(config.models.map(({ id, label, credits_per_million }) => ({
+        id, name: label, area: "ppt", credits_per_million,
+      })));
+    }).catch(() => {
+      if (!controller.signal.aborted) { setPptModels(null); setPptRateError(true); }
+    });
+    return () => controller.abort();
+  }, [area, pptRateRetry]);
   const scrollRef = useRef(null);
   const navigate = next => onAreaChange(next);
-  const filteredModels = MODEL_CATALOG.filter(model => (modelFilter === "all" || model.area === modelFilter) && `${model.name} ${model.id} ${model.maker}`.toLowerCase().includes(modelSearch.trim().toLowerCase()));
+  const models = [...MODEL_CATALOG, ...(pptModels || [])];
+  const filteredModels = models.filter(model => (modelFilter === "all" || model.area === modelFilter) && `${model.name} ${model.id} ${model.maker || ""} ${model.area}`.toLowerCase().includes(modelSearch.trim().toLowerCase()));
+  const showPptStatus = (modelFilter === "all" || modelFilter === "ppt") && pptModels === null;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0, behavior: "instant" });
@@ -91,26 +127,33 @@ export default function StudioWorkspace({ area, onAreaChange, onStartImage, back
         <PptWorkspace key={identity} owner={identity} signedIn={Boolean(session?.user?.id)} authHeaders={authHeaders} onLogin={onLogin} onAccountRefresh={onAccountRefresh} />
       </Suspense> : <div className="studio-page" role="status">正在读取账户…</div>)}
       {area === "canvas" && (authReady ? <Suspense fallback={<div className="studio-page" role="status">正在打开画布…</div>}>
-        <CreationCanvasWorkspace key={identity} ownerId={identity} generationContext={{ ...canvasGenerationContext, videoConnection }} onOpenAccount={onLogin} onBalanceChange={onAccountRefresh} />
+        <CreationCanvasWorkspace key={identity} ownerId={identity} user={session?.user} generationContext={{ ...canvasGenerationContext, videoConnection }} onOpenAccount={onLogin} onBalanceChange={onAccountRefresh} />
       </Suspense> : <div className="studio-page" role="status">正在读取账户…</div>)}
       <MusicWorkspace bgmIntent={bgmIntent} onUseTavernBgm={useTavernBgm} active={area === "music"} identity={identity} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={music} onChange={setMusic} onTaskActivity={onTaskActivity} />
 
       <VideoWorkspace active={area === "video"} identity={identity} authHeaders={authHeaders} session={session} account={account} onLogin={onLogin} onAccountRefresh={onAccountRefresh} values={video} onChange={setVideo} onTaskActivity={onVideoTaskActivity} onConnectionChange={setVideoConnection} />
 
-      {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}><TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders} onStartMusic={startTavernMusic} bgmImport={bgmImport} onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled} session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} /></Suspense>}
+      {(area === "tavern" || tavernVisited || backgroundImport) && <Suspense fallback={<div className="studio-page" role="status">正在打开 AI 酒馆…</div>}>
+        <TavernWorkspace key={identity} active={area === "tavern"} identity={identity} authHeaders={authHeaders}
+          authReady={authReady} onGuideResourcesChange={onGuideResourcesChange} onStartMusic={startTavernMusic} bgmImport={bgmImport}
+          onStartImage={onStartImage} backgroundImport={backgroundImport} onBackgroundImportHandled={onBackgroundImportHandled}
+          session={session} account={account} accountLoading={accountLoading} onLogin={onLogin} onAccountRefresh={onAccountRefresh} />
+      </Suspense>}
 
       {area === "materials" && <CreativeMaterials identity={identity} presetLibrary={presetLibrary} onImportCompanion={onImportCompanion} onUseStylePrompt={onStartImage} />}
 
       {area === "models" && <div className="studio-page">
-        <div className="studio-page-title"><div><p className="studio-eyebrow">A CURATED STARTING POINT</p><h1>选对工具，让灵感更进一步。</h1><p>图像、音乐与视频，按创作类型查看。预览模型尚未接通生成。</p></div><span className="studio-outline-badge">{MODEL_CATALOG.length} 个模型 · 分阶段接入</span></div>
-        <div className="studio-model-toolbar"><div className="studio-model-filters">{[{ id: "all", short: "全部" }, ...STUDIO_AREAS].map(item => <button type="button" key={item.id} aria-pressed={modelFilter === item.id} onClick={() => setModelFilter(item.id)}>{item.short}</button>)}</div><label className="studio-model-search"><Search size={16} /><input aria-label="搜索候选模型" placeholder="搜索模型名称" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /></label></div>
+        <div className="studio-page-title"><div><p className="studio-eyebrow">A CURATED STARTING POINT</p><h1>选对工具，让灵感更进一步。</h1><p>按创作类型查看图像、音乐、视频与 PPT 模型及定价。</p></div><span className="studio-outline-badge">{models.length} 个模型 · 分阶段接入</span></div>
+        <div className="studio-model-toolbar"><div className="studio-model-filters">{MODEL_FILTERS.map(item => <button type="button" key={item.id} aria-pressed={modelFilter === item.id} onClick={() => setModelFilter(item.id)}>{item.short}</button>)}</div><label className="studio-model-search"><Search size={16} /><input aria-label="搜索候选模型" placeholder="搜索模型名称" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /></label></div>
         <div className="studio-model-grid">{filteredModels.map(model => {
+          if (model.area === "ppt") return <PptModelCard key={model.id} model={model} />;
           const Icon = ICONS[model.area];
           return <article className={`studio-model-card studio-tone-${model.area}`} key={model.id}>
             <div><span className="studio-model-icon"><Icon size={21} /></span><small>{STUDIO_AREAS.find(item => item.id === model.area).short} / {model.maker}</small></div><h2>{model.name}<ModelBadge model={model.id === "nano-banana-2.1" ? "gemini-nano-banana-2.1" : model.id}/></h2><p>{model.summary}</p><footer><span>{model.area === "image" ? <>{model.capability}<span className="mt-1 block leading-relaxed">{model.pricing}</span></> : model.area === "music" ? "音乐创作 · 2 积分 / 次" : model.available ? ["seedance-2.5","seedance-2-5-flash","seedance-2.0","seedance-2.0-fast","gemini-omni-1.1-flash","MiniMax-H3","MiniMax-H3-Max","wan3.0-video","flux-3-video"].includes(model.id) ? "按实际用量结算 · 0.5 积分为档 · 提交先预留" : "480P 0.5 积分/秒 · 720P 1 积分/秒（参考视频＋生成时长）" : "模型预览 · 规划接入"}</span></footer>
           </article>;
         })}</div>
-        {!filteredModels.length && <div className="studio-empty-state"><Search size={28} /><h2>没有找到匹配的模型</h2><p>试试其他名称，或选择全部创作类型。</p><button type="button" className="studio-secondary" onClick={() => { setModelSearch(""); setModelFilter("all"); }}>清除筛选</button></div>}
+        {showPptStatus && <div className="studio-help" role="status">{pptRateError ? <>PPT 模型定价暂时无法读取。 <button type="button" className="studio-text-button" onClick={() => setPptRateRetry(value => value + 1)}>重试</button></> : "正在读取 PPT 模型定价…"}</div>}
+        {!filteredModels.length && !showPptStatus && <div className="studio-empty-state"><Search size={28} /><h2>没有找到匹配的模型</h2><p>试试其他名称，或选择全部创作类型。</p><button type="button" className="studio-secondary" onClick={() => { setModelSearch(""); setModelFilter("all"); }}>清除筛选</button></div>}
         <p className="studio-help">现有图像工作区继续使用原图片服务配置。模型预览不会替换已配置模型。</p>
       </div>}
 

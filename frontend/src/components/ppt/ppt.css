@@ -52,7 +52,7 @@
 .ppt-workspace fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
 .ppt-workspace legend { padding: 0; margin: 0 0 9px; }
 .ppt-field, .ppt-workspace legend { color: var(--ppt-secondary); font-size: 14px; font-weight: 600; }
-.ppt-field textarea, .ppt-field input, .ppt-models select {
+.ppt-field textarea, .ppt-field input, .ppt-field select, .ppt-models select {
   width: 100%;
   min-width: 0;
   padding: 10px 12px;
@@ -74,9 +74,7 @@
 .ppt-segments button { min-height: 36px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--studio-muted); font-size: 13px; }
 .ppt-segments button[aria-pressed=true] { background: var(--ppt-tint); border-color: var(--ppt-accent-border); color: var(--ppt-highlight); font-weight: 650; }
 .ppt-models p { margin: 0; padding: 8px 0; font-size: 14px; }
-.ppt-models small, .ppt-format-help { color: var(--studio-muted); font-size: 12px; line-height: 1.55; }
-.ppt-models small { font-variant-numeric: tabular-nums; }
-.ppt-rate span { white-space: nowrap; }
+.ppt-format-help { color: var(--studio-muted); font-size: 12px; line-height: 1.55; }
 .ppt-upload { position: relative; gap: 9px; min-height: 44px; padding: 9px 12px; border: 1px dashed var(--ppt-edge); border-radius: 7px; background: var(--studio-bg); color: var(--ppt-secondary); font-size: 14px; overflow: hidden; }
 .ppt-upload svg { color: var(--ppt-highlight); }
 .ppt-upload input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
@@ -153,6 +151,12 @@
 .ppt-empty h3 { margin: 6px 0 0; font-size: clamp(17px, 1.45vw, 22px); letter-spacing: -.025em; font-weight: 650; }
 .ppt-empty p { margin: 6px 0 0; font-size: 13px; }
 .ppt-slide { display: block; width: 100%; height: auto; aspect-ratio: 16/9; }
+.ppt-original-source { display: flex; align-items: flex-start; gap: 9px; margin: 0; color: var(--studio-text); font-size: 14px; }
+.ppt-original-source svg { flex-shrink: 0; color: var(--ppt-highlight); }
+.ppt-original-source span { min-width: 0; overflow-wrap: anywhere; }
+.ppt-original-source small { display: block; margin-top: 4px; color: var(--studio-muted); }
+.ppt-jump-page { margin: 4px 0 10px; }
+.ppt-jump-page select { flex: 1; max-width: 22rem; }
 .ppt-slide.is-interactive { touch-action: none; user-select: none; cursor: crosshair; }
 .ppt-slide.is-interactive g { cursor: pointer; }
 .ppt-slide.is-interactive g:focus-visible { outline: 3px solid var(--studio-accent); }

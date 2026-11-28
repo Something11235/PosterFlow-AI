@@ -47,7 +47,6 @@ import {
   getProviderDisplayName,
   isProviderConfigComplete,
   loadProviderConfig,
-  MAX_REFERENCE_IMAGES,
   saveProviderConfig,
 } from "./lib/provider";
 import { CLIENT_HEADERS, clearImageUrlCache, downloadImage, recoverGeneration } from "./lib/client";
@@ -55,7 +54,7 @@ import { createImageArchive } from "./lib/batchDownload";
 import { saveBrowserFile } from "./lib/browserSave";
 import { DEFAULT_PRESET } from "./lib/presets";
 import { cleanupReferencePaths, uploadReferenceFiles } from "./lib/referenceUpload";
-import { appendReferenceFiles, removeReferenceMentions } from "./lib/referenceSelection";
+import { appendReferenceFiles, prepareReferenceBatch, removeReferenceMentions } from "./lib/referenceSelection";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import { invitationFromSearch } from "./lib/referrals";
 
@@ -168,6 +167,7 @@ function readStudioArea() {
 export default function App() {
   const [classicWorkspace] = useState(() => new URLSearchParams(window.location.search).get("workspace") === "classic");
   const [studioArea, updateStudioArea] = useState(readStudioArea);
+  const [guideResourcesOpen, setGuideResourcesOpen] = useState(false);
   const setStudioArea = useCallback(next => {
     if (readStudioArea() !== next) {
       const url = new URL(window.location.href);
@@ -197,6 +197,8 @@ export default function App() {
   const [count, setCount] = useState(1);
   const [referenceFiles, setReferenceFiles] = useState([]);
   const referenceFilesRef = useRef([]);
+  const pendingReferenceBatch = useRef(null);
+  const [preparingReferences, setPreparingReferences] = useState(false);
   const [referenceFeedback, setReferenceFeedback] = useState(null);
   const [referenceUploads, setReferenceUploads] = useState([]);
 
@@ -523,19 +525,30 @@ export default function App() {
     setError(null); setSelectedImages(new Set());
   }, []);
 
-  const handleReferenceAdd = useCallback((files) => {
-    if (!files.length || referenceSpec.disabled) return;
-    const result = appendReferenceFiles(referenceFilesRef.current, files, referenceSpec.limit);
+  const handleReferenceAdd = useCallback(async (files) => {
+    if (!files.length || materialReferenceSpec.current.disabled || pendingReferenceBatch.current) return;
+    const batchController = new AbortController();
+    pendingReferenceBatch.current = batchController;
+    setPreparingReferences(true);
+    setReferenceFeedback({ text: "正在读取参考图，HEIC/HEIF 照片将自动转换…", warning: false });
+    const batch = await prepareReferenceBatch(referenceFilesRef.current, files, materialReferenceSpec.current.limit, batchController.signal);
+    if (batchController.signal.aborted) return;
+    pendingReferenceBatch.current = null;
+    setPreparingReferences(false);
+    const spec = materialReferenceSpec.current;
+    const result = appendReferenceFiles(referenceFilesRef.current, batch.files, spec.limit);
+    for (const count of ["duplicates", "oversized", "unsupported", "overflow"]) result[count] += batch[count];
     referenceFilesRef.current = result.files;
     setReferenceFiles(result.files);
     const messages = [];
     if (result.added) messages.push(`已添加 ${result.added} 张参考图`);
     if (result.duplicates) messages.push(`已跳过 ${result.duplicates} 张重复图片`);
     if (result.oversized) messages.push(`${result.oversized} 张超过 16 MB，未添加`);
-    if (result.unsupported) messages.push(`${result.unsupported} 张格式不支持或无法识别，请使用 PNG、JPG、WebP 或 GIF`);
-    if (result.overflow) messages.push(`最多保留 ${MAX_REFERENCE_IMAGES} 张，另外 ${result.overflow} 张未添加`);
-    setReferenceFeedback({ text: messages.join("；"), warning: Boolean(result.oversized || result.unsupported || result.overflow) });
-  }, [referenceSpec.disabled, referenceSpec.limit]);
+    if (result.unsupported) messages.push(`${result.unsupported} 张格式无法识别，请使用 PNG、JPG、WebP、GIF 或 HEIC/HEIF`);
+    if (batch.unreadable) messages.push(`${batch.unreadable} 张图片读取失败，请从相册导出为 JPG 或 PNG 后重试`);
+    if (result.overflow) messages.push(`当前模型最多支持 ${spec.limit} 张，另外 ${result.overflow} 张未添加`);
+    setReferenceFeedback({ text: messages.join("；"), warning: Boolean(result.oversized || result.unsupported || result.overflow || batch.unreadable) });
+  }, []);
 
   const handleReferenceRemove = useCallback((index) => {
     const current = referenceFilesRef.current;
@@ -548,6 +561,9 @@ export default function App() {
   }, []);
 
   const handleReferenceClear = useCallback(() => {
+    pendingReferenceBatch.current?.abort();
+    pendingReferenceBatch.current = null;
+    setPreparingReferences(false);
     const previousCount = referenceFilesRef.current.length;
     referenceFilesRef.current = [];
     setReferenceFiles([]);
@@ -580,6 +596,8 @@ export default function App() {
     setTavernBackgroundTarget(background ? { identity, name: context.name || 'AI 生成背景' } : null);
     if (text?.trim()) { setPrompt(text); setActivePreset(null); setMode('create'); }
     if (background || tavernImage) {
+      pendingReferenceBatch.current?.abort();
+      pendingReferenceBatch.current = null; setPreparingReferences(false);
       referenceFilesRef.current = []; setReferenceFiles([]); setReferenceFeedback(null);
       setSize(tavernImage && context.size === 'portrait_3_4' ? 'portrait_3_4' : 'landscape_16_9'); setCount(1); setImageOutputFormat('png');
       setNotice(background ? '已填入剧情背景提示词；确认模型与价格后生成，成功图片自动存入酒馆背景库。' : '中文画面提示词已填入；确认模型、参考图与价格后再生成。');
@@ -610,6 +628,7 @@ export default function App() {
   }, [setStudioArea]);
 
   const runImageTask = useCallback(async (taskPrompt, previousImage = null) => {
+    if (pendingReferenceBatch.current) { setNotice("参考图仍在读取，请稍候。"); return; }
     if (!taskPrompt.trim() || Array.from(taskPrompt.trim()).length > 6000) {
       setError({ message: "提示词须为 1–6000 个字符", code: "PROMPT_INVALID" }); return;
     }
@@ -1053,6 +1072,7 @@ export default function App() {
           onOpenCommunity={() => setCommunityOpen(true)}
         /> : <StudioNavigation
           area={studioArea}
+          guideResourcesOpen={studioArea === "tavern" && guideResourcesOpen}
           onAreaChange={setStudioArea}
           session={session}
           account={account}
@@ -1208,6 +1228,7 @@ export default function App() {
                 onReferenceRemove={handleReferenceRemove}
                 onReferenceClear={handleReferenceClear}
                 referenceFeedback={referenceFeedback}
+                preparingReferences={preparingReferences}
                 referenceUploads={referenceUploads.filter(item => item.identity === imageTaskStore.identity && (!item.failed || item.requestId === selectedTaskRef.current))}
                 mode={mode}
                 onCopyPrompt={handleCopyPrompt}
@@ -1280,6 +1301,7 @@ export default function App() {
             <Suspense fallback={<div className="flex flex-1 items-center justify-center p-16 text-text-muted">正在打开创作空间…</div>}>
               <StudioWorkspace key={session?.user?.id || "guest"} area={studioArea} onAreaChange={setStudioArea}
                 canvasGenerationContext={canvasGenerationContext} authReady={authReady}
+                onGuideResourcesChange={setGuideResourcesOpen}
                 username={account?.profile?.username} identity={session?.user?.id || "guest"} authHeaders={authHeaders} session={session} account={account} accountLoading={accountLoading} onLogin={() => setAuthOpen(true)} onAccountRefresh={refreshAccount} onTaskActivity={setMusicActiveCount} onVideoTaskActivity={setVideoActiveCount} musicHistoryRestore={musicHistoryRestore} videoHistoryRestore={videoHistoryRestore} onImportCompanion={importCompanion} presetLibrary={<PresetLibrary activePresetId={activePreset?.id} onApplyPreset={preset => { handleApplyPreset(preset); setMode("create"); setStudioArea("image"); }} />} onStartImage={handleStartImage} backgroundImport={tavernBackgroundImports[0]} onBackgroundImportHandled={handleBackgroundImportHandled} />
             </Suspense>
           </div>}

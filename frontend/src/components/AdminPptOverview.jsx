@@ -2,7 +2,7 @@ import React from 'react';
 import { displayCredits } from '../lib/credits';
 import { PPT_MODEL_NAMES } from '../lib/pptProject';
 
-const KINDS = { generate: '生成演示稿', edit: '局部修改', chat: 'AI 对话' };
+const KINDS = { generate: '整稿生成（旧版）', outline: '生成大纲', page: '生成单页', edit: '局部修改', chat: 'AI 对话' };
 const STATUS = { succeeded: '已完成', failed: '失败', processing: '进行中' };
 const METRICS = { requests: '总请求', users: '使用用户', input_tokens: '输入 Token', output_tokens: '输出 Token', credits: '实际扣分' };
 const dateFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -41,6 +41,7 @@ function Records({ jobs }) {
               <td className={cell}>
                 <span className={job.status === 'succeeded' ? 'text-mint' : job.status === 'failed' ? 'text-gold' : 'text-accent'}>{STATUS[job.status] || '待确认'}</span>
                 {job.error_code && <p className="mt-1 break-all text-text-muted">{job.error_code}</p>}
+                {job.diagnostic && <p className="mt-1 text-text-secondary">{job.diagnostic}</p>}
               </td>
               <td className={cell + ' tabular-nums'}>{count(job.input_tokens)}</td>
               <td className={cell + ' tabular-nums'}>{count(job.output_tokens)}</td>
@@ -58,7 +59,7 @@ export default function AdminPptOverview({ data, error, loading }) {
   if (error || !data?.metrics) return <p role="alert" className="mt-3 text-xs text-gold">{error || 'PPT 数据暂未加载，请点击上方「查询」重试。'}</p>;
   const { metrics, models = [], jobs = [] } = data;
   return <div aria-label="一键 PPT 运营">
-    <p className="mt-2 text-xs leading-5 text-text-muted">按上方日期和用户筛选，Token 汇总仅计已确认用量。</p>
+    <p className="mt-2 text-xs leading-5 text-text-muted">每次生成大纲或单页各计一次请求。Token 汇总仅计已确认用量。</p>
     <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
       {Object.entries(METRICS).map(([key, label]) => <div key={key} className="rounded-md border border-border-subtle bg-bg-primary/60 p-3">
         <dt className="text-xs text-text-muted">{label}</dt>

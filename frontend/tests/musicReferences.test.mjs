@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAudioOperationParameters, musicAudioFile, uploadMusicReference, musicFailedBeforeSubmission } from "../src/lib/musicReferences.js";
+import { buildAudioOperationParameters, isRejectedMusicSelection, musicAudioFile, musicReferenceSelection, uploadMusicReference, musicFailedBeforeSubmission } from "../src/lib/musicReferences.js";
 import { defaultSuno } from "../src/lib/music.js";
 import { musicHistorySnapshot, restoreMusicHistory } from "../src/lib/musicHistory.js";
 import { buildStudioDraft } from "../src/lib/studioCatalog.js";
@@ -16,6 +16,24 @@ test("source signing failures never become unknown paid tasks; accepted or ambig
   assert.equal(musicFailedBeforeSubmission({code:"AUTH_REQUIRED",status:401}),true);
   assert.equal(musicFailedBeforeSubmission({code:"MUSIC_DATABASE_UNAVAILABLE",status:503}),false);
   assert.equal(musicFailedBeforeSubmission({code:"MUSIC_SUBMISSION_UNKNOWN",status:503,submission_unknown:true}),false);
+  assert.equal(musicFailedBeforeSubmission({code:"MUSIC_PROVIDER_REJECTED",status:422,reason_code:"MUSIC_AUDIO_POLICY_REJECTED"}),false);
+});
+test("an explicit audio rejection stops repeat submission of the same selection and operation only", () => {
+  const first = { id: "first", reference: { receipt: "private" } }, second = { id: "second" };
+  for (const operation of ["flow_cover", "upload_cover", "inspo"]) {
+    const items = operation === "inspo" ? [first, second] : [first];
+    const selection = musicReferenceSelection(operation, items);
+    assert.equal(selection.includes("private"), false);
+    for (const code of ["MUSIC_AUDIO_POLICY_REJECTED", "MUSIC_AUDIO_MATCH", "MUSIC_AUDIO_COPYRIGHT"]) {
+      const jobs = [{ referenceSelection: selection, status: "failed", error_code: code }];
+      assert.equal(isRejectedMusicSelection(jobs, musicReferenceSelection(operation, [...items].reverse())), true);
+      assert.equal(isRejectedMusicSelection(jobs, musicReferenceSelection(operation, [second])), false);
+      assert.equal(isRejectedMusicSelection(jobs, musicReferenceSelection("generate", items)), false);
+    }
+    for (const code of ["MUSIC_CONTENT_REJECTED", "MUSIC_PROVIDER_TIMEOUT", "MUSIC_TASK_FAILED"]) {
+      assert.equal(isRejectedMusicSelection([{ referenceSelection: selection, status: "failed", error_code: code }], selection), false);
+    }
+  }
 });
 test("cover description and custom lyrics send only fields for their selected mode", () => {
   const input={...defaultSuno(),prompt:"轻快爵士",style:"stale",duration:120,style_weight:0};
